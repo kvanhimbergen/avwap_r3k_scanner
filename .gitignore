@@ -1,0 +1,14 @@
+# Ignore the virtual environment
+venv/
+.venv/
+
+# Ignore sensitive environment variables
+.env
+
+# Python specific
+__pycache__/
+*.pyc
+.DS_Store
+
+# Scanning/Data cache (if your scanner saves temp data)
+cache/
