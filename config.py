@@ -106,13 +106,14 @@ class CFG:
     AVWAP_SLOPE_LOOKBACK = 5
     AVWAP_SLOPE_BYPASS_ON_RECLAIM = True
 
-
-
-
-
-
-
-
+    # Alpaca Data Settings
+    USE_PAPER_DATA: bool = True
+    DATA_FEED: str = "sip" # Use 'iex' if on free tier, 'sip' if on paid tier
+    
+    # Existing AVWAP / RS logic
+    MIN_AVWAP_SLOPE_LONG: float = -0.03
+    AVWAP_SLOPE_LOOKBACK: int = 5
+    AVWAP_SLOPE_BYPASS_ON_RECLAIM: bool = True
 
 cfg = CFG()
 
