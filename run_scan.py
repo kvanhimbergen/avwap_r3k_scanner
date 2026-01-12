@@ -2,6 +2,7 @@ import os
 import warnings
 import pandas as pd
 import numpy as np
+import yfinance as yf  # Added for earnings check
 from tqdm import tqdm
 from datetime import datetime, timedelta
 from collections import Counter
@@ -26,6 +27,11 @@ BAD_TICKERS = set()
 PBT_DIAG = Counter()
 warnings.filterwarnings("ignore")
 
+# ALGO TWEAK CONFIGS
+ADV_MIN_SHARES = 750000  # Minimum 750k shares avg daily volume
+ATR_MIN_DOLLARS = 0.50   # Minimum $0.50 average daily range
+ALGO_CANDIDATE_CAP = 20  # Limit to top 20 for the execution bot
+
 def load_bad_tickers():
     path = Path("cache/bad_tickers.txt")
     if path.exists():
@@ -40,10 +46,6 @@ def is_valid_ticker(t):
     return isinstance(t, str) and 1 <= len(t) <= 6 and t.isalpha()
 
 def standardize_alpaca_to_yf(df):
-    """
-    Ensures Alpaca data matches the 'Title Case' format (Open, High, Low, Close) 
-    required by your indicators and AVWAP logic.
-    """
     if df.empty: return df
     if isinstance(df.index, pd.MultiIndex):
         df = df.reset_index()
@@ -55,6 +57,35 @@ def standardize_alpaca_to_yf(df):
     df = df.rename(columns=rename_map)
     df['Date'] = pd.to_datetime(df['Date'])
     return df
+
+# TWEAK 1: Market Regime Filter
+def get_market_regime(client):
+    """Checks if SPY is above its 200-day SMA."""
+    try:
+        spy_req = StockBarsRequest(symbol_or_symbols="SPY", timeframe=TimeFrame.Day, start=datetime.now() - timedelta(days=300))
+        df = standardize_alpaca_to_yf(client.get_stock_bars(spy_req).df)
+        df['SMA200'] = df['Close'].rolling(window=200).mean()
+        curr_price = df['Close'].iloc[-1]
+        sma200 = df['SMA200'].iloc[-1]
+        return curr_price > sma200
+    except:
+        return True # Default to True if check fails to avoid blocking scan
+
+# TWEAK 2: Earnings Date Check
+def is_near_earnings(ticker):
+    """Excludes stocks reporting earnings in the next 48 hours."""
+    try:
+        stock = yf.Ticker(ticker)
+        calendar = stock.calendar
+        if calendar is not None and not calendar.empty:
+            # Check the first date in the earnings calendar
+            next_earnings = calendar.iloc[0, 0]
+            if isinstance(next_earnings, datetime):
+                days_to_earnings = (next_earnings.date() - datetime.now().date()).days
+                return 0 <= days_to_earnings <= 2
+    except:
+        return False
+    return False
 
 def check_weekly_alignment(df):
     if len(df) < 200: return True
@@ -71,7 +102,11 @@ def shannon_quality_gates(df, direction):
     s20n, s50n = float(s20.iloc[-1]), float(s50.iloc[-1])
     s50_slope = slope_last(s50, n=10)
 
+    # TWEAK 3: ATR Minimum check
     atr14 = atr(df, 14)
+    atr_now = float(atr14.iloc[-1])
+    if atr_now < ATR_MIN_DOLLARS: return None
+
     atr_pct = (atr14 / close) * 100.0
     atr_pct_now = float(atr_pct.iloc[-1])
     atr_pct_p50 = float(rolling_percentile(atr_pct, 120, 0.50).iloc[-1])
@@ -154,8 +189,14 @@ def build_liquidity_snapshot(universe, index_df, data_client):
             for t in batch:
                 sub = df_all[df_all['Ticker'] == t].copy()
                 if len(sub) < 15: continue
+                
+                # TWEAK 3: Share Volume floor
+                avg_vol_shares = sub["Volume"].tail(20).mean()
+                if avg_vol_shares < ADV_MIN_SHARES: continue
+
                 dv = (sub["Close"] * sub["Volume"]).mean()
                 if dv < (10_000_000 if is_weekend else cfg.MIN_AVG_DOLLAR_VOL): continue
+                
                 rows.append({
                     "Ticker": t, "AvgDollarVol20": dv,
                     "Sector": universe.loc[universe["Ticker"] == t, "Sector"].values[0],
@@ -172,6 +213,11 @@ def main():
     load_dotenv()
     data_client = StockHistoricalDataClient(os.getenv('APCA_API_KEY_ID'), os.getenv('APCA_API_SECRET_KEY'))
     
+    # TWEAK 1: Market Regime Check
+    if not get_market_regime(data_client):
+        print("⚠️ Market Regime Bearish (SPY < 200 SMA). Skipping scan to protect capital.")
+        return
+
     is_weekend = datetime.now().weekday() >= 5
     if is_weekend:
         cfg.TOP_SECTORS_TO_SCAN, cfg.SNAPSHOT_MAX_TICKERS = 11, 3000
@@ -202,6 +248,9 @@ def main():
 
     results = []
     for t in tqdm(filtered, desc="Scanning"):
+        # TWEAK 2: Earnings check on high-potential candidates
+        if is_near_earnings(t): continue
+
         d_filtered = history[history["Ticker"] == t].copy()
         if d_filtered.empty or len(d_filtered) < 80: continue
         df = d_filtered.set_index("Date").sort_index()
@@ -223,10 +272,11 @@ def main():
 
     out = pd.DataFrame(results)
     if not out.empty:
-        out = out.sort_values(["TrendTier", "RS"], ascending=[True, False]).head(cfg.CANDIDATE_CAP)
+        # TWEAK 4 & 5: RS Ranking and Auto-Culling to Top 20
+        out = out.sort_values(["TrendTier", "RS"], ascending=[True, False]).head(ALGO_CANDIDATE_CAP)
         out.to_csv("daily_candidates.csv", index=False)
-        print("\n--- TOP CANDIDATES ---")
-        print(out[["Ticker", "TrendTier", "Price", "AVWAP_Floor", "R1_Trim", "R2_Target"]].head(20))
+        print("\n--- ALGO-READY TOP CANDIDATES ---")
+        print(out[["Ticker", "TrendTier", "Price", "AVWAP_Floor", "R1_Trim", "R2_Target", "RS"]].head(20))
     save_bad_tickers(BAD_TICKERS)
 
 if __name__ == "__main__":

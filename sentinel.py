@@ -84,6 +84,28 @@ def is_market_open():
     close_time = now.replace(hour=16, minute=0, second=0, microsecond=0)
     return open_time <= now <= close_time
 
+# ALGO-READY TWEAK: Market Regime Check
+def get_market_regime():
+    """Checks if SPY is above its 200-day SMA (Bullish Trend)."""
+    try:
+        spy_req = StockBarsRequest(
+            symbol_or_symbols="SPY", 
+            timeframe=TimeFrame.Day, 
+            start=datetime.now() - timedelta(days=300)
+        )
+        bars = data_client.get_stock_bars(spy_req).df
+        if bars is None or bars.empty: return True
+        
+        df = bars.reset_index()
+        df['SMA200'] = df['close'].rolling(window=200).mean()
+        curr_price = df['close'].iloc[-1]
+        sma200 = df['SMA200'].iloc[-1]
+        
+        return curr_price > sma200
+    except Exception as e:
+        print(f"Regime Check Error: {e}")
+        return True # Default to True to avoid blocking if API fails
+
 def get_alpaca_intraday(ticker):
     """Fetches 5-minute bars and standardizes columns for Title Case logic."""
     try:
@@ -108,6 +130,12 @@ def get_alpaca_intraday(ticker):
 
 def monitor_watchlist():
     """Core pulse logic for monitoring reclaims and trim targets."""
+    
+    # ALGO-READY TWEAK: Refuse new buys if market regime turns bearish mid-day
+    is_bullish = get_market_regime()
+    if not is_bullish:
+        print(f"🛑 Market Regime Bearish (SPY < 200 SMA). Suspending new buys.")
+    
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Sentinel Pulse Started...")
     
     try:
@@ -137,7 +165,8 @@ def monitor_watchlist():
         
         # --- AUTOMATED EXECUTION ---
         
-        if reclaimed and ticker not in TRADED_TODAY:
+        # Only execute reclaims if the market regime is bullish
+        if reclaimed and ticker not in TRADED_TODAY and is_bullish:
             try:
                 # Check if we are already in the position
                 trading_client.get_open_position(ticker)
@@ -158,6 +187,7 @@ def monitor_watchlist():
                 )
                 TRADED_TODAY.add(ticker)
 
+        # Trims are executed regardless of regime (always bank profits)
         if near_r1:
             try:
                 # Only attempt trim if a position is actually held
