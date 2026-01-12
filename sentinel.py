@@ -145,6 +145,7 @@ def monitor_watchlist():
         ticker = row['Ticker']
         avwap_floor = float(row['AVWAP_Floor'])
         r1_target = float(row['R1_Trim'])
+        structural_stop = float(row['Stop_Loss'])
         r2_target = float(row.get('R2_Target', r1_target * 1.05))
         
         df = get_alpaca_intraday(ticker) 
@@ -166,19 +167,17 @@ def monitor_watchlist():
                 trading_client.get_open_position(ticker)
                 TRADED_TODAY.add(ticker) 
             except:
-                stop_loss = avwap_floor * 0.985 
-                print(f"🚀 Signal: {ticker} reclaimed. Executing...")
-                execute_buy_bracket(ticker, stop_loss, r2_target)
+                # EXECUTION: Uses the Shannon-style structural stop
+                print(f"🚀 Signal: {ticker} reclaimed. Stop set at structural floor: ${structural_stop}")
+                execute_buy_bracket(ticker, structural_stop, r2_target)
                 
-                # NEW: Initialize analytics state and log
                 OPEN_TRADE_STATS[ticker] = {
                     'entry': curr_price, 'max_high': curr_price, 'min_low': curr_price, 'signal': avwap_floor
                 }
                 log_trade_to_csv(ticker, 'BUY', curr_price, avwap_floor)
                 
-                send_telegram(f"✅ *BUY {ticker}* @ ${curr_price:.2f}")
+                send_telegram(f"✅ *BUY {ticker}* @ ${curr_price:.2f} | 🛡️ Stop: ${structural_stop:.2f}")
                 TRADED_TODAY.add(ticker)
-
         if near_r1:
             try:
                 trading_client.get_open_position(ticker)

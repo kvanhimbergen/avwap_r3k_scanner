@@ -3,6 +3,7 @@ import warnings
 import pandas as pd
 import numpy as np
 import yfinance as yf  # Added for earnings check
+import pytz
 from tqdm import tqdm
 from datetime import datetime, timedelta
 from collections import Counter
@@ -248,9 +249,10 @@ def main():
                 history = cs.upsert_history(history, newdata)
         except: continue
 
+    # ... (Keep existing imports and helper functions) ...
+
     results = []
     for t in tqdm(filtered, desc="Scanning"):
-        # TWEAK 2: Earnings check on high-potential candidates
         if is_near_earnings(t): continue
 
         d_filtered = history[history["Ticker"] == t].copy()
@@ -262,16 +264,35 @@ def main():
         gates = shannon_quality_gates(df, "Long")
         if not gates: continue
 
+        # NEW: Calculate Structural Stop Levels (Shannon Style)
+        df['SMA5'] = sma(df['Close'], 5)
+        df['Low5'] = df['Low'].rolling(window=5).min()
+        
+        curr_sma5 = float(df['SMA5'].iloc[-1])
+        curr_low5 = float(df['Low5'].iloc[-1])
+        
+        # Determine logical stop: The lower of the 5-DMA or 5-Day Low with a 0.3% buffer
+        structural_stop = min(curr_sma5, curr_low5) * 0.997 
+
         best = pick_best_anchor(df, index_df, "Long")
         if best:
             name, av, avs, rs, d = best
             r1, r2 = get_pivot_targets(df)
             results.append({
-                "Ticker": t, "TrendTier": gates["TrendTier"], "Price": round(df["Close"].iloc[-1], 2),
-                "AVWAP_Floor": round(av, 2), "Dist%": round(d, 2), "R1_Trim": r1, "R2_Target": r2, 
-                "RS": round(rs, 6), "Sector": snap.loc[snap["Ticker"]==t, "Sector"].values[0], "Anchor": name
+                "Ticker": t, 
+                "TrendTier": gates["TrendTier"], 
+                "Price": round(df["Close"].iloc[-1], 2),
+                "AVWAP_Floor": round(av, 2), 
+                "Stop_Loss": round(structural_stop, 2),  # NEW: Added structural stop column
+                "Dist%": round(d, 2), 
+                "R1_Trim": r1, 
+                "R2_Target": r2, 
+                "RS": round(rs, 6), 
+                "Sector": snap.loc[snap["Ticker"]==t, "Sector"].values[0], 
+                "Anchor": name
             })
 
+    # ... (Keep sorting and saving logic) ...
     out = pd.DataFrame(results)
     if not out.empty:
         # TWEAK 4 & 5: RS Ranking and Auto-Culling to Top 20
