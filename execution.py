@@ -96,3 +96,31 @@ def execute_partial_sell(symbol, sell_percentage=0.5):
         print(f"✂️ Trimmed {sell_percentage*100}% of {symbol} ({qty_to_sell} shares)")
     except Exception as e:
         print(f"❌ Trim Failed for {symbol}: {e}")
+
+def get_daily_summary_data():
+    """Gathers equity, daily PnL, and a list of open positions."""
+    # 1. Get Account Info
+    account = trading_client.get_account()
+    equity = float(account.equity)
+    last_equity = float(account.last_equity)
+    daily_pnl = equity - last_equity
+    pnl_pct = (daily_pnl / last_equity) * 100 if last_equity != 0 else 0
+    
+    # 2. Get Open Positions
+    positions = trading_client.get_all_positions()
+    pos_list = []
+    for p in positions:
+        pos_list.append({
+            "symbol": p.symbol,
+            "qty": p.qty,
+            "val": float(p.market_value),
+            "pnl": float(p.unrealized_pl),
+            "pnl_pct": float(p.unrealized_pl_pc) * 100
+        })
+        
+    return {
+        "equity": equity,
+        "daily_pnl": daily_pnl,
+        "pnl_pct": pnl_pct,
+        "positions": pos_list
+    }

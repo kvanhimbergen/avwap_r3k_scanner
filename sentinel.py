@@ -6,8 +6,14 @@ from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
 
-# Import your execution logic
-from execution import execute_buy_bracket, execute_partial_sell, get_account_details, trading_client
+# Import execution logic and shared trading client
+from execution import (
+    execute_buy_bracket, 
+    execute_partial_sell, 
+    get_account_details, 
+    trading_client, 
+    get_daily_summary_data
+)
 
 # Modern Alpaca-py imports
 from alpaca.data.historical import StockHistoricalDataClient
@@ -22,7 +28,8 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 WATCHLIST_FILE = "daily_candidates.csv"
 
-# Persistent set to track tickers we've already acted on today
+# State Tracking
+SUMMARY_SENT_TODAY = False
 TRADED_TODAY = set()
 
 # Initialize Alpaca Data Client
@@ -36,9 +43,37 @@ def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
+        # Added timeout to prevent script hanging on network issues
         requests.post(url, data=payload, timeout=10)
     except Exception as e:
         print(f"Telegram Error: {e}")
+
+def send_daily_summary():
+    """Formats and sends the account snapshot to Telegram at market close."""
+    try:
+        data = get_daily_summary_data()
+        
+        pnl_emoji = "📈" if data['daily_pnl'] >= 0 else "📉"
+        msg = (
+            f"📊 *DAILY ACCOUNT SUMMARY*\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"💰 *Total Equity:* ${data['equity']:,.2f}\n"
+            f"{pnl_emoji} *Daily PnL:* ${data['daily_pnl']:,.2f} ({data['pnl_pct']:.2f}%)\n\n"
+            f"📋 *Open Positions:*\n"
+        )
+        
+        if not data['positions']:
+            msg += "_No open positions._"
+        for pos in data['positions']:
+            pos_pnl_emoji = "🟢" if pos['pnl'] >= 0 else "🔴"
+            msg += (
+                f"• *{pos['symbol']}*: {pos['qty']} shares\n"
+                f"  Val: ${pos['val']:,.2f} | {pos_pnl_emoji} ${pos['pnl']:,.2f} ({pos['pnl_pct']:.2f}%)\n"
+            )
+        
+        send_telegram(msg)
+    except Exception as e:
+        print(f"Error generating daily summary: {e}")
 
 def is_market_open():
     """Checks if NYSE is currently open (9:30 AM - 4:00 PM EST)."""
@@ -50,13 +85,18 @@ def is_market_open():
     return open_time <= now <= close_time
 
 def get_alpaca_intraday(ticker):
-    """Fetches 5-minute bars and standardizes for indicator logic."""
+    """Fetches 5-minute bars and standardizes columns for Title Case logic."""
     try:
         start_time = datetime.now() - timedelta(days=2)
-        request_params = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TimeFrame.Minute * 5, start=start_time)
+        request_params = StockBarsRequest(
+            symbol_or_symbols=ticker, 
+            timeframe=TimeFrame.Minute * 5, 
+            start=start_time
+        )
         bars = data_client.get_stock_bars(request_params).df
         if bars is None or bars.empty: return None
         
+        # Normalize columns for indicators.py and anchors.py compatibility
         df = bars.reset_index().rename(columns={
             'symbol': 'Ticker', 'timestamp': 'Date', 'open': 'Open',
             'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'
@@ -67,6 +107,7 @@ def get_alpaca_intraday(ticker):
         return None
 
 def monitor_watchlist():
+    """Core pulse logic for monitoring reclaims and trim targets."""
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Sentinel Pulse Started...")
     
     try:
@@ -77,9 +118,10 @@ def monitor_watchlist():
 
     for _, row in watchlist.iterrows():
         ticker = row['Ticker']
-        avwap_floor = row['AVWAP_Floor']
-        r1_target = row['R1_Trim']
-        r2_target = row.get('R2_Target', r1_target * 1.05) # Fallback if R2 missing
+        # Explicitly cast to float for safety
+        avwap_floor = float(row['AVWAP_Floor'])
+        r1_target = float(row['R1_Trim'])
+        r2_target = float(row.get('R2_Target', r1_target * 1.05))
         
         df = get_alpaca_intraday(ticker) 
         if df is None or len(df) < 2: continue
@@ -87,30 +129,30 @@ def monitor_watchlist():
         curr_price = df['Close'].iloc[-1]
         prev_price = df['Close'].iloc[-2]
         
-        # 1. Brian Shannon Reclaim Signal
+        # 1. Check for Brian Shannon "Reclaim"
         reclaimed = (prev_price <= avwap_floor) and (curr_price > avwap_floor)
         
-        # 2. Trim Target (within 0.2% of R1)
+        # 2. Check for R1 Trim Target
         near_r1 = abs(curr_price - r1_target) / r1_target < 0.002
         
-        # --- EXECUTION LOGIC ---
+        # --- AUTOMATED EXECUTION ---
         
         if reclaimed and ticker not in TRADED_TODAY:
-            # Avoid duplicate orders by checking current positions
             try:
+                # Check if we are already in the position
                 trading_client.get_open_position(ticker)
                 print(f"ℹ️ Position already exists for {ticker}. Skipping buy.")
                 TRADED_TODAY.add(ticker) 
             except:
-                # Setup trade parameters
-                stop_loss = avwap_floor * 0.985 # 1.5% wiggle room below floor
+                # Setup trade parameters: Stop at 1.5% below floor, Target at R2
+                stop_loss = avwap_floor * 0.985 
                 
-                print(f"🚀 Signal: {ticker} reclaimed AVWAP. Placing bracket order...")
+                print(f"🚀 Signal: {ticker} reclaimed floor. Placing bracket order...")
                 execute_buy_bracket(ticker, stop_loss, r2_target)
                 
                 send_telegram(
                     f"✅ *TRADE EXECUTED: BUY {ticker}*\n"
-                    f"💰 Price: ${curr_price:.2f}\n"
+                    f"💰 Entry: ${curr_price:.2f}\n"
                     f"🛡️ Stop: ${stop_loss:.2f}\n"
                     f"🎯 Target: ${r2_target:.2f}"
                 )
@@ -118,29 +160,45 @@ def monitor_watchlist():
 
         if near_r1:
             try:
-                # Only trim if we actually have a position
-                pos = trading_client.get_open_position(ticker)
-                print(f"💰 {ticker} hit R1 target. Executing partial trim...")
+                # Only attempt trim if a position is actually held
+                trading_client.get_open_position(ticker)
+                print(f"💰 {ticker} hit R1 target. Trimming 50%...")
                 execute_partial_sell(ticker, sell_percentage=0.5)
                 
                 send_telegram(
                     f"✂️ *TRADE EXECUTED: TRIM {ticker}*\n"
                     f"📈 Hit R1 Target: ${r1_target:.2f}\n"
-                    f"💵 Sold 50% of position."
+                    f"💵 Sold 50% for profit."
                 )
             except:
-                # No position found, nothing to trim
-                pass
+                pass # No position to trim
 
 def main():
+    global SUMMARY_SENT_TODAY
     print("Sentinel Active. Monitoring Russell 3000 AVWAP Reclaims...")
+    
     while True:
+        tz = pytz.timezone('US/Eastern')
+        now = datetime.now(tz)
+
         if is_market_open():
             monitor_watchlist()
-            time.sleep(900) # 15 min pulse
+            # Wait 15 minutes between pulses to respect rate limits
+            time.sleep(900) 
         else:
-            # Clear the trade tracker when the market is closed
-            if len(TRADED_TODAY) > 0: TRADED_TODAY.clear()
+            # Send the Daily Summary after 4:00 PM EST
+            if now.hour >= 16 and not SUMMARY_SENT_TODAY and now.weekday() <= 4:
+                print("Market closed. Sending daily report...")
+                send_daily_summary()
+                SUMMARY_SENT_TODAY = True
+            
+            # Reset state trackers at midnight
+            if now.hour == 0:
+                SUMMARY_SENT_TODAY = False
+                TRADED_TODAY.clear() 
+                print("Midnight reset performed. Ready for next session.")
+                
+            # Sleep for 5 minutes during off-hours
             time.sleep(300)
 
 if __name__ == "__main__":
