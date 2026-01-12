@@ -212,6 +212,18 @@ def build_liquidity_snapshot(universe, index_df, data_client):
     sector_rank = snap.groupby("Sector")["RS20"].mean().sort_values(ascending=False).head(cfg.TOP_SECTORS_TO_SCAN).index
     return snap[snap["Sector"].isin(sector_rank)].sort_values("AvgDollarVol20", ascending=False).head(cfg.SNAPSHOT_MAX_TICKERS)
 
+def send_telegram(message):
+    """Sends a notification to Telegram when the scan completes."""
+    token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("CHAT_ID")
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
+    try:
+        import requests
+        requests.post(url, data=payload, timeout=10)
+    except Exception as e:
+        print(f"Telegram Notification Error: {e}")
+
 def main():
     load_dotenv()
     data_client = StockHistoricalDataClient(os.getenv('APCA_API_KEY_ID'), os.getenv('APCA_API_SECRET_KEY'))
@@ -298,6 +310,7 @@ def main():
         # TWEAK 4 & 5: RS Ranking and Auto-Culling to Top 20
         out = out.sort_values(["TrendTier", "RS"], ascending=[True, False]).head(ALGO_CANDIDATE_CAP)
         out.to_csv("daily_candidates.csv", index=False)
+        send_telegram(f"✅ *Scan Complete*: {len(out)} top candidates saved to `daily_candidates.csv` and ready for Sentinel.")
         print("\n--- ALGO-READY TOP CANDIDATES ---")
         print(out[["Ticker", "TrendTier", "Price", "AVWAP_Floor", "R1_Trim", "R2_Target", "RS"]].head(20))
     save_bad_tickers(BAD_TICKERS)
