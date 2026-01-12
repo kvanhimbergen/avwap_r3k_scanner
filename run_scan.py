@@ -73,14 +73,16 @@ def get_market_regime(client):
 
 # TWEAK 2: Earnings Date Check
 def is_near_earnings(ticker):
-    """Excludes stocks reporting earnings in the next 48 hours."""
+    """Excludes stocks reporting earnings in the next 48 hours using robust method."""
     try:
         stock = yf.Ticker(ticker)
-        calendar = stock.calendar
-        if calendar is not None and not calendar.empty:
-            # Check the first date in the earnings calendar
-            next_earnings = calendar.iloc[0, 0]
-            if isinstance(next_earnings, datetime):
+        # TWEAK: get_earnings_dates is more reliable than .calendar
+        dates = stock.get_earnings_dates()
+        if dates is not None and not dates.empty:
+            # Check for the closest future earnings date
+            future_earnings = dates[dates.index > datetime.now(pytz.utc)]
+            if not future_earnings.empty:
+                next_earnings = future_earnings.index[0]
                 days_to_earnings = (next_earnings.date() - datetime.now().date()).days
                 return 0 <= days_to_earnings <= 2
     except:

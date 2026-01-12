@@ -2,6 +2,7 @@ import time
 import os
 import pandas as pd
 import requests
+import csv  # NEW: Required for trade logging
 from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
@@ -27,10 +28,13 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 WATCHLIST_FILE = "daily_candidates.csv"
+TRADE_LOG = "trade_log.csv"  # NEW: Analytics file path
 
 # State Tracking
 SUMMARY_SENT_TODAY = False
 TRADED_TODAY = set()
+# NEW: State for tracking Max Favorable/Adverse Excursion
+OPEN_TRADE_STATS = {} 
 
 # Initialize Alpaca Data Client
 data_client = StockHistoricalDataClient(
@@ -43,16 +47,31 @@ def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
-        # Added timeout to prevent script hanging on network issues
         requests.post(url, data=payload, timeout=10)
     except Exception as e:
         print(f"Telegram Error: {e}")
+
+# NEW: Logging function for analytics.py
+def log_trade_to_csv(ticker, side, price, signal_price, mfe=0, mae=0, pnl=0):
+    """Logs detailed trade metrics for robust post-trade analysis."""
+    file_exists = os.path.isfile(TRADE_LOG)
+    with open(TRADE_LOG, mode='a', newline='') as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(['Timestamp', 'Ticker', 'Side', 'Price', 'Signal_Price', 'Slippage', 'MFE', 'MAE', 'PnL'])
+        
+        # Slippage is the difference between your signal price and actual fill
+        slippage = price - signal_price if side == 'BUY' else signal_price - price
+        writer.writerow([
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 
+            ticker, side, price, signal_price, 
+            round(slippage, 4), round(mfe, 2), round(mae, 2), round(pnl, 2)
+        ])
 
 def send_daily_summary():
     """Formats and sends the account snapshot to Telegram at market close."""
     try:
         data = get_daily_summary_data()
-        
         pnl_emoji = "📈" if data['daily_pnl'] >= 0 else "📉"
         msg = (
             f"📊 *DAILY ACCOUNT SUMMARY*\n"
@@ -61,7 +80,6 @@ def send_daily_summary():
             f"{pnl_emoji} *Daily PnL:* ${data['daily_pnl']:,.2f} ({data['pnl_pct']:.2f}%)\n\n"
             f"📋 *Open Positions:*\n"
         )
-        
         if not data['positions']:
             msg += "_No open positions._"
         for pos in data['positions']:
@@ -70,7 +88,6 @@ def send_daily_summary():
                 f"• *{pos['symbol']}*: {pos['qty']} shares\n"
                 f"  Val: ${pos['val']:,.2f} | {pos_pnl_emoji} ${pos['pnl']:,.2f} ({pos['pnl_pct']:.2f}%)\n"
             )
-        
         send_telegram(msg)
     except Exception as e:
         print(f"Error generating daily summary: {e}")
@@ -84,69 +101,48 @@ def is_market_open():
     close_time = now.replace(hour=16, minute=0, second=0, microsecond=0)
     return open_time <= now <= close_time
 
-# ALGO-READY TWEAK: Market Regime Check
 def get_market_regime():
-    """Checks if SPY is above its 200-day SMA (Bullish Trend)."""
+    """Checks if SPY is above its 200-day SMA."""
     try:
-        spy_req = StockBarsRequest(
-            symbol_or_symbols="SPY", 
-            timeframe=TimeFrame.Day, 
-            start=datetime.now() - timedelta(days=300)
-        )
+        spy_req = StockBarsRequest(symbol_or_symbols="SPY", timeframe=TimeFrame.Day, start=datetime.now() - timedelta(days=300))
         bars = data_client.get_stock_bars(spy_req).df
         if bars is None or bars.empty: return True
-        
         df = bars.reset_index()
         df['SMA200'] = df['close'].rolling(window=200).mean()
-        curr_price = df['close'].iloc[-1]
-        sma200 = df['SMA200'].iloc[-1]
-        
-        return curr_price > sma200
-    except Exception as e:
-        print(f"Regime Check Error: {e}")
-        return True # Default to True to avoid blocking if API fails
+        return df['close'].iloc[-1] > df['SMA200'].iloc[-1]
+    except:
+        return True 
 
 def get_alpaca_intraday(ticker):
-    """Fetches 5-minute bars and standardizes columns for Title Case logic."""
+    """Fetches 5-minute bars and standardizes columns."""
     try:
         start_time = datetime.now() - timedelta(days=2)
-        request_params = StockBarsRequest(
-            symbol_or_symbols=ticker, 
-            timeframe=TimeFrame.Minute * 5, 
-            start=start_time
-        )
+        request_params = StockBarsRequest(symbol_or_symbols=ticker, timeframe=TimeFrame.Minute * 5, start=start_time)
         bars = data_client.get_stock_bars(request_params).df
         if bars is None or bars.empty: return None
-        
-        # Normalize columns for indicators.py and anchors.py compatibility
-        df = bars.reset_index().rename(columns={
+        return bars.reset_index().rename(columns={
             'symbol': 'Ticker', 'timestamp': 'Date', 'open': 'Open',
             'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'
         })
-        return df
     except Exception as e:
         print(f"Alpaca Fetch Error for {ticker}: {e}")
         return None
 
 def monitor_watchlist():
     """Core pulse logic for monitoring reclaims and trim targets."""
-    
-    # ALGO-READY TWEAK: Refuse new buys if market regime turns bearish mid-day
     is_bullish = get_market_regime()
     if not is_bullish:
-        print(f"🛑 Market Regime Bearish (SPY < 200 SMA). Suspending new buys.")
+        print(f"🛑 Market Regime Bearish. Suspending new buys.")
     
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Sentinel Pulse Started...")
     
     try:
         watchlist = pd.read_csv(WATCHLIST_FILE)
     except FileNotFoundError:
-        print(f"❌ {WATCHLIST_FILE} not found. Run run_scan.py first.")
         return
 
     for _, row in watchlist.iterrows():
         ticker = row['Ticker']
-        # Explicitly cast to float for safety
         avwap_floor = float(row['AVWAP_Floor'])
         r1_target = float(row['R1_Trim'])
         r2_target = float(row.get('R2_Target', r1_target * 1.05))
@@ -156,79 +152,65 @@ def monitor_watchlist():
         
         curr_price = df['Close'].iloc[-1]
         prev_price = df['Close'].iloc[-2]
+
+        # NEW: Intra-trade price tracking for MFE/MAE
+        if ticker in OPEN_TRADE_STATS:
+            OPEN_TRADE_STATS[ticker]['max_high'] = max(OPEN_TRADE_STATS[ticker]['max_high'], curr_price)
+            OPEN_TRADE_STATS[ticker]['min_low'] = min(OPEN_TRADE_STATS[ticker]['min_low'], curr_price)
         
-        # 1. Check for Brian Shannon "Reclaim"
         reclaimed = (prev_price <= avwap_floor) and (curr_price > avwap_floor)
-        
-        # 2. Check for R1 Trim Target
         near_r1 = abs(curr_price - r1_target) / r1_target < 0.002
         
-        # --- AUTOMATED EXECUTION ---
-        
-        # Only execute reclaims if the market regime is bullish
         if reclaimed and ticker not in TRADED_TODAY and is_bullish:
             try:
-                # Check if we are already in the position
                 trading_client.get_open_position(ticker)
-                print(f"ℹ️ Position already exists for {ticker}. Skipping buy.")
                 TRADED_TODAY.add(ticker) 
             except:
-                # Setup trade parameters: Stop at 1.5% below floor, Target at R2
                 stop_loss = avwap_floor * 0.985 
-                
-                print(f"🚀 Signal: {ticker} reclaimed floor. Placing bracket order...")
+                print(f"🚀 Signal: {ticker} reclaimed. Executing...")
                 execute_buy_bracket(ticker, stop_loss, r2_target)
                 
-                send_telegram(
-                    f"✅ *TRADE EXECUTED: BUY {ticker}*\n"
-                    f"💰 Entry: ${curr_price:.2f}\n"
-                    f"🛡️ Stop: ${stop_loss:.2f}\n"
-                    f"🎯 Target: ${r2_target:.2f}"
-                )
+                # NEW: Initialize analytics state and log
+                OPEN_TRADE_STATS[ticker] = {
+                    'entry': curr_price, 'max_high': curr_price, 'min_low': curr_price, 'signal': avwap_floor
+                }
+                log_trade_to_csv(ticker, 'BUY', curr_price, avwap_floor)
+                
+                send_telegram(f"✅ *BUY {ticker}* @ ${curr_price:.2f}")
                 TRADED_TODAY.add(ticker)
 
-        # Trims are executed regardless of regime (always bank profits)
         if near_r1:
             try:
-                # Only attempt trim if a position is actually held
                 trading_client.get_open_position(ticker)
-                print(f"💰 {ticker} hit R1 target. Trimming 50%...")
                 execute_partial_sell(ticker, sell_percentage=0.5)
                 
-                send_telegram(
-                    f"✂️ *TRADE EXECUTED: TRIM {ticker}*\n"
-                    f"📈 Hit R1 Target: ${r1_target:.2f}\n"
-                    f"💵 Sold 50% for profit."
-                )
+                # NEW: Calculate and log MFE/MAE on Trim
+                if ticker in OPEN_TRADE_STATS:
+                    s = OPEN_TRADE_STATS[ticker]
+                    log_trade_to_csv(ticker, 'TRIM', curr_price, r1_target, 
+                                     s['max_high'] - s['entry'], s['entry'] - s['min_low'], curr_price - s['entry'])
+                
+                send_telegram(f"✂️ *TRIM {ticker}* @ ${curr_price:.2f}")
             except:
-                pass # No position to trim
+                pass 
 
 def main():
     global SUMMARY_SENT_TODAY
     print("Sentinel Active. Monitoring Russell 3000 AVWAP Reclaims...")
-    
     while True:
         tz = pytz.timezone('US/Eastern')
         now = datetime.now(tz)
-
         if is_market_open():
             monitor_watchlist()
-            # Wait 15 minutes between pulses to respect rate limits
             time.sleep(900) 
         else:
-            # Send the Daily Summary after 4:00 PM EST
             if now.hour >= 16 and not SUMMARY_SENT_TODAY and now.weekday() <= 4:
-                print("Market closed. Sending daily report...")
                 send_daily_summary()
                 SUMMARY_SENT_TODAY = True
-            
-            # Reset state trackers at midnight
             if now.hour == 0:
                 SUMMARY_SENT_TODAY = False
                 TRADED_TODAY.clear() 
-                print("Midnight reset performed. Ready for next session.")
-                
-            # Sleep for 5 minutes during off-hours
+                OPEN_TRADE_STATS.clear()  # NEW: Reset analytics daily
             time.sleep(300)
 
 if __name__ == "__main__":
