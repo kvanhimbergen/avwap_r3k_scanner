@@ -181,6 +181,8 @@ def monitor_watchlist():
 
 def main():
     global SUMMARY_SENT_TODAY
+    load_dotenv(dotenv_path="/root/avwap_r3k_scanner/.env")
+
     print(f"[{now_et_str()}] Sentinel Active. Monitoring Russell 3000 AVWAP Reclaims...", flush=True)
 
     while True:

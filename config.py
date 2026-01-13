@@ -11,9 +11,9 @@ class CFG:
     INDEX: str = "SPY"
 
     # Scan windows
-    HISTORY_PERIOD_FULL: str = "2y"     # used for first-time cache build
-    HISTORY_PERIOD_LIQ: str = "2mo"      # weekly liquidity snapshot
-    HISTORY_PERIOD_DAILY_UPDATE: str = "10d"  # daily refresh window
+    HISTORY_PERIOD_FULL: str = "2y"          # used for first-time cache build
+    HISTORY_PERIOD_LIQ: str = "2mo"          # weekly liquidity snapshot
+    HISTORY_PERIOD_DAILY_UPDATE: str = "10d" # daily refresh window
 
     # Liquidity filters
     MIN_AVG_DOLLAR_VOL: float = 10_000_000
@@ -76,11 +76,10 @@ class CFG:
 
     PBT_REQUIRE_TRIGGER: bool = True
 
-    PBT_REQUIRE_ATR_CONTRACTION: bool = False
+    # Keep the final effective value from your existing file
+    PBT_REQUIRE_ATR_CONTRACTION: bool = True
 
     WEEKEND_MODE: bool = True
-
-    PBT_REQUIRE_ATR_CONTRACTION: bool = True
 
     PBT_EMA20_PROX_PCT: float = 3.0  # within 1% of EMA20 counts as a pullback
 
@@ -99,22 +98,19 @@ class CFG:
     PBT_SMA50_SLOPE_LOOKBACK: int = 10
 
     PBT_MAX_PCT_BELOW_SM50: float = 0.5
-    
+
     PBT_RSI_NO_NEW_HIGH_LOOKBACK: int = 5
 
-    MIN_AVWAP_SLOPE_LONG = -0.03
-    AVWAP_SLOPE_LOOKBACK = 5
-    AVWAP_SLOPE_BYPASS_ON_RECLAIM = True
-
-    # Alpaca Data Settings
-    USE_PAPER_DATA: bool = True
-    DATA_FEED: str = "sip" # Use 'iex' if on free tier, 'sip' if on paid tier
-    
-    # Existing AVWAP / RS logic
+    # AVWAP slope gating (single source of truth)
     MIN_AVWAP_SLOPE_LONG: float = -0.03
+    MIN_AVWAP_SLOPE_SHORT: float = 0.03
     AVWAP_SLOPE_LOOKBACK: int = 5
     AVWAP_SLOPE_BYPASS_ON_RECLAIM: bool = True
 
-cfg = CFG()
+    # Alpaca Data Settings
+    USE_PAPER_DATA: bool = True
+    DATA_FEED: str = "sip"  # Use 'iex' if on free tier, 'sip' if on paid tier
 
+
+cfg = CFG()
 
