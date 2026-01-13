@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from collections import Counter
 from pathlib import Path
 from dotenv import load_dotenv
+import json
+from datetime import date
 
 # Modern Alpaca-py imports
 from alpaca.data.historical import StockHistoricalDataClient
@@ -27,6 +29,7 @@ import cache_store as cs
 BAD_TICKERS = set()
 PBT_DIAG = Counter()
 warnings.filterwarnings("ignore")
+EARNINGS_CACHE_PATH = Path("cache/earnings_cache.json")
 
 # ALGO TWEAK CONFIGS
 ADV_MIN_SHARES = 750000  # Minimum 750k shares avg daily volume
@@ -212,6 +215,93 @@ def build_liquidity_snapshot(universe, index_df, data_client):
     sector_rank = snap.groupby("Sector")["RS20"].mean().sort_values(ascending=False).head(cfg.TOP_SECTORS_TO_SCAN).index
     return snap[snap["Sector"].isin(sector_rank)].sort_values("AvgDollarVol20", ascending=False).head(cfg.SNAPSHOT_MAX_TICKERS)
 
+# =========================
+# DROP-IN EARNINGS CACHE
+# =========================
+# Place this block in run_scan.py:
+# 1) Add the imports near the top of the file (with other imports):
+#       import json
+#       from datetime import date
+#
+# 2) Paste the full block below anywhere ABOVE main() (e.g., right under send_telegram()).
+# 3) In the scanning loop, replace:
+#       if is_near_earnings(t): continue
+#    with:
+#       if is_near_earnings_cached(t): continue
+#
+# Optional controls via env vars:
+#   - EARNINGS_CACHE_TTL_DAYS (default 7)
+#   - EARNINGS_CACHE_DISABLE=1  (bypass cache + checks entirely)
+#   - EARNINGS_CACHE_FORCE_REFRESH=1 (ignore cache; rebuild entries as requested)
+# =========================
+
+import json
+from datetime import date
+
+EARNINGS_CACHE_PATH = Path("cache/earnings_cache.json")
+
+def _load_earnings_cache() -> dict:
+    try:
+        if EARNINGS_CACHE_PATH.exists():
+            return json.loads(EARNINGS_CACHE_PATH.read_text())
+    except Exception:
+        pass
+    return {}
+
+def _save_earnings_cache(cache: dict) -> None:
+    try:
+        os.makedirs(EARNINGS_CACHE_PATH.parent, exist_ok=True)
+        tmp = str(EARNINGS_CACHE_PATH) + ".tmp"
+        Path(tmp).write_text(json.dumps(cache, indent=2, sort_keys=True))
+        os.replace(tmp, EARNINGS_CACHE_PATH)
+    except Exception:
+        # Cache failures should never break the scan
+        pass
+
+def is_near_earnings_cached(ticker: str) -> bool:
+    """
+    Disk-backed cache for is_near_earnings() results.
+    Stores: { "AAPL": {"value": false, "asof": "2026-01-13"} , ... }
+    TTL-based refresh; safe to use inside the scanning loop.
+    """
+    # Allow bypass for testing
+    if os.getenv("EARNINGS_CACHE_DISABLE", "0") == "1":
+        return False
+
+    ttl_days = int(os.getenv("EARNINGS_CACHE_TTL_DAYS", "7"))
+    force_refresh = os.getenv("EARNINGS_CACHE_FORCE_REFRESH", "0") == "1"
+
+    t = (ticker or "").upper().strip()
+    if not t:
+        return False
+
+    cache = _load_earnings_cache()
+
+    today = date.today().isoformat()
+    rec = cache.get(t)
+
+    # If we have a record and it's within TTL, use it
+    if not force_refresh and isinstance(rec, dict):
+        asof = rec.get("asof")
+        if asof:
+            try:
+                age = (date.fromisoformat(today) - date.fromisoformat(asof)).days
+                if 0 <= age <= ttl_days:
+                    return bool(rec.get("value", False))
+            except Exception:
+                pass
+
+    # Otherwise compute and update cache
+    try:
+        val = bool(is_near_earnings(t))
+    except Exception:
+        val = False
+
+    cache[t] = {"value": val, "asof": today}
+    _save_earnings_cache(cache)
+    return val
+
+
 def send_telegram(message):
     """Sends a notification to Telegram when the scan completes."""
     token = os.getenv("TELEGRAM_TOKEN")
@@ -252,6 +342,15 @@ def main():
     snap = build_liquidity_snapshot(universe, index_df, data_client)
     filtered = snap["Ticker"].tolist()
 
+    # --- TEST MODE: limit scan universe for faster iteration ---
+    TEST_MODE = os.getenv("TEST_MODE", "0") == "1"
+    TEST_MAX_TICKERS = int(os.getenv("TEST_MAX_TICKERS", "150"))
+
+    if TEST_MODE:
+        print(f"🧪 TEST_MODE enabled. Limiting scan universe to {TEST_MAX_TICKERS} tickers.")
+        filtered = filtered[:TEST_MAX_TICKERS]
+
+
     history = cs.read_parquet(str(HIST_PATH))
     batch_size = 200
 
@@ -285,7 +384,7 @@ def main():
 
     results = []
     for t in tqdm(filtered, desc="Scanning"):
-        if is_near_earnings(t): continue
+        if is_near_earnings_cached(t): continue
 
         d_filtered = history[history["Ticker"] == t].copy()
         if d_filtered.empty or len(d_filtered) < 80: continue
@@ -351,6 +450,8 @@ def main():
 
     
     save_bad_tickers(BAD_TICKERS)
+
+
 
 if __name__ == "__main__":
     main()
