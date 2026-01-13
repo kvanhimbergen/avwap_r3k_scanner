@@ -75,6 +75,13 @@ def log(msg: str) -> None:
         # Logging must never break execution
         pass
 
+def after_trade_start_time(hour=9, minute=45) -> bool:
+    """
+    Enforce no trading before a fixed ET time (default 09:45 ET).
+    """
+    now = datetime.now(ET)
+    start = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return now >= start
 
 # ----------------------------
 # MARKET / FILE GUARDS
@@ -351,9 +358,13 @@ def main() -> None:
                 log(f"New trading day detected ({today}); cleared SUBMITTED_TODAY.")
 
             if is_market_open():
-                submit_from_watchlist(WATCHLIST_FILE)
+                if not after_trade_start_time(9, 45):
+                    log("Market OPEN but before 09:45 ET; execution paused.")
+                else:
+                    submit_from_watchlist(WATCHLIST_FILE)
             else:
                 log("Market CLOSED; standing by.")
+
         except Exception as e:
             log(f"ERROR: unexpected exception: {e}")
 
