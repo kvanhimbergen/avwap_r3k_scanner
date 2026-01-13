@@ -306,13 +306,27 @@ def main():
 
     # ... (Keep sorting and saving logic) ...
     out = pd.DataFrame(results)
+
+
+    print(f"\nDEBUG: Scan finished. Found {len(results)} total candidates.")
+
     if not out.empty:
         # TWEAK 4 & 5: RS Ranking and Auto-Culling to Top 20
         out = out.sort_values(["TrendTier", "RS"], ascending=[True, False]).head(ALGO_CANDIDATE_CAP)
         out.to_csv("daily_candidates.csv", index=False)
-        send_telegram(f"✅ *Scan Complete*: {len(out)} top candidates saved to `daily_candidates.csv` and ready for Sentinel.")
+        
+        # Success Message
+        msg = f"✅ *Scan Complete*: {len(out)} top candidates saved to `daily_candidates.csv`."
+        
         print("\n--- ALGO-READY TOP CANDIDATES ---")
         print(out[["Ticker", "TrendTier", "Price", "AVWAP_Floor", "R1_Trim", "R2_Target", "RS"]].head(20))
+    else:
+        # 2. Specific message for zero results to clear the 'Yesterday' mystery
+        msg = "⚠️ *Scan Complete*: No stocks met the Shannon Quality Gates today. `daily_candidates.csv` was NOT updated."
+
+    # 3. Move the Telegram call HERE so it always pings you
+    send_telegram(msg)
+    
     save_bad_tickers(BAD_TICKERS)
 
 if __name__ == "__main__":
