@@ -1,6 +1,5 @@
 #!/bin/bash
 set -euo pipefail
-
 # ----------------------------
 # Configuration
 # ----------------------------
@@ -22,7 +21,7 @@ cd "$PROJECT_DIR" || { echo "❌ Project folder not found!"; exit 1; }
 # 2. Pull latest code
 # ----------------------------
 echo "📥 Pulling latest code from $BRANCH..."
-git checkout "$BRANCH"
+git checkout "$BRANCH" >/dev/null 2>&1 || true
 git pull origin "$BRANCH"
 
 # ----------------------------
@@ -44,10 +43,9 @@ python -m py_compile \
   config.py
 
 # ----------------------------
-# 5. Ensure cache directory exists
+# 5. Ensure cache directory exists (do NOT delete universe cache)
 # ----------------------------
 mkdir -p "$PROJECT_DIR/cache"
-
 if [ -f "$PROJECT_DIR/cache/iwv_holdings.csv" ]; then
   echo "✅ Universe cache present: cache/iwv_holdings.csv"
 else
@@ -64,7 +62,7 @@ tmux kill-session -t "$SENTINEL_SESSION" 2>/dev/null || true
 tmux new-session -d -s "$SENTINEL_SESSION" \
   "cd \"$PROJECT_DIR\" && \
    set -a && [ -f .env ] && . .env && set +a && \
-   export TEST_MODE=0 && unset TEST_MAX_TICKERS && \
+   export TEST_MODE=0 && unset TEST_MAX_TICKERS || true && \
    \"$VENV_PATH/bin/python\" -u sentinel.py >> \"$PROJECT_DIR/sentinel.log\" 2>&1"
 
 # ----------------------------
@@ -76,7 +74,7 @@ tmux kill-session -t "$EXECUTION_SESSION" 2>/dev/null || true
 tmux new-session -d -s "$EXECUTION_SESSION" \
   "cd \"$PROJECT_DIR\" && \
    set -a && [ -f .env ] && . .env && set +a && \
-   export TEST_MODE=0 && unset TEST_MAX_TICKERS && \
+   export TEST_MODE=0 && unset TEST_MAX_TICKERS || true && \
    \"$VENV_PATH/bin/python\" -u execution.py >> \"$PROJECT_DIR/execution.log\" 2>&1"
 
 # ----------------------------

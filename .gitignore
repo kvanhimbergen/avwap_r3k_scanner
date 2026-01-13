@@ -12,3 +12,4 @@ __pycache__/
 
 # Scanning/Data cache (if your scanner saves temp data)
 cache/
+daily_candidates.csv
