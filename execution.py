@@ -1,5 +1,6 @@
 import os
 import time
+import requests
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -74,6 +75,83 @@ def log(msg: str) -> None:
     except Exception:
         # Logging must never break execution
         pass
+
+EXEC_TELEGRAM = os.getenv("EXEC_TELEGRAM", "0") == "1"
+
+# Track submitted orders we want to monitor for fills
+# order_id -> {"symbol": str, "last_status": str}
+TRACKED_ORDERS = {}
+
+
+def telegram_enabled() -> bool:
+    return EXEC_TELEGRAM and bool(os.getenv("TELEGRAM_TOKEN")) and bool(os.getenv("CHAT_ID"))
+
+
+def send_telegram(msg: str) -> None:
+    if not telegram_enabled():
+        return
+    try:
+        token = os.getenv("TELEGRAM_TOKEN")
+        chat_id = os.getenv("CHAT_ID")
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": msg}
+        requests.post(url, data=payload, timeout=10)
+    except Exception as e:
+        log(f"WARNING: Telegram send failed: {e}")
+
+
+def track_order(order, symbol: str) -> None:
+    """Add an order to tracked list for fill notifications."""
+    try:
+        oid = getattr(order, "id", None)
+        status = str(getattr(order, "status", "")).lower()
+        if oid:
+            TRACKED_ORDERS[str(oid)] = {"symbol": symbol, "last_status": status}
+    except Exception:
+        pass
+
+
+def check_tracked_orders() -> None:
+    """
+    Poll Alpaca for status changes on tracked orders and send Telegram on
+    filled/rejected/canceled. Keeps things in-memory (temporary).
+    """
+    if not TRACKED_ORDERS:
+        return
+
+    done_ids = []
+    for oid, meta in list(TRACKED_ORDERS.items()):
+        sym = meta.get("symbol", "UNKNOWN")
+        last = meta.get("last_status", "")
+
+        try:
+            # alpaca-py supports get_order_by_id; if it ever changes, we will log and skip.
+            o = trading_client.get_order_by_id(oid)
+            status = str(getattr(o, "status", "")).lower()
+        except Exception as e:
+            log(f"WARNING: could not fetch order {oid} for {sym}: {e}")
+            continue
+
+        if status and status != last:
+            TRACKED_ORDERS[oid]["last_status"] = status
+            log(f"ORDER UPDATE {sym} {oid}: {last} -> {status}")
+
+            if status in ("filled", "partially_filled"):
+                avg_fill = getattr(o, "filled_avg_price", None) or getattr(o, "avg_fill_price", None)
+                filled_qty = getattr(o, "filled_qty", None)
+                send_telegram(f"✅ FILLED {sym} | qty={filled_qty} avg={avg_fill} | order_id={oid}")
+                # keep tracking partially_filled; remove only when filled
+                if status == "filled":
+                    done_ids.append(oid)
+
+            elif status in ("rejected", "canceled", "expired"):
+                reason = getattr(o, "rejection_reason", None)
+                send_telegram(f"❌ {status.upper()} {sym} | reason={reason} | order_id={oid}")
+                done_ids.append(oid)
+
+    for oid in done_ids:
+        TRACKED_ORDERS.pop(oid, None)
+
 
 def after_trade_start_time(hour=9, minute=45) -> bool:
     """
@@ -330,13 +408,19 @@ def submit_from_watchlist(csv_path: str) -> None:
                 ref_price = None
 
         log(f"SUBMIT {sym}: bracket buy SL={sl} TP={tp} ref_price={ref_price}")
-        order = execute_buy_bracket(sym, sl, tp, ref_price=ref_price)
-
-        # Mark submitted even in DRY_RUN so we don't spam the log every cycle
+        order = execute_buy_bracket(sym, sl, tp)
         if order is not None:
             SUBMITTED_TODAY.add(sym)
+            oid = getattr(order, "id", "n/a")
+            log(f"SUBMITTED {sym}: order_id={oid}")
+
+            # Telegram + fill tracking (temporary)
+            send_telegram(f"📤 SUBMITTED {sym} | SL={sl} TP={tp} | order_id={oid}")
+            track_order(order, sym)
         else:
             log(f"FAILED {sym}: submit returned None")
+            send_telegram(f"⚠️ FAILED submit {sym} (submit returned None)")
+
 
         if len(SUBMITTED_TODAY) >= MAX_ORDERS_PER_DAY:
             log(f"MAX_ORDERS_PER_DAY reached ({MAX_ORDERS_PER_DAY}); stopping loop")
@@ -365,10 +449,16 @@ def main() -> None:
             else:
                 log("Market CLOSED; standing by.")
 
+            if TRACKED_ORDERS:
+                check_tracked_orders()
+# NEW: poll any tracked orders for fills/rejects and Telegram notify
+     
+
         except Exception as e:
             log(f"ERROR: unexpected exception: {e}")
 
         time.sleep(POLL_SECONDS)
+
 
 
 if __name__ == "__main__":
