@@ -29,6 +29,10 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 WATCHLIST_FILE = "daily_candidates.csv"
 TRADE_LOG = "trade_log.csv"
+TZ_ET = pytz.timezone("US/Eastern")
+
+def now_et_str() -> str:
+    return datetime.now(TZ_ET).strftime("%Y-%m-%d %H:%M:%S %Z")
 
 # State Tracking
 SUMMARY_SENT_TODAY = False
@@ -99,24 +103,36 @@ def get_alpaca_intraday(ticker):
 
 def monitor_watchlist():
     is_bullish = get_market_regime()
-    print(f"[{datetime.now()}] Regime: {'BULLISH' if is_bullish else 'BEARISH'}", flush=True)
+
+    # --- Watchlist staleness + load diagnostics ---
+    try:
+        mtime = datetime.fromtimestamp(os.path.getmtime(WATCHLIST_FILE), TZ_ET)
+    except FileNotFoundError:
+        print(f"[{now_et_str()}] WATCHLIST missing: {WATCHLIST_FILE} (skipping)", flush=True)
+        return
+    except Exception as e:
+        print(f"[{now_et_str()}] WATCHLIST stat error: {WATCHLIST_FILE} | {e}", flush=True)
+        return
+
+    today_et = datetime.now(TZ_ET).date()
+    if mtime.date() != today_et:
+        print(
+            f"[{now_et_str()}] WATCHLIST stale: {WATCHLIST_FILE} | mtime={mtime.strftime('%Y-%m-%d %H:%M:%S %Z')} | today={today_et} (skipping trades)",
+            flush=True,
+        )
+        return
 
     try:
         watchlist = pd.read_csv(WATCHLIST_FILE)
-    except FileNotFoundError:
-        print(f"[{datetime.now()}] WATCHLIST missing: {WATCHLIST_FILE} (skipping)", flush=True)
-        return
     except Exception as e:
-        print(f"[{datetime.now()}] WATCHLIST read error: {WATCHLIST_FILE} | {e}", flush=True)
+        print(f"[{now_et_str()}] WATCHLIST read error: {WATCHLIST_FILE} | {e}", flush=True)
         return
 
-    print(f"[{datetime.now()}] WATCHLIST loaded: {WATCHLIST_FILE} | rows={len(watchlist)}", flush=True)
+    print(f"[{now_et_str()}] WATCHLIST loaded: {WATCHLIST_FILE} | rows={len(watchlist)} | regime={'BULLISH' if is_bullish else 'BEARISH'}", flush=True)
 
-    # Optional (highly useful): guard against empty file
     if watchlist.empty:
-        print(f"[{datetime.now()}] WATCHLIST empty (no candidates).", flush=True)
+        print(f"[{now_et_str()}] WATCHLIST empty (no candidates).", flush=True)
         return
-
 
     for _, row in watchlist.iterrows():
         ticker = row['Ticker']
@@ -165,11 +181,12 @@ def monitor_watchlist():
 
 def main():
     global SUMMARY_SENT_TODAY
-    print("Sentinel Active. Monitoring Russell 3000 AVWAP Reclaims...")
+    print(f"[{now_et_str()}] Sentinel Active. Monitoring Russell 3000 AVWAP Reclaims...", flush=True)
+
     while True:
         if is_market_open():
             monitor_watchlist()
-            print(f"[{datetime.now(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S %Z')}] Heartbeat: market OPEN, monitored watchlist; sleeping 900s", flush=True)
+            print(f"[{now_et_str()}] Heartbeat: market OPEN; next check in 900s", flush=True)
             time.sleep(900) 
         else:
             now = datetime.now(pytz.timezone('US/Eastern'))
@@ -180,7 +197,7 @@ def main():
                 SUMMARY_SENT_TODAY = False
                 TRADED_TODAY.clear() 
                 OPEN_TRADE_STATS.clear()
-            print(f"[{datetime.now(pytz.timezone('US/Eastern')).strftime('%Y-%m-%d %H:%M:%S %Z')}] Heartbeat: market CLOSED; sleeping 300s", flush=True)
+            print(f"[{now_et_str()}] Heartbeat: market CLOSED; next check in 300s", flush=True)
             time.sleep(300)
 
 if __name__ == "__main__":
