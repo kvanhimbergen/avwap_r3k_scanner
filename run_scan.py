@@ -227,6 +227,11 @@ def send_telegram(message):
 def main():
     load_dotenv()
     data_client = StockHistoricalDataClient(os.getenv('APCA_API_KEY_ID'), os.getenv('APCA_API_SECRET_KEY'))
+
+    BASE_DIR = Path(__file__).resolve().parent
+    OUT_PATH = BASE_DIR / "daily_candidates.csv"
+    HIST_PATH = BASE_DIR / "cache" / "ohlcv_history.parquet"
+
     
     # TWEAK 1: Market Regime Check
     if not get_market_regime(data_client):
@@ -247,31 +252,34 @@ def main():
     snap = build_liquidity_snapshot(universe, index_df, data_client)
     filtered = snap["Ticker"].tolist()
 
-    history = cs.read_parquet("cache/ohlcv_history.parquet")
+    history = cs.read_parquet(str(HIST_PATH))
     batch_size = 200
 
-    # If cache is missing/empty, backfill enough history to satisfy the 80-bar gate
-    if history is None or getattr(history, "empty", True):
+    # First-run / missing-cache backfill: must exceed 80 bars
+    if history is None or history.empty:
         print("History cache missing/empty. Backfilling ~2 years...")
         hist_start = datetime.now() - timedelta(days=730)
     else:
         hist_start = datetime.now() - timedelta(days=15)
 
-    # Persist updated history so future runs have 80+ bars available
-    os.makedirs("cache", exist_ok=True)
-    cs.write_parquet(history, "cache/ohlcv_history.parquet")
-    print(f"Saved history cache: {len(history):,} rows")
-
-    
     for i in tqdm(range(0, len(filtered), batch_size), desc="History Refresh"):
         batch = filtered[i : i + batch_size]
         try:
             req = StockBarsRequest(symbol_or_symbols=batch, timeframe=TimeFrame.Day, start=hist_start)
             raw_new = data_client.get_stock_bars(req).df
-            if not raw_new.empty:
+            if raw_new is not None and not raw_new.empty:
                 newdata = standardize_alpaca_to_yf(raw_new)
                 history = cs.upsert_history(history, newdata)
-        except: continue
+        except Exception as e:
+            # Do not silently swallow; at least count it
+            PBT_DIAG["history_refresh_errors"] += 1
+            continue
+
+    ## Persist AFTER refresh
+    os.makedirs(HIST_PATH.parent, exist_ok=True)
+    cs.write_parquet(history, str(HIST_PATH))
+    print(f"Saved history cache: {HIST_PATH} | rows={0 if history is None else len(history):,}")
+
 
     # ... (Keep existing imports and helper functions) ...
 
@@ -325,25 +333,22 @@ def main():
 
     print(f"\nDEBUG: Scan finished. Found {len(results)} total candidates.")
 
+    out = pd.DataFrame(results)
+
+    # Always write the file (even empty) so downstream bots don't trade stale lists
+    out.to_csv(OUT_PATH, index=False)
+    print(f"\nDEBUG: Scan finished. Found {len(out)} total candidates. Wrote: {OUT_PATH}")
+
     if not out.empty:
-        # TWEAK 4 & 5: RS Ranking and Auto-Culling to Top 20
         out = out.sort_values(["TrendTier", "RS"], ascending=[True, False]).head(ALGO_CANDIDATE_CAP)
-        BASE_DIR = Path(__file__).resolve().parent
-        OUT_PATH = BASE_DIR / "daily_candidates.csv"
         out.to_csv(OUT_PATH, index=False)
         print(f"Wrote candidates to: {OUT_PATH}")
-        
-        # Success Message
         msg = f"✅ *Scan Complete*: {len(out)} top candidates saved to `daily_candidates.csv`."
-        
-        print("\n--- ALGO-READY TOP CANDIDATES ---")
-        print(out[["Ticker", "TrendTier", "Price", "AVWAP_Floor", "R1_Trim", "R2_Target", "RS"]].head(20))
     else:
-        # 2. Specific message for zero results to clear the 'Yesterday' mystery
-        msg = "⚠️ *Scan Complete*: No stocks met the Shannon Quality Gates today. `daily_candidates.csv` was NOT updated."
+        msg = "⚠️ *Scan Complete*: No stocks met the Shannon Quality Gates today. An empty `daily_candidates.csv` was written to prevent stale execution."
 
-    # 3. Move the Telegram call HERE so it always pings you
     send_telegram(msg)
+
     
     save_bad_tickers(BAD_TICKERS)
 
