@@ -30,10 +30,14 @@ def file_age_days(path: str) -> float:
         return 1e9
     return (time.time() - os.path.getmtime(path)) / 86400.0
 
-def read_parquet(path: str) -> pd.DataFrame | None:
-    if not os.path.exists(path):
-        return None
-    return pd.read_parquet(path)
+def read_parquet(path: str) -> pd.DataFrame:
+    try:
+        if not os.path.exists(path):
+            return pd.DataFrame()
+        return pd.read_parquet(path, engine="pyarrow")
+    except Exception:
+        return pd.DataFrame()
+
 
 def write_parquet(df: pd.DataFrame, path: str):
     """

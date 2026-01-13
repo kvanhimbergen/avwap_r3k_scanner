@@ -249,7 +249,19 @@ def main():
 
     history = cs.read_parquet("cache/ohlcv_history.parquet")
     batch_size = 200
-    hist_start = datetime.now() - timedelta(days=15)
+
+    # If cache is missing/empty, backfill enough history to satisfy the 80-bar gate
+    if history is None or getattr(history, "empty", True):
+        print("History cache missing/empty. Backfilling ~2 years...")
+        hist_start = datetime.now() - timedelta(days=730)
+    else:
+        hist_start = datetime.now() - timedelta(days=15)
+
+    # Persist updated history so future runs have 80+ bars available
+    os.makedirs("cache", exist_ok=True)
+    cs.write_parquet(history, "cache/ohlcv_history.parquet")
+    print(f"Saved history cache: {len(history):,} rows")
+
     
     for i in tqdm(range(0, len(filtered), batch_size), desc="History Refresh"):
         batch = filtered[i : i + batch_size]
@@ -306,6 +318,9 @@ def main():
 
     # ... (Keep sorting and saving logic) ...
     out = pd.DataFrame(results)
+    out.to_csv(OUT_PATH, index=False)  # always write
+    if out.empty:
+        print("No candidates found today (file still written).")
 
 
     print(f"\nDEBUG: Scan finished. Found {len(results)} total candidates.")
@@ -313,7 +328,10 @@ def main():
     if not out.empty:
         # TWEAK 4 & 5: RS Ranking and Auto-Culling to Top 20
         out = out.sort_values(["TrendTier", "RS"], ascending=[True, False]).head(ALGO_CANDIDATE_CAP)
-        out.to_csv("daily_candidates.csv", index=False)
+        BASE_DIR = Path(__file__).resolve().parent
+        OUT_PATH = BASE_DIR / "daily_candidates.csv"
+        out.to_csv(OUT_PATH, index=False)
+        print(f"Wrote candidates to: {OUT_PATH}")
         
         # Success Message
         msg = f"✅ *Scan Complete*: {len(out)} top candidates saved to `daily_candidates.csv`."
