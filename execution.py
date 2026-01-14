@@ -77,19 +77,47 @@ def log(msg: str) -> None:
         pass
 
 EXEC_TELEGRAM = os.getenv("EXEC_TELEGRAM", "0") == "1"
+# Telegram rate limiting (per symbol)
+TELEGRAM_RATE_LIMIT_SECONDS = int(os.getenv("TELEGRAM_RATE_LIMIT_SECONDS", "300"))  # 5 minutes default
+_LAST_TELEGRAM_TS_BY_SYMBOL: dict[str, float] = {}
+
 
 # Track submitted orders we want to monitor for fills
 # order_id -> {"symbol": str, "last_status": str}
 TRACKED_ORDERS = {}
+
+def can_send_symbol_telegram(symbol: str) -> bool:
+    """
+    Rate limit Telegram alerts per symbol.
+    Default: 1 alert per symbol per 300 seconds (5 minutes).
+    """
+    sym = (symbol or "").upper().strip()
+    if not sym:
+        return True  # non-symbol messages are allowed
+
+    now = time.time()
+    last = _LAST_TELEGRAM_TS_BY_SYMBOL.get(sym, 0.0)
+    if now - last < TELEGRAM_RATE_LIMIT_SECONDS:
+        return False
+
+    _LAST_TELEGRAM_TS_BY_SYMBOL[sym] = now
+    return True
+
 
 
 def telegram_enabled() -> bool:
     return EXEC_TELEGRAM and bool(os.getenv("TELEGRAM_TOKEN")) and bool(os.getenv("CHAT_ID"))
 
 
-def send_telegram(msg: str) -> None:
+def send_telegram(msg: str, symbol: str | None = None) -> None:
     if not telegram_enabled():
         return
+
+    # Rate-limit symbol-specific alerts (prevents spam)
+    if symbol is not None and not can_send_symbol_telegram(symbol):
+        log(f"TELEGRAM rate-limited for {symbol}: suppressed message")
+        return
+
     try:
         token = os.getenv("TELEGRAM_TOKEN")
         chat_id = os.getenv("CHAT_ID")
@@ -98,6 +126,7 @@ def send_telegram(msg: str) -> None:
         requests.post(url, data=payload, timeout=10)
     except Exception as e:
         log(f"WARNING: Telegram send failed: {e}")
+
 
 
 def track_order(order, symbol: str) -> None:
@@ -139,14 +168,14 @@ def check_tracked_orders() -> None:
             if status in ("filled", "partially_filled"):
                 avg_fill = getattr(o, "filled_avg_price", None) or getattr(o, "avg_fill_price", None)
                 filled_qty = getattr(o, "filled_qty", None)
-                send_telegram(f"✅ FILLED {sym} | qty={filled_qty} avg={avg_fill} | order_id={oid}")
+                send_telegram(f"✅ FILLED {sym} | qty={filled_qty} avg={avg_fill} | order_id={oid}", symbol=sym)
                 # keep tracking partially_filled; remove only when filled
                 if status == "filled":
                     done_ids.append(oid)
 
             elif status in ("rejected", "canceled", "expired"):
                 reason = getattr(o, "rejection_reason", None)
-                send_telegram(f"❌ {status.upper()} {sym} | reason={reason} | order_id={oid}")
+                send_telegram(f"❌ {status.upper()} {sym} | reason={reason} | order_id={oid}", symbol=sym)
                 done_ids.append(oid)
 
     for oid in done_ids:
@@ -399,6 +428,15 @@ def submit_from_watchlist(csv_path: str) -> None:
             log(f"SKIP {sym}: invalid Stop_Loss/R2_Target")
             continue
 
+        # Basic sanity checks (avoid inverted brackets)
+        if sl <= 0 or tp <= 0:
+            log(f"SKIP {sym}: non-positive SL/TP")
+            continue
+        if sl >= tp:
+            log(f"SKIP {sym}: SL >= TP (inverted bracket) sl={sl} tp={tp}")
+            continue
+
+
         ref_price = None
         if has_price_col:
             try:
@@ -408,18 +446,36 @@ def submit_from_watchlist(csv_path: str) -> None:
                 ref_price = None
 
         log(f"SUBMIT {sym}: bracket buy SL={sl} TP={tp} ref_price={ref_price}")
-        order = execute_buy_bracket(sym, sl, tp)
+        order = execute_buy_bracket(sym, sl, tp, ref_price=ref_price)
+
         if order is not None:
             SUBMITTED_TODAY.add(sym)
-            oid = getattr(order, "id", "n/a")
-            log(f"SUBMITTED {sym}: order_id={oid}")
 
-            # Telegram + fill tracking (temporary)
-            send_telegram(f"📤 SUBMITTED {sym} | SL={sl} TP={tp} | order_id={oid}")
-            track_order(order, sym)
+            is_dry = DRY_RUN or isinstance(order, dict)
+            oid = getattr(order, "id", None)
+
+            if is_dry:
+                log(f"DRY_RUN SUBMITTED {sym}: qty simulated SL={sl} TP={tp}")
+                send_telegram(
+                    f"🧪 DRY_RUN {sym} | SL={sl} TP={tp}",
+                    symbol=sym,
+                )
+            else:
+                log(f"SUBMITTED {sym}: order_id={oid}")
+                send_telegram(
+                    f"📤 SUBMITTED {sym} | SL={sl} TP={tp} | order_id={oid}",
+                    symbol=sym,
+                )
+                track_order(order, sym)
+
         else:
             log(f"FAILED {sym}: submit returned None")
-            send_telegram(f"⚠️ FAILED submit {sym} (submit returned None)")
+            send_telegram(
+                f"⚠️ FAILED submit {sym} (submit returned None)",
+                symbol=sym,
+            )
+
+
 
 
         if len(SUBMITTED_TODAY) >= MAX_ORDERS_PER_DAY:
@@ -451,7 +507,7 @@ def main() -> None:
 
             if TRACKED_ORDERS:
                 check_tracked_orders()
-# NEW: poll any tracked orders for fills/rejects and Telegram notify
+
      
 
         except Exception as e:
