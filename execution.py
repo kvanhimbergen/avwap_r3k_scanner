@@ -365,7 +365,8 @@ def get_daily_summary_data() -> dict:
                 "qty": p.qty,
                 "val": float(p.market_value),
                 "pnl": float(p.unrealized_pl),
-                "pnl_pct": float(p.unrealized_pl_pc) * 100,
+                "pnl_pct": float(getattr(p, "unrealized_plpc", getattr(p, "unrealized_pl_pc", 0.0))) * 100,
+
             }
         )
 
