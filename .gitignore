@@ -16,4 +16,9 @@ daily_candidates.csv
 
 # Runtime outputs
 *.log
+# Generated trading artifacts
+execution.log
+sentinel.log
+scan.log
+watchdog.log
 
