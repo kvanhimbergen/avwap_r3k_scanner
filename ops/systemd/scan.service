@@ -1,0 +1,16 @@
+[Unit]
+Description=AVWAP Bot - Daily Scan (run_scan.py)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/avwap_r3k_scanner
+
+EnvironmentFile=/root/avwap_r3k_scanner/.env
+Environment=TEST_MODE=0
+
+ExecStart=/root/avwap_r3k_scanner/venv/bin/python -u /root/avwap_r3k_scanner/run_scan.py
+
+StandardOutput=journal
+StandardError=journal
