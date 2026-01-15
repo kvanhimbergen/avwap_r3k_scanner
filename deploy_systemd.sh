@@ -1,10 +1,3 @@
-echo "ERROR: This deploy.sh uses tmux and will conflict with systemd services." >&2
-
-echo "Use: sudo ./deploy_systemd.sh" >&2
-
-exit 1
-
-
 #!/bin/bash
 set -euo pipefail
 
@@ -14,7 +7,7 @@ BRANCH="main"
 
 echo "Starting deployment (SYSTEMD MODE)..."
 
-cd "$PROJECT_DIR" || { echo "ERROR: Project folder not found: $PROJECT_DIR" >&2; exit 1; }
+cd "$PROJECT_DIR"
 
 echo "Pulling latest code from $BRANCH..."
 git checkout "$BRANCH" >/dev/null 2>&1 || true
@@ -43,8 +36,7 @@ fi
 
 # Gate script required by execution.service ExecStartPre
 if [ ! -x "$PROJECT_DIR/bin/check_watchlist_today.sh" ]; then
-  echo "ERROR: Missing gate script: $PROJECT_DIR/bin/check_watchlist_today.sh" >&2
-  echo "Fix: ensure repo deployed and script is executable." >&2
+  echo "ERROR: Missing gate script: $PROJECT_DIR/bin/check_watchlist_today.sh"
   exit 1
 fi
 
@@ -60,6 +52,3 @@ sudo systemctl restart scan.timer execution-restart.timer >/dev/null 2>&1 || tru
 systemctl list-timers --all | grep -E 'scan\.timer|execution-restart\.timer|NEXT|LEFT' || true
 
 echo "Deployment complete (SYSTEMD MODE)."
-echo "Useful commands:"
-echo "  systemctl status sentinel.service execution.service --no-pager"
-echo "  journalctl -u sentinel.service -u execution.service --since 'today' --no-pager"

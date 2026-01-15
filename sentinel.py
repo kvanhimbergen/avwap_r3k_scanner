@@ -6,6 +6,7 @@ import csv
 from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
+from alerts.slack import slack_alert
 
 # Import execution logic and shared trading client
 from execution import (
@@ -26,6 +27,7 @@ from config import cfg
 # --- CONFIGURATION ---
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+SENTINEL_TELEGRAM = os.getenv("SENTINEL_TELEGRAM", "0") == "1"
 CHAT_ID = os.getenv("CHAT_ID")
 WATCHLIST_FILE = "daily_candidates.csv"
 TRADE_LOG = "trade_log.csv"
@@ -46,6 +48,8 @@ data_client = StockHistoricalDataClient(
 )
 
 def send_telegram(message):
+    if not SENTINEL_TELEGRAM or not TELEGRAM_TOKEN or not os.getenv("CHAT_ID"):
+        return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
@@ -165,6 +169,14 @@ def monitor_watchlist():
                 OPEN_TRADE_STATS[ticker] = {'entry': curr_price, 'max_high': curr_price, 'min_low': curr_price, 'signal': avwap_floor}
                 log_trade_to_csv(ticker, 'BUY', curr_price, avwap_floor)
                 send_telegram(f"✅ *BUY {ticker}* @ ${curr_price:.2f} | 🛡️ Stop: ${structural_stop:.2f}")
+                slack_alert(
+                    "TRADE",
+                    f"BUY {ticker}",
+                    f"placed @ ${curr_price:.2f} | stop=${structural_stop:.2f} | r2=${r2_target:.2f}",
+                    component="SENTINEL",
+                    throttle_key=f"buy_{ticker}",
+                    throttle_seconds=60,
+                )
                 TRADED_TODAY.add(ticker)
 
         # Optimization: Only check for trim if we actually own the stock
@@ -176,6 +188,14 @@ def monitor_watchlist():
                     s = OPEN_TRADE_STATS[ticker]
                     log_trade_to_csv(ticker, 'TRIM', curr_price, r1_target, s['max_high'] - s['entry'], s['entry'] - s['min_low'], curr_price - s['entry'])
                     send_telegram(f"✂️ *TRIM {ticker}* @ ${curr_price:.2f}")
+                    slack_alert(
+                        "TRADE",
+                        f"TRIM {ticker}",
+                        f"partial sell @ ${curr_price:.2f} near r1=${r1_target:.2f}",
+                        component="SENTINEL",
+                        throttle_key=f"trim_{ticker}",
+                        throttle_seconds=120,
+                    )
                     # Remove from tracking after trim if you wish, or keep for R2 tracking
                 except: pass
 
@@ -184,6 +204,14 @@ def main():
     load_dotenv(dotenv_path="/root/avwap_r3k_scanner/.env")
 
     print(f"[{now_et_str()}] Sentinel Active. Monitoring Russell 3000 AVWAP Reclaims...", flush=True)
+    slack_alert(
+        "INFO",
+        "Sentinel started",
+        f"Sentinel active at {now_et_str()} (service start).",
+        component="SENTINEL",
+        throttle_key="sentinel_start",
+        throttle_seconds=300,
+    )
 
     while True:
         if is_market_open():

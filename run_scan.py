@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from collections import Counter
 from pathlib import Path
 from dotenv import load_dotenv
+from alerts.slack import slack_alert
 import json
 from datetime import date
 
@@ -443,8 +444,24 @@ def main():
         out.to_csv(OUT_PATH, index=False)
         print(f"Wrote candidates to: {OUT_PATH}")
         msg = f"✅ *Scan Complete*: {len(out)} top candidates saved to `daily_candidates.csv`."
+        slack_alert(
+            "INFO",
+            "Scan complete",
+            f"Saved {len(out)} candidates to {OUT_PATH.name}",
+            component="SCAN",
+            throttle_key=f"scan_complete_{datetime.now(pytz.timezone('America/New_York')).date()}",
+            throttle_seconds=3600,
+        )
     else:
         msg = "⚠️ *Scan Complete*: No stocks met the Shannon Quality Gates today. An empty `daily_candidates.csv` was written to prevent stale execution."
+        slack_alert(
+            "WARNING",
+            "Scan complete (empty)",
+            f"No candidates met gates; wrote empty {OUT_PATH.name} to prevent stale execution.",
+            component="SCAN",
+            throttle_key=f"scan_empty_{datetime.now(pytz.timezone('America/New_York')).date()}",
+            throttle_seconds=3600,
+        )
 
     send_telegram(msg)
 

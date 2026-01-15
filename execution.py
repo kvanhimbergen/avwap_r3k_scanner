@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytz
 from dotenv import load_dotenv
+from alerts.slack import slack_alert
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
@@ -169,6 +170,14 @@ def check_tracked_orders() -> None:
                 avg_fill = getattr(o, "filled_avg_price", None) or getattr(o, "avg_fill_price", None)
                 filled_qty = getattr(o, "filled_qty", None)
                 send_telegram(f"✅ FILLED {sym} | qty={filled_qty} avg={avg_fill} | order_id={oid}", symbol=sym)
+                slack_alert(
+                    "TRADE",
+                    f"FILLED {sym}" if status == "filled" else f"PARTIAL {sym}",
+                    f"qty={filled_qty} avg={avg_fill} | order_id={oid}",
+                    component="EXECUTION",
+                    throttle_key=f"fill_{sym}_{oid}",
+                    throttle_seconds=30,
+                )
                 # keep tracking partially_filled; remove only when filled
                 if status == "filled":
                     done_ids.append(oid)
@@ -176,6 +185,15 @@ def check_tracked_orders() -> None:
             elif status in ("rejected", "canceled", "expired"):
                 reason = getattr(o, "rejection_reason", None)
                 send_telegram(f"❌ {status.upper()} {sym} | reason={reason} | order_id={oid}", symbol=sym)
+                level = "ERROR" if status == "rejected" else "WARNING"
+                slack_alert(
+                    level,
+                    f"{status.upper()} {sym}",
+                    f"reason={reason} | order_id={oid}",
+                    component="EXECUTION",
+                    throttle_key=f"order_{status}_{sym}_{oid}",
+                    throttle_seconds=30,
+                )
                 done_ids.append(oid)
 
     for oid in done_ids:
@@ -461,11 +479,27 @@ def submit_from_watchlist(csv_path: str) -> None:
                     f"🧪 DRY_RUN {sym} | SL={sl} TP={tp}",
                     symbol=sym,
                 )
+                slack_alert(
+                    "TRADE",
+                    f"DRY_RUN {sym}",
+                    f"SL={sl} TP={tp}",
+                    component="EXECUTION",
+                    throttle_key=f"dryrun_{sym}",
+                    throttle_seconds=60,
+                )
             else:
                 log(f"SUBMITTED {sym}: order_id={oid}")
                 send_telegram(
                     f"📤 SUBMITTED {sym} | SL={sl} TP={tp} | order_id={oid}",
                     symbol=sym,
+                )
+                slack_alert(
+                    "TRADE",
+                    f"SUBMITTED {sym}",
+                    f"SL={sl} TP={tp} | order_id={oid}",
+                    component="EXECUTION",
+                    throttle_key=f"submitted_{sym}",
+                    throttle_seconds=60,
                 )
                 track_order(order, sym)
 
@@ -474,6 +508,14 @@ def submit_from_watchlist(csv_path: str) -> None:
             send_telegram(
                 f"⚠️ FAILED submit {sym} (submit returned None)",
                 symbol=sym,
+            )
+            slack_alert(
+                "WARNING",
+                f"FAILED submit {sym}",
+                "submit returned None",
+                component="EXECUTION",
+                throttle_key=f"failed_submit_{sym}",
+                throttle_seconds=300,
             )
 
 
@@ -488,6 +530,14 @@ def main() -> None:
     global SUBMITTED_DATE, SUBMITTED_TODAY
 
     log(f"Execution bot starting. PAPER={PAPER} DRY_RUN={DRY_RUN} POLL_SECONDS={POLL_SECONDS}")
+    slack_alert(
+        "INFO",
+        "Execution started",
+        f"PAPER={PAPER} DRY_RUN={DRY_RUN} POLL_SECONDS={POLL_SECONDS}",
+        component="EXECUTION",
+        throttle_key="execution_start",
+        throttle_seconds=300,
+    )
 
     while True:
         try:
@@ -513,6 +563,14 @@ def main() -> None:
 
         except Exception as e:
             log(f"ERROR: unexpected exception: {e}")
+            slack_alert(
+                "ERROR",
+                "Execution exception",
+                f"{type(e).__name__}: {e}",
+                component="EXECUTION",
+                throttle_key="execution_exception",
+                throttle_seconds=300,
+            )
 
         time.sleep(POLL_SECONDS)
 

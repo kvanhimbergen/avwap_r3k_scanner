@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Gate: ensure watchlist exists and is from "today" in America/New_York.
-# Used by systemd ExecStartPre for execution.service.
-
 WATCHLIST_FILE="${WATCHLIST_FILE:-daily_candidates.csv}"
 BASE_DIR="/root/avwap_r3k_scanner"
 FILE_PATH="${BASE_DIR}/${WATCHLIST_FILE}"
