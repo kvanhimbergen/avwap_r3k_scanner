@@ -1,0 +1,36 @@
+[Unit]
+Description=AVWAP Bot - Sentinel (orchestrator)
+After=network-online.target
+Wants=network-online.target
+StartLimitInterval=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=/root/avwap_r3k_scanner
+
+# Load env vars from your existing .env
+EnvironmentFile=/root/avwap_r3k_scanner/.env
+Environment=TEST_MODE=0
+
+# Run from your venv
+ExecStart=/root/avwap_r3k_scanner/venv/bin/python -u /root/avwap_r3k_scanner/sentinel.py
+
+# Resilience
+Restart=always
+RestartSec=5
+
+# Keep logs in journal; optional file logging is handled by your python logger/prints
+StandardOutput=journal
+StandardError=journal
+
+# Reasonable hardening (compatible with running as root)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target
+
+
