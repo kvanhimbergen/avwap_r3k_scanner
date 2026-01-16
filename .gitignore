@@ -22,3 +22,7 @@ sentinel.log
 scan.log
 watchdog.log
 
+
+# Execution V2 runtime state
+/data/*.sqlite3
+/data/*.sqlite
