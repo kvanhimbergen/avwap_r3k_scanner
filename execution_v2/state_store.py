@@ -20,7 +20,7 @@ from typing import Optional, Iterable
 from execution_v2.config_types import EntryIntent, PositionState, StopMode
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class StateStore:
@@ -44,13 +44,25 @@ class StateStore:
         )
         cur.execute("SELECT value FROM meta WHERE key='schema_version';")
         row = cur.fetchone()
+
         if row is None:
-            cur.execute("INSERT INTO meta(key,value) VALUES('schema_version', ?);", (str(SCHEMA_VERSION),))
+            cur.execute(
+                "INSERT INTO meta(key,value) VALUES('schema_version', ?);",
+                (str(SCHEMA_VERSION),),
+            )
             self._create_schema_v1()
         else:
             v = int(row["value"])
-            if v != SCHEMA_VERSION:
-                raise RuntimeError(f"Unsupported schema_version {v}; expected {SCHEMA_VERSION}")
+            if v == 1:
+                self._migrate_v1_to_v2()
+                cur.execute(
+                    "UPDATE meta SET value=? WHERE key='schema_version';",
+                    (str(SCHEMA_VERSION),),
+                )
+            elif v != SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"Unsupported schema_version {v}; expected {SCHEMA_VERSION}"
+                )
 
     def _create_schema_v1(self) -> None:
         cur = self.conn.cursor()
@@ -89,6 +101,9 @@ class StateStore:
               symbol TEXT PRIMARY KEY,
               size_shares INTEGER NOT NULL,
               avg_price REAL NOT NULL,
+              pivot_level REAL NOT NULL
+	      r1_level REAL NOT NULL,
+	      r2_level REAL NOT NULL,
               stop_mode TEXT NOT NULL,
               last_update_ts REAL NOT NULL,
               last_boh_level REAL,
@@ -108,10 +123,24 @@ class StateStore:
               side TEXT NOT NULL,
               qty INTEGER NOT NULL,
               created_ts REAL NOT NULL,
-              external_order_id TEXT
+              external_order_id  TEXT
             );
             """
         )
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trim_intents (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              symbol TEXT NOT NULL,
+              pct REAL NOT NULL,
+              reason TEXT NOT NULL,
+              created_ts REAL NOT NULL
+            );
+            """
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_trim_intents_sym ON trim_intents(symbol);")
+
 
         # Helpful indexes
         cur.execute("CREATE INDEX IF NOT EXISTS idx_candidates_expires ON candidates(expires_ts);")
@@ -120,6 +149,37 @@ class StateStore:
     # -------------------------
     # Candidates
     # -------------------------
+    def _migrate_v1_to_v2(self) -> None:
+        """
+        Schema v2 changes:
+        - positions: add pivot_level, r1_level, r2_level
+        - add trim_intents table
+        """
+        cur = self.conn.cursor()
+
+        cur.execute("PRAGMA table_info(positions);")
+        cols = {r["name"] for r in cur.fetchall()}
+
+        def add_col(name: str, ddl: str) -> None:
+            if name not in cols:
+                cur.execute(f"ALTER TABLE positions ADD COLUMN {ddl};")
+
+        add_col("pivot_level", "pivot_level REAL NOT NULL DEFAULT 0")
+        add_col("r1_level", "r1_level REAL NOT NULL DEFAULT 0")
+        add_col("r2_level", "r2_level REAL NOT NULL DEFAULT 0")
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trim_intents (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              symbol TEXT NOT NULL,
+              pct REAL NOT NULL,
+              reason TEXT NOT NULL,
+              created_ts REAL NOT NULL
+            );
+            """
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_trim_intents_sym ON trim_intents(symbol);")
 
     def upsert_candidate(
         self, symbol: str, first_seen_ts: float, expires_ts: float, pivot_level: Optional[float] = None, notes: str = ""
@@ -225,11 +285,16 @@ class StateStore:
         cur = self.conn.cursor()
         cur.execute(
             """
-            INSERT INTO positions(symbol,size_shares,avg_price,stop_mode,last_update_ts,last_boh_level,invalidation_count,trimmed_r1,trimmed_r2)
-            VALUES(?,?,?,?,?,?,?,?,?)
+            INSERT INTO positions(
+              symbol,size_shares,avg_price,pivot_level,r1_level,r2_level,stop_mode,last_update_ts,last_boh_level,invalidation_count,trimmed_r1,trimmed_r2
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(symbol) DO UPDATE SET
               size_shares=excluded.size_shares,
               avg_price=excluded.avg_price,
+              pivot_level=excluded.pivot_level,
+              r1_level=excluded.r1_level,
+              r2_level=excluded.r2_level,
               stop_mode=excluded.stop_mode,
               last_update_ts=excluded.last_update_ts,
               last_boh_level=excluded.last_boh_level,
@@ -242,6 +307,9 @@ class StateStore:
                 ps.symbol,
                 ps.size_shares,
                 ps.avg_price,
+                ps.pivot_level,
+                ps.r1_level,
+                ps.r2_level,
                 ps.stop_mode.value,
                 ps.last_update_ts,
                 ps.last_boh_level,
@@ -261,6 +329,9 @@ class StateStore:
             symbol=r["symbol"],
             size_shares=int(r["size_shares"]),
             avg_price=float(r["avg_price"]),
+            pivot_level=float(r["pivot_level"]),
+	    r1_level=float(r["r1_level"]),
+	    r2_level=float(r["r2_level"]), 
             stop_mode=StopMode(r["stop_mode"]),
             last_update_ts=float(r["last_update_ts"]),
             last_boh_level=(float(r["last_boh_level"]) if r["last_boh_level"] is not None else None),
@@ -269,15 +340,56 @@ class StateStore:
             trimmed_r2=bool(int(r["trimmed_r2"])),
         )
 
-    def list_positions(self) -> list[str]:
+    def list_positions(self) -> list[PositionState]:
         cur = self.conn.cursor()
-        cur.execute("SELECT symbol FROM positions ORDER BY symbol;")
-        return [r["symbol"] for r in cur.fetchall()]
+        cur.execute("SELECT * FROM positions ORDER BY symbol;")
+        out: list[PositionState] = []
+        for r in cur.fetchall():
+            out.append(
+                PositionState(
+                    symbol=r["symbol"],
+                    size_shares=int(r["size_shares"]),
+                    avg_price=float(r["avg_price"]),
+                    pivot_level=float(r["pivot_level"]),
+                    r1_level=float(r["r1_level"]),
+                    r2_level=float(r["r2_level"]),
+                    stop_mode=StopMode(r["stop_mode"]),
+                    last_update_ts=float(r["last_update_ts"]),
+                    last_boh_level=(float(r["last_boh_level"]) if r["last_boh_level"] is not None else None),
+                    invalidation_count=int(r["invalidation_count"]),
+                    trimmed_r1=bool(int(r["trimmed_r1"])),
+                    trimmed_r2=bool(int(r["trimmed_r2"])),
+                )
+            )
+        return out
 
     def delete_position(self, symbol: str) -> None:
         cur = self.conn.cursor()
         cur.execute("DELETE FROM positions WHERE symbol=?;", (symbol,))
 
+    def update_stop_mode(self, symbol: str, mode: StopMode) -> None:
+        cur = self.conn.cursor()
+        cur.execute(
+            "UPDATE positions SET stop_mode=?, last_update_ts=? WHERE symbol=?;",
+            (mode.value, time.time(), symbol),
+        )
+
+    def mark_trimmed(self, symbol: str, which: str) -> None:
+        if which not in ("r1", "r2"):
+            raise ValueError("which must be 'r1' or 'r2'")
+        col = "trimmed_r1" if which == "r1" else "trimmed_r2"
+        cur = self.conn.cursor()
+        cur.execute(
+            f"UPDATE positions SET {col}=1, last_update_ts=? WHERE symbol=?;",
+            (time.time(), symbol),
+        )
+
+    def create_trim_intent(self, symbol: str, pct: float, reason: str) -> None:
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT INTO trim_intents(symbol,pct,reason,created_ts) VALUES(?,?,?,?);",
+            (symbol, float(pct), str(reason), time.time()),
+        )
     # -------------------------
     # Order idempotency
     # -------------------------

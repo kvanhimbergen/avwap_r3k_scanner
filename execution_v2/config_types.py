@@ -57,6 +57,9 @@ class PositionState:
     symbol: str
     size_shares: int
     avg_price: float
+    pivot_level: float
+    r1_level: float
+    r2_level: float
     stop_mode: StopMode
     last_update_ts: float
 
