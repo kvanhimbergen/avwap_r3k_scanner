@@ -59,7 +59,9 @@ class StateStore:
                     "UPDATE meta SET value=? WHERE key='schema_version';",
                     (str(SCHEMA_VERSION),),
                 )
-            elif v != SCHEMA_VERSION:
+            elif v == SCHEMA_VERSION:
+                self._create_schema_v1()
+            else:
                 raise RuntimeError(
                     f"Unsupported schema_version {v}; expected {SCHEMA_VERSION}"
                 )
@@ -101,7 +103,7 @@ class StateStore:
               symbol TEXT PRIMARY KEY,
               size_shares INTEGER NOT NULL,
               avg_price REAL NOT NULL,
-              pivot_level REAL NOT NULL
+              pivot_level REAL NOT NULL,
 	      r1_level REAL NOT NULL,
 	      r2_level REAL NOT NULL,
               stop_mode TEXT NOT NULL,
