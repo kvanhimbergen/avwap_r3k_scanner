@@ -25,6 +25,7 @@ from anchors import anchored_vwap, get_anchor_candidates
 from indicators import slope_last, sma, atr, rolling_percentile, get_pivot_targets
 from rs import relative_strength
 import cache_store as cs
+from setup_context import compute_setup_context, load_setup_rules
 
 # --- Global Config & Tracking ---
 BAD_TICKERS = set()
@@ -318,6 +319,7 @@ def send_telegram(message):
 def main():
     load_dotenv()
     data_client = StockHistoricalDataClient(os.getenv('APCA_API_KEY_ID'), os.getenv('APCA_API_SECRET_KEY'))
+    setup_rules = load_setup_rules()
 
     BASE_DIR = Path(__file__).resolve().parent
     OUT_PATH = BASE_DIR / "daily_candidates.csv"
@@ -410,6 +412,7 @@ def main():
         if best:
             name, av, avs, rs, d = best
             r1, r2 = get_pivot_targets(df)
+            setup_ctx = compute_setup_context(df, name, setup_rules)
             results.append({
                 "Ticker": t, 
                 "TrendTier": gates["TrendTier"], 
@@ -421,7 +424,18 @@ def main():
                 "R2_Target": r2, 
                 "RS": round(rs, 6), 
                 "Sector": snap.loc[snap["Ticker"]==t, "Sector"].values[0], 
-                "Anchor": name
+                "Anchor": name,
+                "Setup_VWAP_Control": setup_ctx.vwap_control,
+                "Setup_VWAP_Reclaim": setup_ctx.vwap_reclaim,
+                "Setup_VWAP_Acceptance": setup_ctx.vwap_acceptance,
+                "Setup_VWAP_DistPct": None if setup_ctx.vwap_dist_pct is None else round(setup_ctx.vwap_dist_pct, 2),
+                "Setup_AVWAP_Control": setup_ctx.avwap_control,
+                "Setup_AVWAP_Reclaim": setup_ctx.avwap_reclaim,
+                "Setup_AVWAP_Acceptance": setup_ctx.avwap_acceptance,
+                "Setup_AVWAP_DistPct": None if setup_ctx.avwap_dist_pct is None else round(setup_ctx.avwap_dist_pct, 2),
+                "Setup_Extension_State": setup_ctx.extension_state,
+                "Setup_Gap_Reset": setup_ctx.gap_reset,
+                "Setup_Structure_State": setup_ctx.structure_state,
             })
 
     # ... (Keep sorting and saving logic) ...
