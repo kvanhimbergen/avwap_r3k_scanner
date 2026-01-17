@@ -111,6 +111,75 @@ class CFG:
     USE_PAPER_DATA: bool = True
     DATA_FEED: str = "sip"  # Use 'iex' if on free tier, 'sip' if on paid tier
 
+    def get_universe_metrics(self, tickers: list[str]) -> dict[str, dict]:
+        """
+        Minimal universe metrics provider for universe.py.
+
+        Returns:
+            {
+              "AAPL": {"last_price": float, "avg_vol_20d": float},
+              ...
+            }
+
+        Uses yfinance and fails open per symbol.
+        """
+        import logging
+        import re
+        import yfinance as yf
+
+        # Reduce yfinance noise
+        logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
+        out: dict[str, dict] = {}
+        if not tickers:
+            return out
+
+        # Filter out obvious non-Yahoo equity symbols (futures, odd lots, etc.)
+        # Keep standard US tickers: letters, dot-class shares, hyphen.
+        cleaned = []
+        pat = re.compile(r"^[A-Z]{1,5}([.-][A-Z]{1,2})?$")
+        for t in tickers:
+            t = str(t).upper().strip()
+            if pat.match(t):
+                cleaned.append(t)
+
+        if not cleaned:
+            return out
+
+        try:
+            data = yf.download(
+                tickers=cleaned,
+                period="1mo",
+                interval="1d",
+                group_by="ticker",
+                auto_adjust=False,
+                threads=self.YF_THREADS,
+                progress=False,
+            )
+        except Exception:
+            return out
+
+        for sym in cleaned:
+            try:
+                df = data[sym] if len(cleaned) > 1 else data
+                if df is None or df.empty:
+                    continue
+
+                closes = df["Close"].dropna()
+                vols = df["Volume"].dropna()
+                if closes.empty or vols.empty:
+                    continue
+
+                out[sym] = {
+                    "last_price": float(closes.iloc[-1]),
+                    "avg_vol_20d": float(vols.tail(20).mean()),
+                }
+            except Exception:
+                continue
+
+        return out
+
+    
 
 cfg = CFG()
 

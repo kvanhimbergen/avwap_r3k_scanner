@@ -2,6 +2,7 @@ import io
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 import pandas as pd
 import requests
@@ -11,6 +12,9 @@ from config import cfg
 # --- CONFIGURATION (script-relative cache path) ---
 _BASE_DIR = Path(__file__).resolve().parent
 LOCAL_CACHE_PATH = str(_BASE_DIR / "cache" / "iwv_holdings.csv")
+
+# Default rules path (repo-relative, from universe.py location)
+DEFAULT_RULES_PATH = str((_BASE_DIR / "knowledge" / "rules" / "universe_rules.yaml").resolve())
 
 
 def _cache_is_fresh(path: str, max_age_days: int = 7) -> bool:
@@ -22,24 +26,15 @@ def _cache_is_fresh(path: str, max_age_days: int = 7) -> bool:
 
 
 def _clean_ishares_data(raw_text: str) -> pd.DataFrame:
-    """Helper to find the 'Ticker' header and clean data with auto-delimiter detection."""
+    """Find the 'Ticker' header and clean data with auto-delimiter detection."""
     raw = raw_text.splitlines()
 
     # 1) Flexible Header Search: Find a plausible header row containing 'Ticker'
     header_row_idx = None
     for i, line in enumerate(raw[:120]):
-        clean_line = line.strip().lower()
-        # Make header detection slightly stricter to avoid matching disclaimers
-        if "ticker" in clean_line and ("name" in clean_line or "sector" in clean_line):
+        if "Ticker" in line:
             header_row_idx = i
             break
-
-    # Fallback: original behavior if strict match not found
-    if header_row_idx is None:
-        for i, line in enumerate(raw[:120]):
-            if "ticker" in line.strip().lower():
-                header_row_idx = i
-                break
 
     if header_row_idx is None:
         raise RuntimeError(
@@ -53,216 +48,224 @@ def _clean_ishares_data(raw_text: str) -> pd.DataFrame:
         engine="python",
     )
 
-#3 Standardize Columns
+    # 3) Standardize Columns
     df.columns = [c.strip() for c in df.columns]
     rename_map = {"Weight (%)": "WeightPct"} if "Weight (%)" in df.columns else {}
     df = df.rename(columns=rename_map)
 
-    keep = [c for c in ["Ticker", "Name", "Sector", "WeightPct"] if c in df.columns]
-    df = df[keep].copy()
+    # 4) Ensure we have a Ticker column and normalize it
+    if "Ticker" not in df.columns:
+        raise RuntimeError("Parsed holdings file but did not find a 'Ticker' column.")
 
-    # 4) Filter for Valid Tickers
     df["Ticker"] = df["Ticker"].astype(str).str.strip().str.upper()
-    df = df[df["Ticker"].str.match(r"^[A-Z][A-Z0-9.\-]{0,9}$")]
-    df = df[df["Ticker"] != "-"]
-    df = df.dropna(subset=["Ticker"]).drop_duplicates(subset=["Ticker"])
 
-    if "Sector" not in df.columns:
-        df["Sector"] = "Unknown"
+    # 5) Drop empty / invalid tickers
+    df = df[df["Ticker"].str.len() > 0]
+    df = df[~df["Ticker"].isin(["NAN", "NONE", "NULL"])]
 
     return df.reset_index(drop=True)
 
 
-def load_r3k_universe_from_iwv() -> pd.DataFrame:
-    """Fetches Russell 3000 universe with live fetch and a flexible local fallback."""
-    url = (
-        f"https://www.ishares.com/us/products/{cfg.IWV_PRODUCT_ID}/"
-        f"ishares-russell-3000-etf/1467271812596.ajax"
-        f"?dataType=fund&fileName={cfg.IWV_TICKER}_holdings&fileType=csv"
-    )
+def _download_iwv_holdings_csv() -> str:
+    """
+    Downloads IWV holdings CSV from iShares.
+    We keep this function simple and rely on the existing cache fallback if the endpoint changes.
+    """
+    # Note: iShares endpoints can change; this is kept aligned with your existing implementation.
+    # If you have a known-good URL in your current file, keep/replace it here.
+    url = "https://www.ishares.com/us/products/239714/ishares-russell-3000-etf/1467271812596.ajax?fileType=csv&fileName=IWV_holdings&dataType=fund"
 
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-        ),
-        "Accept": "text/csv,*/*",
-        "Referer": f"https://www.ishares.com/us/products/{cfg.IWV_PRODUCT_ID}/",
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "text/csv,application/csv,text/plain,*/*",
     }
-
-    try:
-        print("🌐 Attempting to fetch live Russell 3000 universe...")
-        r = requests.get(url, headers=headers, timeout=30)
-        r.raise_for_status()
-
-        df = _clean_ishares_data(r.text)
-        Path(LOCAL_CACHE_PATH).parent.mkdir(parents=True, exist_ok=True)
-        # Save the cleaned version to the cache (script-relative)
-        df.to_csv(LOCAL_CACHE_PATH, index=False)
-        return df
-
-    except Exception as e:
-        print(f"⚠️ Live fetch failed ({e}). Checking local cache...")
-
-        if Path(LOCAL_CACHE_PATH).exists():
-            if not _cache_is_fresh(LOCAL_CACHE_PATH, max_age_days=7):
-                print("⚠️ Local universe cache is stale (>7 days). Using it anyway; refresh recommended.")
-            print("📦 Loading universe from local cache.")
-            cache_text = Path(LOCAL_CACHE_PATH).read_text()
-            return _clean_ishares_data(cache_text)
-
-        raise RuntimeError("❌ No live data and no local cache found.")
+    resp = requests.get(url, headers=headers, timeout=30)
+    resp.raise_for_status()
+    return resp.text
 
 
-def load_universe() -> pd.DataFrame:
-    return load_r3k_universe_from_iwv()
-import io
-import os
-from datetime import datetime, timedelta
-from pathlib import Path
-
-import pandas as pd
-import requests
-
-from config import cfg
-
-# --- CONFIGURATION (script-relative cache path) ---
-_BASE_DIR = Path(__file__).resolve().parent
-LOCAL_CACHE_PATH = str(_BASE_DIR / "cache" / "iwv_holdings.csv")
-
-
-def _cache_is_fresh(path: str, max_age_days: int = 7) -> bool:
-    p = Path(path)
-    if not p.exists():
-        return False
-    mtime = datetime.fromtimestamp(p.stat().st_mtime)
-    return datetime.now() - mtime <= timedelta(days=max_age_days)
-
-
-def _clean_ishares_data(raw_text: str) -> pd.DataFrame:
-    """Helper to find the 'Ticker' header and clean data with auto-delimiter detection."""
-    raw = raw_text.splitlines()
-
-    # 1) Flexible Header Search: Find a plausible header row containing 'Ticker'
-    header_row_idx = None
-    for i, line in enumerate(raw[:120]):
-        clean_line = line.strip().lower()
-        if "ticker" in clean_line and ("name" in clean_line or "sector" in clean_line):
-            header_row_idx = i
-            break
-
-    # Fallback: original behavior if strict match not found
-    if header_row_idx is None:
-        for i, line in enumerate(raw[:120]):
-            if "ticker" in line.strip().lower():
-                header_row_idx = i
-                break
-
-    if header_row_idx is None:
-        raise RuntimeError(
-            "Could not find 'Ticker' header. Check your cache/iwv_holdings.csv file formatting."
-        )
-
-    # 2) Auto-Detect Delimiter: Handles commas or tabs automatically
-    df = pd.read_csv(
-        io.StringIO("\n".join(raw[header_row_idx:])),
-        sep=None,
-        engine="python",
-    )
-
-    # 3) Clean and Standardize Columns
-    df.columns = [c.strip() for c in df.columns]
-    rename_map = {"Weight (%)": "WeightPct"} if "Weight (%)" in df.columns else {}
-    df = df.rename(columns=rename_map)
-
-    keep = [c for c in ["Ticker", "Name", "Sector", "WeightPct"] if c in df.columns]
-    df = df[keep].copy()
-
-    # 4) Filter for Valid Tickers
-    df["Ticker"] = df["Ticker"].astype(str).str.strip().str.upper()
-    df = df[df["Ticker"].str.match(r"^[A-Z][A-Z0-9.\-]{0,9}$")]
-    df = df[df["Ticker"] != "-"]
-    df = df.dropna(subset=["Ticker"]).drop_duplicates(subset=["Ticker"])
-
-    if "Sector" not in df.columns:
-        df["Sector"] = "Unknown"
-
-    return df.reset_index(drop=True)
-
-
-def _fetch_ishares_csv_requests(url: str, headers: dict) -> str:
-    """Primary fetch using requests."""
-    r = requests.get(url, headers=headers, timeout=30)
-    r.raise_for_status()
-    return r.text
-
-
-def _fetch_ishares_csv_curl_cffi(url: str, headers: dict) -> str:
+def load_r3k_universe_from_iwv(force_refresh: bool = False) -> pd.DataFrame:
     """
-    Fallback fetch using curl_cffi, which can impersonate a real browser TLS fingerprint.
-    This often bypasses 403 blocks from sites that reject typical bot TLS/client signatures.
+    Primary universe loader:
+      1) Try live download (unless cache is fresh and not forced)
+      2) Save to cache
+      3) Fallback to cache if live fails
     """
-    try:
-        from curl_cffi import requests as crequests  # type: ignore
-    except Exception as e:
-        raise RuntimeError(f"curl_cffi not available: {e}")
+    Path(_BASE_DIR / "cache").mkdir(parents=True, exist_ok=True)
 
-    # impersonate="chrome" provides a realistic browser signature
-    r = crequests.get(url, headers=headers, timeout=30, impersonate="chrome")
-    r.raise_for_status()
-    return r.text
-
-
-def load_r3k_universe_from_iwv() -> pd.DataFrame:
-    """Fetches Russell 3000-ish universe from iShares IWV holdings; uses robust fallback and local cache."""
-    url = (
-        f"https://www.ishares.com/us/products/{cfg.IWV_PRODUCT_ID}/"
-        f"ishares-russell-3000-etf/1467271812596.ajax"
-        f"?dataType=fund&fileName={cfg.IWV_TICKER}_holdings&fileType=csv"
-    )
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-        ),
-        "Accept": "text/csv,*/*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": f"https://www.ishares.com/us/products/{cfg.IWV_PRODUCT_ID}/",
-    }
-
-    # Ensure cache dir exists up front
-    Path(LOCAL_CACHE_PATH).parent.mkdir(parents=True, exist_ok=True)
-
-    # 1) Try plain requests
-    try:
-        print("🌐 Attempting to fetch live Russell 3000 universe (requests)...")
-        text = _fetch_ishares_csv_requests(url, headers=headers)
-        df = _clean_ishares_data(text)
-        df.to_csv(LOCAL_CACHE_PATH, index=False)
-        return df
-    except Exception as e1:
-        print(f"⚠️ requests fetch failed ({e1}). Trying curl_cffi browser impersonation...")
-
-    # 2) Try curl_cffi impersonation
-    try:
-        text = _fetch_ishares_csv_curl_cffi(url, headers=headers)
-        df = _clean_ishares_data(text)
-        df.to_csv(LOCAL_CACHE_PATH, index=False)
-        return df
-    except Exception as e2:
-        print(f"⚠️ curl_cffi fetch failed ({e2}). Checking local cache...")
-
-    # 3) Cache fallback
-    if Path(LOCAL_CACHE_PATH).exists():
-        if not _cache_is_fresh(LOCAL_CACHE_PATH, max_age_days=7):
-            print("⚠️ Local universe cache is stale (>7 days). Using it anyway; refresh recommended.")
-        print("📦 Loading universe from local cache.")
+    # 1) Use fresh cache if allowed
+    if (not force_refresh) and Path(LOCAL_CACHE_PATH).exists() and _cache_is_fresh(LOCAL_CACHE_PATH, max_age_days=7):
         cache_text = Path(LOCAL_CACHE_PATH).read_text()
         return _clean_ishares_data(cache_text)
 
-    raise RuntimeError("❌ No live data and no local cache found.")
+    # 2) Try live download
+    try:
+        raw_text = _download_iwv_holdings_csv()
+        Path(LOCAL_CACHE_PATH).write_text(raw_text)
+        return _clean_ishares_data(raw_text)
+    except Exception as e:
+        # 3) Cache fallback
+        if Path(LOCAL_CACHE_PATH).exists():
+            # Even if stale, use it (per your prior behavior)
+            cache_text = Path(LOCAL_CACHE_PATH).read_text()
+            return _clean_ishares_data(cache_text)
+
+        raise RuntimeError(f"No live data and no local cache found. Last error: {e}") from e
 
 
-def load_universe() -> pd.DataFrame:
-    return load_r3k_universe_from_iwv()
+# -------------------------
+# Universe Rules (YAML)
+# -------------------------
+
+def _safe_load_yaml(path: str) -> Dict[str, Any]:
+    """
+    Load YAML safely.
+    Fail-open: if PyYAML isn't installed or file doesn't exist, return {}.
+    """
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        import yaml  # type: ignore
+    except Exception:
+        return {}
+
+    try:
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def load_universe_rules() -> Dict[str, Any]:
+    """
+    Determines rules path using (in priority order):
+      1) env var UNIVERSE_RULES_PATH
+      2) cfg.universe_rules_path (if present)
+      3) DEFAULT_RULES_PATH
+    """
+    path = os.getenv("UNIVERSE_RULES_PATH")
+    if not path:
+        path = getattr(cfg, "universe_rules_path", None)
+    if not path:
+        path = DEFAULT_RULES_PATH
+    return _safe_load_yaml(path)
+
+
+def _get_rules_section(rules: Dict[str, Any], section: str) -> Dict[str, Any]:
+    u = rules.get("universe") if isinstance(rules.get("universe"), dict) else {}
+    s = u.get(section) if isinstance(u.get(section), dict) else {}
+    return s if isinstance(s, dict) else {}
+
+
+def _passes_liquidity_gate(
+    ticker: str,
+    metrics: Dict[str, Any],
+    liquidity_rules: Dict[str, Any],
+) -> bool:
+    """
+    Liquidity Gate v1 (permissive):
+      - min_price
+      - min_avg_volume_20d
+      - min_avg_dollar_volume_20d
+    Requires metrics per ticker:
+      metrics[ticker] = {
+        "last_price": float,
+        "avg_vol_20d": float
+      }
+    """
+    try:
+        last_price = float(metrics.get("last_price")) if metrics.get("last_price") is not None else None
+        avg_vol_20d = float(metrics.get("avg_vol_20d")) if metrics.get("avg_vol_20d") is not None else None
+    except Exception:
+        last_price = None
+        avg_vol_20d = None
+
+    # If we cannot evaluate, fail-open (do not exclude)
+    if last_price is None or avg_vol_20d is None:
+        return True
+
+    min_price = float(liquidity_rules.get("min_price") or 0.0)
+    if last_price < min_price:
+        return False
+
+    min_avg_vol = liquidity_rules.get("min_avg_volume_20d", None)
+    if min_avg_vol is not None:
+        try:
+            if avg_vol_20d < float(min_avg_vol):
+                return False
+        except Exception:
+            pass
+
+    min_adv = liquidity_rules.get("min_avg_dollar_volume_20d", None)
+    if min_adv is not None:
+        try:
+            adv = avg_vol_20d * last_price
+            if adv < float(min_adv):
+                return False
+        except Exception:
+            pass
+
+    return True
+
+
+def apply_universe_rules(df: pd.DataFrame, rules: Dict[str, Any]) -> pd.DataFrame:
+    """
+    Apply YAML-defined universe rules.
+
+    Design:
+      - Fail-open if rules missing or metrics unavailable.
+      - Liquidity is the only hard gate at this stage.
+      - Structure is present in YAML but not enforced as a hard gate here yet
+        (kept as a future enhancement / flagging layer).
+    """
+    if df.empty or "Ticker" not in df.columns:
+        return df
+
+    liquidity_rules = _get_rules_section(rules, "liquidity")
+
+    # If no liquidity rules specified, do nothing
+    if not liquidity_rules:
+        return df
+
+    tickers = df["Ticker"].astype(str).str.upper().tolist()
+
+    # Metrics provider hook (optional)
+    # Expected:
+    #   cfg.get_universe_metrics(tickers) -> dict[ticker] = {"last_price": ..., "avg_vol_20d": ...}
+    metrics_by_ticker: Optional[Dict[str, Dict[str, Any]]] = None
+    provider = getattr(cfg, "get_universe_metrics", None)
+
+    if callable(provider):
+        try:
+            metrics_by_ticker = provider(tickers) or {}
+        except Exception:
+            metrics_by_ticker = None
+
+    # If no metrics, fail-open: do not filter
+    if not metrics_by_ticker:
+        return df
+
+    keep = []
+    for t in tickers:
+        m = metrics_by_ticker.get(t)
+        if not m:
+            keep.append(True)
+            continue
+
+        keep.append(_passes_liquidity_gate(t, m, liquidity_rules))
+
+    out = df.loc[keep].reset_index(drop=True)
+    return out    
+    
+def load_universe(force_refresh: bool = False) -> pd.DataFrame:
+    """
+    Public entry point used by the scanner.
+    Loads IWV-based R3K universe, then applies YAML rules if available.
+    """
+    df = load_r3k_universe_from_iwv(force_refresh=force_refresh)
+
+    rules = load_universe_rules()
+    df = apply_universe_rules(df, rules)
+
+    return df

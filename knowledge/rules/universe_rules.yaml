@@ -1,0 +1,28 @@
+universe:
+  liquidity:
+    # Permissive (B) gate aligned to config.py defaults.
+    min_avg_dollar_volume_20d: 10_000_000
+    min_avg_volume_20d: null
+    min_price: 3.0
+
+    # Flags (informational only, not exclusions yet)
+    flag_overnight_range_atr_multiple: 1.5
+    flag_liquidity_concentrated_sessions: true
+
+    notes: >
+      Liquidity is a prerequisite. Instruments must support clean execution
+      during regular trading hours without excessive slippage. Overnight-only
+      liquidity or structurally thin names are avoided.
+
+  structure:
+    require_structural_coherence: true
+    structure_lookback_days: 50
+    allow_trends: true
+    allow_ranges: true
+    allow_bases: true
+    flag_excessive_noise: true
+    flag_atr_extreme_pct: 10.0
+    notes: >
+      Structure is required, but direction is not. Instruments may be trending,
+      ranging, or basing. This filter exists only to avoid names that do not
+      respect price structure at all.
