@@ -1,19 +1,66 @@
-setup:
-  vwap:
-    lookback: 20
-    control_buffer_pct: 0.2
-    acceptance_bars: 3
-  avwap:
-    control_buffer_pct: 0.2
-    acceptance_bars: 3
-  extension:
-    balanced_pct: 1.0
-    extended_pct: 3.0
-  gaps:
-    gap_pct: 0.04
-    reset_lookback: 60
-    reset_window: 3
-  structure:
-    sma_fast: 20
-    sma_slow: 50
-    slope_lookback: 10
+setup_rules:
+  version: 1
+  scope:
+    purpose: >
+      Setup rules define context and state labels for candidates.
+      They do NOT trigger trades, set stops, size positions, or manage exits.
+    applies_to: daily_candidates
+    excludes:
+      - entries
+      - position_sizing
+      - stop_placement
+      - trims
+      - exits
+
+  vwap_context:
+    control_states:
+      above_vwap: buyers_in_control
+      below_vwap: sellers_in_control
+      around_vwap: balanced_or_indecisive
+
+    reclaim_acceptance:
+      enabled: true
+      labels:
+        below_vwap: below_vwap
+        reclaiming_vwap: reclaiming_vwap
+        accepted_above_vwap: accepted_above_vwap
+
+  avwap_context:
+    enabled: true
+    anchor_types:
+      - major_high
+      - major_low
+      - gap_day
+      - trend_inflection
+    states:
+      below_key_avwap: supply_overhead
+      reclaiming_avwap: reclaiming_avwap
+      accepted_above_avwap: demand_underfoot
+
+  extension_awareness:
+    enabled: true
+    distance_metric: percent
+    thresholds_pct:
+      compressed: 1.0
+      moderate: 3.0
+      overextended: 6.0
+    labels:
+      compressed: compressed_near_value
+      moderate: moderately_extended
+      overextended: overextended_from_value
+
+  gap_context:
+    enabled: true
+    reset_reference_frame: true
+    prioritize_post_gap_vwap: true
+    allow_gap_day_anchor: true
+
+  structure_confirmation:
+    enabled: true
+    trend_definition:
+      uptrend: higher_highs_and_higher_lows
+      downtrend: lower_highs_and_lower_lows
+    confirmation_logic:
+      prefer_uptrend_when: above_vwap
+      prefer_downtrend_when: below_vwap
+      caution_when: structure_breaks_near_vwap
