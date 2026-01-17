@@ -6,15 +6,13 @@ Supports entry intents, positions, candidates, trim intents, and order idempoten
 """
 
 from __future__ import annotations
-import os
 import sqlite3
 import time
-from dataclasses import asdict
 from typing import Optional, List
 
 from execution_v2.config_types import EntryIntent, PositionState, StopMode
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 class StateStore:
     def __init__(self, db_path: str) -> None:
@@ -42,7 +40,18 @@ class StateStore:
         else:
             v = int(row["value"])
             if v != SCHEMA_VERSION:
-                self._create_schema_v1()  # rebuild to latest for simplicity
+                self._reset_schema()
+                self._create_schema_v1()
+
+    def _reset_schema(self) -> None:
+        cur = self.conn.cursor()
+        cur.execute("DROP TABLE IF EXISTS candidates;")
+        cur.execute("DROP TABLE IF EXISTS entry_intents;")
+        cur.execute("DROP TABLE IF EXISTS positions;")
+        cur.execute("DROP TABLE IF EXISTS order_ledger;")
+        cur.execute("DROP TABLE IF EXISTS trim_intents;")
+        cur.execute("DELETE FROM meta WHERE key='schema_version';")
+        cur.execute("INSERT INTO meta(key,value) VALUES('schema_version', ?);", (str(SCHEMA_VERSION),))
 
     def _create_schema_v1(self) -> None:
         cur = self.conn.cursor()
@@ -64,6 +73,10 @@ class StateStore:
             boh_confirmed_at REAL NOT NULL,
             scheduled_entry_at REAL NOT NULL,
             size_shares INTEGER NOT NULL,
+            stop_loss REAL NOT NULL,
+            take_profit REAL NOT NULL,
+            ref_price REAL NOT NULL,
+            dist_pct REAL NOT NULL,
             created_ts REAL NOT NULL
         );
         """)
@@ -78,6 +91,8 @@ class StateStore:
             r2_level REAL NOT NULL,
             stop_mode TEXT NOT NULL,
             last_update_ts REAL NOT NULL,
+            stop_price REAL NOT NULL,
+            high_water REAL NOT NULL,
             last_boh_level REAL,
             invalidation_count INTEGER NOT NULL,
             trimmed_r1 INTEGER NOT NULL,
@@ -136,9 +151,20 @@ class StateStore:
         now_ts = time.time()
         cur.execute("""
         INSERT OR REPLACE INTO entry_intents
-        (symbol, pivot_level, boh_confirmed_at, scheduled_entry_at, size_shares, created_ts)
-        VALUES (?,?,?,?,?,?)
-        """, (intent.symbol, intent.pivot_level, intent.boh_confirmed_at, intent.scheduled_entry_at, intent.size_shares, now_ts))
+        (symbol, pivot_level, boh_confirmed_at, scheduled_entry_at, size_shares, stop_loss, take_profit, ref_price, dist_pct, created_ts)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+        """, (
+            intent.symbol,
+            intent.pivot_level,
+            intent.boh_confirmed_at,
+            intent.scheduled_entry_at,
+            intent.size_shares,
+            intent.stop_loss,
+            intent.take_profit,
+            intent.ref_price,
+            intent.dist_pct,
+            now_ts,
+        ))
 
     def get_entry_intent(self, symbol: str) -> Optional[EntryIntent]:
         cur = self.conn.cursor()
@@ -146,14 +172,37 @@ class StateStore:
         r = cur.fetchone()
         if r is None:
             return None
-        return EntryIntent(symbol=r["symbol"], pivot_level=r["pivot_level"], boh_confirmed_at=r["boh_confirmed_at"], scheduled_entry_at=r["scheduled_entry_at"], size_shares=r["size_shares"])
+        return EntryIntent(
+            symbol=r["symbol"],
+            pivot_level=r["pivot_level"],
+            boh_confirmed_at=r["boh_confirmed_at"],
+            scheduled_entry_at=r["scheduled_entry_at"],
+            size_shares=r["size_shares"],
+            stop_loss=r["stop_loss"],
+            take_profit=r["take_profit"],
+            ref_price=r["ref_price"],
+            dist_pct=r["dist_pct"],
+        )
 
     def pop_due_entry_intents(self, now_ts: float) -> List[EntryIntent]:
         cur = self.conn.cursor()
         cur.execute("SELECT * FROM entry_intents WHERE scheduled_entry_at <= ? ORDER BY scheduled_entry_at ASC;", (now_ts,))
         rows = cur.fetchall()
         cur.execute("DELETE FROM entry_intents WHERE scheduled_entry_at <= ?;", (now_ts,))
-        return [EntryIntent(symbol=r["symbol"], pivot_level=r["pivot_level"], boh_confirmed_at=r["boh_confirmed_at"], scheduled_entry_at=r["scheduled_entry_at"], size_shares=r["size_shares"]) for r in rows]
+        return [
+            EntryIntent(
+                symbol=r["symbol"],
+                pivot_level=r["pivot_level"],
+                boh_confirmed_at=r["boh_confirmed_at"],
+                scheduled_entry_at=r["scheduled_entry_at"],
+                size_shares=r["size_shares"],
+                stop_loss=r["stop_loss"],
+                take_profit=r["take_profit"],
+                ref_price=r["ref_price"],
+                dist_pct=r["dist_pct"],
+            )
+            for r in rows
+        ]
 
     # -------------------------
     # Positions
@@ -161,8 +210,8 @@ class StateStore:
     def upsert_position(self, ps: PositionState) -> None:
         cur = self.conn.cursor()
         cur.execute("""
-        INSERT INTO positions(symbol, size_shares, avg_price, pivot_level, r1_level, r2_level, stop_mode, last_update_ts, last_boh_level, invalidation_count, trimmed_r1, trimmed_r2)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO positions(symbol, size_shares, avg_price, pivot_level, r1_level, r2_level, stop_mode, last_update_ts, stop_price, high_water, last_boh_level, invalidation_count, trimmed_r1, trimmed_r2)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(symbol) DO UPDATE SET
             size_shares=excluded.size_shares,
             avg_price=excluded.avg_price,
@@ -171,11 +220,13 @@ class StateStore:
             r2_level=excluded.r2_level,
             stop_mode=excluded.stop_mode,
             last_update_ts=excluded.last_update_ts,
+            stop_price=excluded.stop_price,
+            high_water=excluded.high_water,
             last_boh_level=excluded.last_boh_level,
             invalidation_count=excluded.invalidation_count,
             trimmed_r1=excluded.trimmed_r1,
             trimmed_r2=excluded.trimmed_r2
-        """, (ps.symbol, ps.size_shares, ps.avg_price, ps.pivot_level, ps.r1_level, ps.r2_level, ps.stop_mode.value, ps.last_update_ts, ps.last_boh_level, ps.invalidation_count, int(ps.trimmed_r1), int(ps.trimmed_r2)))
+        """, (ps.symbol, ps.size_shares, ps.avg_price, ps.pivot_level, ps.r1_level, ps.r2_level, ps.stop_mode.value, ps.last_update_ts, ps.stop_price, ps.high_water, ps.last_boh_level, ps.invalidation_count, int(ps.trimmed_r1), int(ps.trimmed_r2)))
 
     def get_position(self, symbol: str) -> Optional[PositionState]:
         cur = self.conn.cursor()
@@ -192,6 +243,8 @@ class StateStore:
             r2_level=r["r2_level"],
             stop_mode=StopMode(r["stop_mode"]),
             last_update_ts=r["last_update_ts"],
+            stop_price=r["stop_price"],
+            high_water=r["high_water"],
             last_boh_level=r["last_boh_level"],
             invalidation_count=r["invalidation_count"],
             trimmed_r1=bool(r["trimmed_r1"]),
@@ -211,6 +264,8 @@ class StateStore:
             r2_level=r["r2_level"],
             stop_mode=StopMode(r["stop_mode"]),
             last_update_ts=r["last_update_ts"],
+            stop_price=r["stop_price"],
+            high_water=r["high_water"],
             last_boh_level=r["last_boh_level"],
             invalidation_count=r["invalidation_count"],
             trimmed_r1=bool(r["trimmed_r1"]),
@@ -231,6 +286,23 @@ class StateStore:
         col = "trimmed_r1" if which=="r1" else "trimmed_r2"
         cur = self.conn.cursor()
         cur.execute(f"UPDATE positions SET {col}=1, last_update_ts=? WHERE symbol=?;", (time.time(), symbol))
+
+    # -------------------------
+    # Trim intents
+    # -------------------------
+    def add_trim_intent(self, symbol: str, pct: float, reason: str) -> None:
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT INTO trim_intents(symbol, pct, reason, created_ts) VALUES(?,?,?,?);",
+            (symbol, pct, reason, time.time()),
+        )
+
+    def pop_trim_intents(self) -> List[sqlite3.Row]:
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM trim_intents ORDER BY created_ts ASC;")
+        rows = cur.fetchall()
+        cur.execute("DELETE FROM trim_intents;")
+        return rows
 
     # -------------------------
     # Order idempotency

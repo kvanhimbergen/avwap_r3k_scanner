@@ -1,6 +1,5 @@
 import os
 import time
-import requests
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -77,59 +76,9 @@ def log(msg: str) -> None:
         # Logging must never break execution
         pass
 
-EXEC_TELEGRAM = os.getenv("EXEC_TELEGRAM", "0") == "1"
-# Telegram rate limiting (per symbol)
-TELEGRAM_RATE_LIMIT_SECONDS = int(os.getenv("TELEGRAM_RATE_LIMIT_SECONDS", "300"))  # 5 minutes default
-_LAST_TELEGRAM_TS_BY_SYMBOL: dict[str, float] = {}
-
-
 # Track submitted orders we want to monitor for fills
 # order_id -> {"symbol": str, "last_status": str}
 TRACKED_ORDERS = {}
-
-def can_send_symbol_telegram(symbol: str) -> bool:
-    """
-    Rate limit Telegram alerts per symbol.
-    Default: 1 alert per symbol per 300 seconds (5 minutes).
-    """
-    sym = (symbol or "").upper().strip()
-    if not sym:
-        return True  # non-symbol messages are allowed
-
-    now = time.time()
-    last = _LAST_TELEGRAM_TS_BY_SYMBOL.get(sym, 0.0)
-    if now - last < TELEGRAM_RATE_LIMIT_SECONDS:
-        return False
-
-    _LAST_TELEGRAM_TS_BY_SYMBOL[sym] = now
-    return True
-
-
-
-def telegram_enabled() -> bool:
-    return EXEC_TELEGRAM and bool(os.getenv("TELEGRAM_TOKEN")) and bool(os.getenv("CHAT_ID"))
-
-
-def send_telegram(msg: str, symbol: str | None = None) -> None:
-    if not telegram_enabled():
-        return
-
-    # Rate-limit symbol-specific alerts (prevents spam)
-    if symbol is not None and not can_send_symbol_telegram(symbol):
-        log(f"TELEGRAM rate-limited for {symbol}: suppressed message")
-        return
-
-    try:
-        token = os.getenv("TELEGRAM_TOKEN")
-        chat_id = os.getenv("CHAT_ID")
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {"chat_id": chat_id, "text": msg}
-        requests.post(url, data=payload, timeout=10)
-    except Exception as e:
-        log(f"WARNING: Telegram send failed: {e}")
-
-
-
 def track_order(order, symbol: str) -> None:
     """Add an order to tracked list for fill notifications."""
     try:
@@ -143,7 +92,7 @@ def track_order(order, symbol: str) -> None:
 
 def check_tracked_orders() -> None:
     """
-    Poll Alpaca for status changes on tracked orders and send Telegram on
+    Poll Alpaca for status changes on tracked orders and alert on
     filled/rejected/canceled. Keeps things in-memory (temporary).
     """
     if not TRACKED_ORDERS:
@@ -169,7 +118,6 @@ def check_tracked_orders() -> None:
             if status in ("filled", "partially_filled"):
                 avg_fill = getattr(o, "filled_avg_price", None) or getattr(o, "avg_fill_price", None)
                 filled_qty = getattr(o, "filled_qty", None)
-                send_telegram(f"✅ FILLED {sym} | qty={filled_qty} avg={avg_fill} | order_id={oid}", symbol=sym)
                 slack_alert(
                     "TRADE",
                     f"FILLED {sym}" if status == "filled" else f"PARTIAL {sym}",
@@ -184,7 +132,6 @@ def check_tracked_orders() -> None:
 
             elif status in ("rejected", "canceled", "expired"):
                 reason = getattr(o, "rejection_reason", None)
-                send_telegram(f"❌ {status.upper()} {sym} | reason={reason} | order_id={oid}", symbol=sym)
                 level = "ERROR" if status == "rejected" else "WARNING"
                 slack_alert(
                     level,
@@ -475,10 +422,6 @@ def submit_from_watchlist(csv_path: str) -> None:
 
             if is_dry:
                 log(f"DRY_RUN SUBMITTED {sym}: qty simulated SL={sl} TP={tp}")
-                send_telegram(
-                    f"🧪 DRY_RUN {sym} | SL={sl} TP={tp}",
-                    symbol=sym,
-                )
                 slack_alert(
                     "TRADE",
                     f"DRY_RUN {sym}",
@@ -489,10 +432,6 @@ def submit_from_watchlist(csv_path: str) -> None:
                 )
             else:
                 log(f"SUBMITTED {sym}: order_id={oid}")
-                send_telegram(
-                    f"📤 SUBMITTED {sym} | SL={sl} TP={tp} | order_id={oid}",
-                    symbol=sym,
-                )
                 slack_alert(
                     "TRADE",
                     f"SUBMITTED {sym}",
@@ -505,10 +444,6 @@ def submit_from_watchlist(csv_path: str) -> None:
 
         else:
             log(f"FAILED {sym}: submit returned None")
-            send_telegram(
-                f"⚠️ FAILED submit {sym} (submit returned None)",
-                symbol=sym,
-            )
             slack_alert(
                 "WARNING",
                 f"FAILED submit {sym}",

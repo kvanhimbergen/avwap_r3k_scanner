@@ -21,8 +21,7 @@ echo "Running Python compile checks..."
 python -m py_compile \
   universe.py \
   run_scan.py \
-  sentinel.py \
-  execution.py \
+  execution_v2/execution_main.py \
   config.py
 
 echo "Ensuring cache directory exists..."
@@ -44,7 +43,6 @@ echo "Reloading systemd..."
 sudo systemctl daemon-reload
 
 echo "Restarting services (systemd-managed)..."
-sudo systemctl restart sentinel.service
 sudo systemctl restart execution.service
 
 echo "Verifying timers..."

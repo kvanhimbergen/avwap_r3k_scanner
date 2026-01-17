@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -33,11 +34,70 @@ def _default_rules_path() -> Path:
     return Path(__file__).resolve().parent / "knowledge" / "rules" / "setup_rules.yaml"
 
 
+_DEFAULT_RULES: dict[str, Any] = {
+    "setup": {
+        "vwap": {
+            "lookback": 20,
+            "control_buffer_pct": 0.2,
+            "acceptance_bars": 3,
+        },
+        "avwap": {
+            "control_buffer_pct": 0.2,
+            "acceptance_bars": 3,
+        },
+        "extension": {
+            "balanced_pct": 1.0,
+            "extended_pct": 6.0,
+        },
+        "gaps": {
+            "reset_lookback": 60,
+            "gap_pct": 4.0,
+            "reset_window": 5,
+        },
+        "structure": {
+            "sma_fast": 20,
+            "sma_slow": 50,
+            "slope_lookback": 5,
+        },
+    },
+}
+
+
+def _merge_defaults(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_defaults(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _normalize_setup_rules(data: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return deepcopy(_DEFAULT_RULES)
+
+    if isinstance(data.get("setup"), dict):
+        return _merge_defaults(_DEFAULT_RULES, data)
+
+    if isinstance(data.get("setup_rules"), dict):
+        normalized = deepcopy(_DEFAULT_RULES)
+        ext = data["setup_rules"].get("extension_awareness", {}).get("thresholds_pct", {})
+        if isinstance(ext, dict):
+            if "compressed" in ext:
+                normalized["setup"]["extension"]["balanced_pct"] = ext.get("compressed")
+            if "overextended" in ext:
+                normalized["setup"]["extension"]["extended_pct"] = ext.get("overextended")
+        return normalized
+
+    return deepcopy(_DEFAULT_RULES)
+
+
 def load_setup_rules(path: str | Path | None = None) -> dict[str, Any]:
     rules_path = Path(path) if path is not None else _default_rules_path()
     if not rules_path.exists():
-        raise FileNotFoundError(f"Setup rules not found at {rules_path}")
-    return yaml.safe_load(rules_path.read_text())
+        return deepcopy(_DEFAULT_RULES)
+    return _normalize_setup_rules(yaml.safe_load(rules_path.read_text()) or {})
 
 
 def _rolling_vwap(df: pd.DataFrame, lookback: int) -> pd.Series:
