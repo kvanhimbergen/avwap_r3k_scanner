@@ -22,3 +22,24 @@ sentinel.log
 scan.log
 watchdog.log
 
+
+# Execution V2 runtime state
+/data/*.sqlite3
+/data/*.sqlite
+
+# --- Local DB / runtime artifacts ---
+execution_v2.sqlite
+execution_v2.sqlite-*
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.wal
+*.shm
+
+# --- Patch reject files ---
+*.rej
+
+# --- Knowledge base generated artifacts ---
+knowledge/kb.sqlite
+knowledge/raw/
