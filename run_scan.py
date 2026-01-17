@@ -225,7 +225,7 @@ def build_liquidity_snapshot(universe, index_df, data_client):
 #       import json
 #       from datetime import date
 #
-# 2) Paste the full block below anywhere ABOVE main() (e.g., right under send_telegram()).
+# 2) Paste the full block below anywhere ABOVE main().
 # 3) In the scanning loop, replace:
 #       if is_near_earnings(t): continue
 #    with:
@@ -236,9 +236,6 @@ def build_liquidity_snapshot(universe, index_df, data_client):
 #   - EARNINGS_CACHE_DISABLE=1  (bypass cache + checks entirely)
 #   - EARNINGS_CACHE_FORCE_REFRESH=1 (ignore cache; rebuild entries as requested)
 # =========================
-
-import json
-from datetime import date
 
 EARNINGS_CACHE_PATH = Path("cache/earnings_cache.json")
 
@@ -303,18 +300,6 @@ def is_near_earnings_cached(ticker: str) -> bool:
     _save_earnings_cache(cache)
     return val
 
-
-def send_telegram(message):
-    """Sends a notification to Telegram when the scan completes."""
-    token = os.getenv("TELEGRAM_TOKEN")
-    chat_id = os.getenv("CHAT_ID")
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
-    try:
-        import requests
-        requests.post(url, data=payload, timeout=10)
-    except Exception as e:
-        print(f"Telegram Notification Error: {e}")
 
 def main():
     load_dotenv()
@@ -386,6 +371,7 @@ def main():
     # ... (Keep existing imports and helper functions) ...
 
     results = []
+    scan_date = datetime.now(pytz.timezone("America/New_York")).date().isoformat()
     for t in tqdm(filtered, desc="Scanning"):
         if is_near_earnings_cached(t): continue
 
@@ -414,17 +400,21 @@ def main():
             r1, r2 = get_pivot_targets(df)
             setup_ctx = compute_setup_context(df, name, setup_rules)
             results.append({
-                "Ticker": t, 
-                "TrendTier": gates["TrendTier"], 
+                "SchemaVersion": 1,
+                "ScanDate": scan_date,
+                "Symbol": t,
+                "Direction": "Long",
+                "TrendTier": gates["TrendTier"],
                 "Price": round(df["Close"].iloc[-1], 2),
-                "AVWAP_Floor": round(av, 2), 
-                "Stop_Loss": round(structural_stop, 2),  # NEW: Added structural stop column
-                "Dist%": round(d, 2), 
-                "R1_Trim": r1, 
-                "R2_Target": r2, 
-                "RS": round(rs, 6), 
-                "Sector": snap.loc[snap["Ticker"]==t, "Sector"].values[0], 
+                "Entry_Level": round(av, 2),
+                "Entry_DistPct": round(d, 2),
+                "Stop_Loss": round(structural_stop, 2),
+                "Target_R1": r1,
+                "Target_R2": r2,
+                "RS": round(rs, 6),
+                "Sector": snap.loc[snap["Ticker"]==t, "Sector"].values[0],
                 "Anchor": name,
+                "AVWAP_Slope": round(float(avs), 4),
                 "Setup_VWAP_Control": setup_ctx.vwap_control,
                 "Setup_VWAP_Reclaim": setup_ctx.vwap_reclaim,
                 "Setup_VWAP_Acceptance": setup_ctx.vwap_acceptance,
@@ -438,18 +428,7 @@ def main():
                 "Setup_Structure_State": setup_ctx.structure_state,
             })
 
-    # ... (Keep sorting and saving logic) ...
     out = pd.DataFrame(results)
-    out.to_csv(OUT_PATH, index=False)  # always write
-    if out.empty:
-        print("No candidates found today (file still written).")
-
-
-    print(f"\nDEBUG: Scan finished. Found {len(results)} total candidates.")
-
-    out = pd.DataFrame(results)
-
-    # Always write the file (even empty) so downstream bots don't trade stale lists
     out.to_csv(OUT_PATH, index=False)
     print(f"\nDEBUG: Scan finished. Found {len(out)} total candidates. Wrote: {OUT_PATH}")
 
@@ -457,7 +436,6 @@ def main():
         out = out.sort_values(["TrendTier", "RS"], ascending=[True, False]).head(ALGO_CANDIDATE_CAP)
         out.to_csv(OUT_PATH, index=False)
         print(f"Wrote candidates to: {OUT_PATH}")
-        msg = f"✅ *Scan Complete*: {len(out)} top candidates saved to `daily_candidates.csv`."
         slack_alert(
             "INFO",
             "Scan complete",
@@ -467,7 +445,6 @@ def main():
             throttle_seconds=3600,
         )
     else:
-        msg = "⚠️ *Scan Complete*: No stocks met the Shannon Quality Gates today. An empty `daily_candidates.csv` was written to prevent stale execution."
         slack_alert(
             "WARNING",
             "Scan complete (empty)",
@@ -476,8 +453,6 @@ def main():
             throttle_key=f"scan_empty_{datetime.now(pytz.timezone('America/New_York')).date()}",
             throttle_seconds=3600,
         )
-
-    send_telegram(msg)
 
     
     save_bad_tickers(BAD_TICKERS)

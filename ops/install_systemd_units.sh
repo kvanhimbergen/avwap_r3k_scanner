@@ -19,7 +19,6 @@ echo "Repo root: ${REPO_ROOT}"
 echo "Source systemd dir: ${SRC_DIR}"
 
 # Core units/timers
-require_file "${SRC_DIR}/sentinel.service"
 require_file "${SRC_DIR}/execution.service"
 require_file "${SRC_DIR}/scan.service"
 require_file "${SRC_DIR}/scan.timer"
@@ -31,7 +30,6 @@ require_file "${SRC_DIR}/execution.service.d/10-watchlist-gate.conf"
 require_file "${SRC_DIR}/execution.service.d/20-restart-policy.conf"
 
 echo "Copying unit files to /etc/systemd/system/ ..."
-sudo install -m 0644 "${SRC_DIR}/sentinel.service" /etc/systemd/system/sentinel.service
 sudo install -m 0644 "${SRC_DIR}/execution.service" /etc/systemd/system/execution.service
 sudo install -m 0644 "${SRC_DIR}/scan.service" /etc/systemd/system/scan.service
 sudo install -m 0644 "${SRC_DIR}/scan.timer" /etc/systemd/system/scan.timer
@@ -50,15 +48,14 @@ echo "Enabling timers ..."
 sudo systemctl enable --now scan.timer execution-restart.timer
 
 echo "Enabling services ..."
-sudo systemctl enable sentinel.service execution.service
+sudo systemctl enable execution.service
 
 echo "Starting services (if not running) ..."
-sudo systemctl start sentinel.service
 sudo systemctl start execution.service || true
 
 echo
 echo "==== Status ===="
-systemctl status sentinel.service execution.service --no-pager || true
+systemctl status execution.service --no-pager || true
 
 echo
 echo "==== Timers ===="

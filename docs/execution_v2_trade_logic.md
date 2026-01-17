@@ -69,7 +69,7 @@ No relative strength or index comparison is used.
 
 ### Trigger Level
 
-- Prior daily swing high (pivot level)
+- Scan-provided `Entry_Level` from the daily candidate file (derived from AVWAP context)
 - No pullback entries are allowed
 
 ### Confirmation (BOH – Option 2)
@@ -96,52 +96,34 @@ Purpose:
 
 ## Position Sizing
 
-- Position size is determined via a volatility proxy
-- No ATR-based stops or fixed R-multiples are used
+- Position size is determined via a volatility proxy (`Entry_DistPct`)
 - A hard account-level cap is enforced
 
 Sizing is evaluated only at entry.
 
 ---
 
-## Risk Management (Behavioral)
+## Risk Management (Execution)
 
-Execution V2 does not use static price stops.
-
-Instead, positions move through a behavioral state machine:
-
-- OPEN: normal behavior
-- CAUTION: invalidation signals accumulating
-- EXITING: exit in progress
-
-Invalidation is triggered by repeated failure to hold expected structure.
-Single-bar violations are insufficient on their own.
+- Initial orders are submitted as Alpaca bracket orders.
+- The scan provides a structural stop (`Stop_Loss`) and a primary target (`Target_R2`).
+- Behavioral stop escalation is planned but not yet automated.
 
 ---
 
 ## Partial Exits (Conditional Trims)
 
-Trims are:
-- conditional
-- stateful
-- non-automatic
-
-Characteristics:
-- Only evaluated if price reaches defined structural extension zones
-- Only allowed once per level
-- Never forced
-
-Trims do not imply trade failure.
+- Trim logic is automated using scan-provided levels:
+  - `Target_R1` triggers a partial trim (default 50%).
+  - `Target_R2` triggers a second trim (default 50%).
+- Trims are stateful and only fire once per level.
 
 ---
 
 ## Full Exit Logic
 
-A full exit occurs only when:
-- behavioral invalidation threshold is reached
-- or global regime forces reduction
-
-No fixed price or volatility stop can trigger a full exit.
+- Initial bracket stop orders handle early exits.
+- After R2, a trailing stop (measured off the R2 move) will trigger a full exit if price reverses.
 
 ---
 
@@ -162,7 +144,6 @@ Execution V2 explicitly does NOT include:
 - Relative strength indicators
 - Index comparison signals
 - ATR-based stops
-- Fixed price stops
 - Shorts
 - Deterministic timing
 - Backtest-optimized heuristics

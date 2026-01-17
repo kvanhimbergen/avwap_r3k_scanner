@@ -19,13 +19,9 @@ The system is designed to be:
 
 | Service | Purpose |
 |------|------|
-| `sentinel.service` | Orchestrator / monitoring loop |
-| `execution.service` | Order and position execution loop |
+| `execution.service` | Execution V2 order and position execution loop |
 
-Both services:
-- Run under systemd
-- Restart automatically on failure
-- Log exclusively to `journald` (not files, not tmux)
+Execution runs under systemd, restarts automatically on failure, and logs to `journald`.
 
 ---
 
@@ -85,8 +81,6 @@ Reloads systemd
 
 Restarts:
 
-sentinel.service
-
 execution.service
 
 Verifies active timers
@@ -110,7 +104,7 @@ Verify after deploy:
 
 bash
 Copy code
-systemctl status sentinel.service execution.service --no-pager
+systemctl status execution.service --no-pager
 systemctl list-timers --all | grep -E 'scan\.timer|execution-restart\.timer'
 Logs & Monitoring
 All logs are in journald.
@@ -119,15 +113,14 @@ Examples:
 
 bash
 Copy code
-journalctl -u sentinel.service --since "today" --no-pager
 journalctl -u execution.service --since "today" --no-pager
 journalctl -u scan.service --since "today" --no-pager
 Process Verification (Sanity Check)
-At any time, this should show exactly two Python processes:
+At any time, this should show exactly one execution process:
 
 bash
 Copy code
-pgrep -af "sentinel.py|execution.py"
+pgrep -af "execution_v2/execution_main.py"
 And no tmux sessions:
 
 bash
@@ -157,7 +150,7 @@ Copy code
 systemd-analyze calendar "Mon..Fri 08:30 America/New_York"
 Do Not Do These Things
 ❌ Run deploy.sh
-❌ Start sentinel.py or execution.py manually
+❌ Start execution_v2/execution_main.py manually
 ❌ Use tmux in production
 ❌ Add cron jobs
 ❌ Modify systemd unit files without documenting changes
@@ -165,14 +158,12 @@ Do Not Do These Things
 
 Checks for readiness:
 systemctl list-timers --all | grep -E 'scan\.timer|execution-restart\.timer'
-systemctl status sentinel.service execution.service --no-pager
+systemctl status execution.service --no-pager
 
 One-Command Morning Health Check
 avwap-check
 
 What “good” looks like
-
-sentinel.service → active
 
 execution.service → active
 
@@ -182,13 +173,14 @@ execution-restart.timer shows next run at 08:40 America/New_York
 
 Watchlist check prints OK: Watchlist is fresh for today (NY)
 
-Exactly two Python processes (sentinel + execution)
+Exactly one execution process (execution_v2)
 
 
 Files of Interest
 Path	Purpose
 deploy_systemd.sh	Authoritative deploy script
 bin/check_watchlist_today.sh	Execution safety gate
+execution_v2/execution_main.py	Execution V2 entrypoint
 /etc/systemd/system/*.service	Runtime services
 /etc/systemd/system/*.timer	Schedules
 

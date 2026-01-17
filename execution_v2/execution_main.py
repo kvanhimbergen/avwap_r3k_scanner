@@ -1,25 +1,294 @@
 """
-Execution V2 – Orchestration Entrypoint (dry-run)
+Execution V2 – Orchestration Entrypoint
 """
 
-from time import time
-from execution_v2.state_store import StateStore
+from __future__ import annotations
+
+import argparse
+import os
+import time
+from datetime import datetime
+
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import (
+    MarketOrderRequest,
+    GetOrdersRequest,
+    ClosePositionRequest,
+)
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
+
+from alerts.slack import slack_alert
 from execution_v2 import buy_loop, sell_loop
+from execution_v2.market_data import from_env as market_data_from_env
+from execution_v2.orders import generate_idempotency_key
+from execution_v2.state_store import StateStore
 
-def run_once():
-    store = StateStore('execution_v2.sqlite')
-    buy_cfg = buy_loop.BuyLoopConfig()
-    sell_cfg = sell_loop.SellLoopConfig()
 
-    # Ingest candidates
-    buy_loop.ingest_watchlist_as_candidates(store, buy_cfg)
+def _now_et() -> str:
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
 
-    # Evaluate buy side
-    buy_loop.evaluate_and_create_entry_intents(store, md=None, cfg=buy_cfg, account_equity=100000)
 
-    # Evaluate sell side
-    sell_loop.evaluate_positions(store, md=None, cfg=sell_cfg)
+def _log(msg: str) -> None:
+    print(f"[{_now_et()}] {msg}", flush=True)
+
+
+def _get_trading_client() -> TradingClient:
+    api_key = os.getenv("APCA_API_KEY_ID") or ""
+    api_secret = os.getenv("APCA_API_SECRET_KEY") or ""
+    if not api_key or not api_secret:
+        raise RuntimeError("Missing Alpaca API credentials in environment")
+    paper = os.getenv("ALPACA_PAPER", "1") != "0"
+    return TradingClient(api_key, api_secret, paper=paper)
+
+
+def _market_open(trading_client: TradingClient) -> bool:
+    try:
+        clock = trading_client.get_clock()
+        return bool(clock.is_open)
+    except Exception as exc:
+        _log(f"WARNING: failed to fetch Alpaca clock ({exc}); assuming market closed")
+        return False
+
+
+def _has_open_order_or_position(trading_client: TradingClient, symbol: str) -> bool:
+    sym = (symbol or "").upper().strip()
+    if not sym:
+        return True
+
+    try:
+        trading_client.get_open_position(sym)
+        return True
+    except Exception:
+        pass
+
+    try:
+        req = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[sym])
+        orders = trading_client.get_orders(filter=req)
+        return len(orders) > 0
+    except Exception:
+        return True
+
+
+def _submit_bracket_order(trading_client: TradingClient, intent, dry_run: bool) -> str | None:
+    if dry_run:
+        _log(f"DRY_RUN: would submit {intent.symbol} qty={intent.size_shares} SL={intent.stop_loss} TP={intent.take_profit}")
+        return "dry-run"
+
+    order = MarketOrderRequest(
+        symbol=intent.symbol,
+        qty=intent.size_shares,
+        side=OrderSide.BUY,
+        time_in_force=TimeInForce.DAY,
+        order_class=OrderClass.BRACKET,
+        take_profit={"limit_price": round(float(intent.take_profit), 2)},
+        stop_loss={"stop_price": round(float(intent.stop_loss), 2)},
+    )
+    response = trading_client.submit_order(order)
+    return getattr(response, "id", None)
+
+
+def _get_account_equity(trading_client: TradingClient) -> float:
+    account = trading_client.get_account()
+    return float(account.equity)
+
+
+def run_once(cfg) -> None:
+    store = StateStore(cfg.db_path)
+    if cfg.entry_delay_min_sec > cfg.entry_delay_max_sec:
+        cfg.entry_delay_min_sec, cfg.entry_delay_max_sec = cfg.entry_delay_max_sec, cfg.entry_delay_min_sec
+    buy_cfg = buy_loop.BuyLoopConfig(
+        candidates_csv=cfg.candidates_csv,
+        entry_delay_min_sec=cfg.entry_delay_min_sec,
+        entry_delay_max_sec=cfg.entry_delay_max_sec,
+    )
+    sell_cfg = sell_loop.SellLoopConfig(candidates_csv=cfg.candidates_csv)
+    trading_client = _get_trading_client()
+    md = market_data_from_env()
+
+    if not _market_open(trading_client):
+        _log("Market closed; skipping cycle.")
+        return
+
+    account_equity = _get_account_equity(trading_client)
+    created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
+    if created:
+        _log(f"Created {created} entry intents.")
+
+    sell_loop.evaluate_positions(store, trading_client, sell_cfg)
+
+    now_ts = time.time()
+    intents = store.pop_due_entry_intents(now_ts)
+    if not intents:
+        intents = []
+
+    for intent in intents:
+        if _has_open_order_or_position(trading_client, intent.symbol):
+            _log(f"SKIP {intent.symbol}: open order/position exists")
+            continue
+
+        key = generate_idempotency_key(intent.symbol, "buy", intent.size_shares, intent.ref_price)
+        if not cfg.dry_run:
+            if not store.record_order_once(key, intent.symbol, "buy", intent.size_shares):
+                _log(f"SKIP {intent.symbol}: idempotency key already used")
+                continue
+
+        try:
+            order_id = _submit_bracket_order(trading_client, intent, cfg.dry_run)
+            _log(f"SUBMITTED {intent.symbol}: qty={intent.size_shares} order_id={order_id}")
+            slack_alert(
+                "TRADE",
+                f"SUBMITTED {intent.symbol}",
+                f"qty={intent.size_shares} SL={intent.stop_loss} TP={intent.take_profit}",
+                component="EXECUTION_V2",
+                throttle_key=f"submit_{intent.symbol}",
+                throttle_seconds=60,
+            )
+            if order_id and not cfg.dry_run:
+                store.update_external_order_id(key, order_id)
+        except Exception as exc:
+            _log(f"ERROR submitting {intent.symbol}: {exc}")
+            slack_alert(
+                "ERROR",
+                f"Execution error for {intent.symbol}",
+                f"{type(exc).__name__}: {exc}",
+                component="EXECUTION_V2",
+                throttle_key=f"submit_error_{intent.symbol}",
+                throttle_seconds=300,
+            )
+
+    trim_intents = store.pop_trim_intents()
+    if not trim_intents:
+        return
+
+    for intent in trim_intents:
+        symbol = str(intent["symbol"]).upper()
+        try:
+            position = trading_client.get_open_position(symbol)
+        except Exception:
+            continue
+
+        try:
+            current_price = float(getattr(position, "current_price", position.market_value))
+        except Exception:
+            current_price = None
+
+        try:
+            total_qty = int(float(position.qty))
+        except Exception:
+            continue
+
+        pct = float(intent["pct"])
+        reason = intent["reason"]
+        if pct <= 0:
+            continue
+
+        if pct >= 1.0:
+            if cfg.dry_run:
+                _log(f"DRY_RUN: would close {symbol} (reason={reason})")
+                continue
+            close_opts = ClosePositionRequest(qty=str(total_qty))
+            trading_client.close_position(symbol, close_options=close_opts)
+            slack_alert(
+                "TRADE",
+                f"CLOSE {symbol}",
+                f"reason={reason} qty={total_qty}",
+                component="EXECUTION_V2",
+                throttle_key=f"close_{symbol}",
+                throttle_seconds=60,
+            )
+            continue
+
+        qty = int(total_qty * pct)
+        if qty <= 0:
+            continue
+
+        ref_price = current_price or float(position.avg_entry_price)
+        key = generate_idempotency_key(symbol, "sell", qty, ref_price)
+        if not cfg.dry_run:
+            if not store.record_order_once(key, symbol, "sell", qty):
+                continue
+
+        if cfg.dry_run:
+            _log(f"DRY_RUN: would trim {symbol} qty={qty} reason={reason}")
+            continue
+
+        order = MarketOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+        )
+        response = trading_client.submit_order(order)
+        order_id = getattr(response, "id", None)
+        if order_id:
+            store.update_external_order_id(key, order_id)
+        slack_alert(
+            "TRADE",
+            f"TRIM {symbol}",
+            f"reason={reason} qty={qty} pct={pct:.2f}",
+            component="EXECUTION_V2",
+            throttle_key=f"trim_{symbol}_{reason}",
+            throttle_seconds=60,
+        )
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Execution V2 - Trading Orchestration")
+    parser.add_argument("--candidates-csv", default=os.getenv("WATCHLIST_FILE", "daily_candidates.csv"))
+    parser.add_argument("--db-path", default=os.getenv("EXECUTION_V2_DB", "data/execution_v2.sqlite"))
+    parser.add_argument("--poll-seconds", type=int, default=int(os.getenv("EXECUTION_POLL_SECONDS", "300")))
+    parser.add_argument(
+        "--entry-delay-min",
+        dest="entry_delay_min_sec",
+        type=int,
+        default=int(os.getenv("ENTRY_DELAY_MIN_SECONDS", "60")),
+    )
+    parser.add_argument(
+        "--entry-delay-max",
+        dest="entry_delay_max_sec",
+        type=int,
+        default=int(os.getenv("ENTRY_DELAY_MAX_SECONDS", "240")),
+    )
+    parser.add_argument("--dry-run", action="store_true", default=os.getenv("DRY_RUN", "0") == "1")
+    parser.add_argument("--once", action="store_true")
+    return parser.parse_args()
+
+
+def main() -> None:
+    cfg = _parse_args()
+    db_dir = os.path.dirname(cfg.db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+    slack_alert(
+        "INFO",
+        "Execution V2 started",
+        f"dry_run={cfg.dry_run} poll_seconds={cfg.poll_seconds}",
+        component="EXECUTION_V2",
+        throttle_key="execution_v2_start",
+        throttle_seconds=300,
+    )
+
+    if cfg.once:
+        run_once(cfg)
+        _log("Execution V2 run_once complete.")
+        return
+
+    while True:
+        try:
+            run_once(cfg)
+        except Exception as exc:
+            _log(f"ERROR: unexpected exception: {exc}")
+            slack_alert(
+                "ERROR",
+                "Execution V2 exception",
+                f"{type(exc).__name__}: {exc}",
+                component="EXECUTION_V2",
+                throttle_key="execution_v2_exception",
+                throttle_seconds=300,
+            )
+        time.sleep(cfg.poll_seconds)
+
 
 if __name__ == "__main__":
-    run_once()
-    print("Execution V2 dry-run complete")
+    main()

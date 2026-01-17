@@ -43,6 +43,10 @@ class EntryIntent:
     boh_confirmed_at: float
     scheduled_entry_at: float
     size_shares: int
+    stop_loss: float
+    take_profit: float
+    ref_price: float
+    dist_pct: float
 
 # -------------------------
 # Position state
@@ -57,6 +61,8 @@ class PositionState:
     r2_level: float
     stop_mode: StopMode
     last_update_ts: float
+    stop_price: float
+    high_water: float
     last_boh_level: Optional[float] = None
     invalidation_count: int = 0
     trimmed_r1: bool = False
@@ -71,4 +77,3 @@ class MarketContext:
     market_open: bool
     entry_window_open: bool
     global_regime: GlobalRegime
-

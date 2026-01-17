@@ -1,7 +1,6 @@
 import time
 import os
 import pandas as pd
-import requests
 import csv
 from datetime import datetime, timedelta
 import pytz
@@ -26,9 +25,6 @@ from config import cfg
 
 # --- CONFIGURATION ---
 load_dotenv()
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-SENTINEL_TELEGRAM = os.getenv("SENTINEL_TELEGRAM", "0") == "1"
-CHAT_ID = os.getenv("CHAT_ID")
 WATCHLIST_FILE = "daily_candidates.csv"
 TRADE_LOG = "trade_log.csv"
 TZ_ET = pytz.timezone("US/Eastern")
@@ -47,16 +43,6 @@ data_client = StockHistoricalDataClient(
     os.getenv('APCA_API_SECRET_KEY')
 )
 
-def send_telegram(message):
-    if not SENTINEL_TELEGRAM or not TELEGRAM_TOKEN or not os.getenv("CHAT_ID"):
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, data=payload, timeout=10)
-    except Exception as e:
-        print(f"Telegram Error: {e}")
-
 def log_trade_to_csv(ticker, side, price, signal_price, mfe=0, mae=0, pnl=0):
     file_exists = os.path.isfile(TRADE_LOG)
     with open(TRADE_LOG, mode='a', newline='') as f:
@@ -74,8 +60,15 @@ def send_daily_summary():
     try:
         data = get_daily_summary_data()
         pnl_emoji = "📈" if data['daily_pnl'] >= 0 else "📉"
-        msg = (f"📊 *DAILY SUMMARY*\nEquity: ${data['equity']:,.2f}\n{pnl_emoji} PnL: ${data['daily_pnl']:,.2f}")
-        send_telegram(msg)
+        msg = f"Equity: ${data['equity']:,.2f} | {pnl_emoji} PnL: ${data['daily_pnl']:,.2f}"
+        slack_alert(
+            "INFO",
+            "Daily summary",
+            msg,
+            component="SENTINEL",
+            throttle_key=f"summary_{datetime.now(TZ_ET).date()}",
+            throttle_seconds=3600,
+        )
     except Exception as e:
         print(f"Summary Error: {e}")
 
@@ -168,7 +161,6 @@ def monitor_watchlist():
                 execute_buy_bracket(ticker, structural_stop, r2_target)
                 OPEN_TRADE_STATS[ticker] = {'entry': curr_price, 'max_high': curr_price, 'min_low': curr_price, 'signal': avwap_floor}
                 log_trade_to_csv(ticker, 'BUY', curr_price, avwap_floor)
-                send_telegram(f"✅ *BUY {ticker}* @ ${curr_price:.2f} | 🛡️ Stop: ${structural_stop:.2f}")
                 slack_alert(
                     "TRADE",
                     f"BUY {ticker}",
@@ -187,7 +179,6 @@ def monitor_watchlist():
                     execute_partial_sell(ticker, sell_percentage=0.5)
                     s = OPEN_TRADE_STATS[ticker]
                     log_trade_to_csv(ticker, 'TRIM', curr_price, r1_target, s['max_high'] - s['entry'], s['entry'] - s['min_low'], curr_price - s['entry'])
-                    send_telegram(f"✂️ *TRIM {ticker}* @ ${curr_price:.2f}")
                     slack_alert(
                         "TRADE",
                         f"TRIM {ticker}",

@@ -1,7 +1,7 @@
 [Unit]
-Description=AVWAP Bot - Execution (orders/positions)
-After=network-online.target sentinel.service
-Wants=network-online.target sentinel.service
+Description=AVWAP Bot - Execution V2 (orders/positions)
+After=network-online.target
+Wants=network-online.target
 StartLimitInterval=60
 StartLimitBurst=10
 
@@ -12,7 +12,7 @@ WorkingDirectory=/root/avwap_r3k_scanner
 EnvironmentFile=/root/avwap_r3k_scanner/.env
 Environment=TEST_MODE=0
 
-ExecStart=/root/avwap_r3k_scanner/venv/bin/python -u /root/avwap_r3k_scanner/execution.py
+ExecStart=/root/avwap_r3k_scanner/venv/bin/python -u /root/avwap_r3k_scanner/execution_v2/execution_main.py --poll-seconds 300
 
 Restart=always
 RestartSec=5
@@ -27,6 +27,4 @@ ProtectHome=false
 
 [Install]
 WantedBy=multi-user.target
-
-
 
