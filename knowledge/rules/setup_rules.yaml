@@ -1,0 +1,19 @@
+setup:
+  vwap:
+    lookback: 20
+    control_buffer_pct: 0.2
+    acceptance_bars: 3
+  avwap:
+    control_buffer_pct: 0.2
+    acceptance_bars: 3
+  extension:
+    balanced_pct: 1.0
+    extended_pct: 3.0
+  gaps:
+    gap_pct: 0.04
+    reset_lookback: 60
+    reset_window: 3
+  structure:
+    sma_fast: 20
+    sma_slow: 50
+    slope_lookback: 10
