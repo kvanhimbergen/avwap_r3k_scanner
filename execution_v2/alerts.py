@@ -30,14 +30,14 @@ def send_alert(
     """
     try:
         # Lazy import to avoid hard dependency at startup
-        from alerts.slack import send_slack_message  # existing infra
+        from alerts.slack import slack_alert  # existing infra
 
         prefix = f"[{level.upper()}]"
         if symbol:
             prefix += f" [{symbol}]"
 
         text = f"{prefix} {title}\n{message}"
-        send_slack_message(text)
+        slack_alert(level.upper(), title, message, component="EXEC_V2")
 
     except Exception:
         _safe_print("[alerts] Slack alert failed:")
