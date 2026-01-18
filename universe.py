@@ -16,7 +16,7 @@ from config import cfg
 # --- CONFIGURATION (script-relative cache path) ---
 _BASE_DIR = Path(__file__).resolve().parent
 LOCAL_CACHE_PATH = str(_BASE_DIR / "cache" / "iwv_holdings.csv")
-DEFAULT_SNAPSHOT_PATH = "universe/cache/iwv_holdings.csv"
+DEFAULT_SNAPSHOT_PATH = "universe/snapshots/iwv_holdings_latest.csv"
 
 # Default rules path (repo-relative, from universe.py location)
 DEFAULT_RULES_PATH = str((_BASE_DIR / "knowledge" / "rules" / "universe_rules.yaml").resolve())
@@ -162,7 +162,7 @@ def _download_iwv_holdings_csv() -> str:
 
 def _snapshot_path() -> Path:
     configured = getattr(cfg, "UNIVERSE_SNAPSHOT_PATH", None)
-    return Path(configured or DEFAULT_SNAPSHOT_PATH)
+    return Path(configured) if configured else Path(DEFAULT_SNAPSHOT_PATH)
 
 
 def _read_text_if_exists(path: Path) -> Optional[str]:
@@ -210,6 +210,15 @@ def load_r3k_universe_from_iwv(
         cache_path.write_text(raw_text)
         return _clean_ishares_data(raw_text)
     except Exception as e:
+        if "iShares blocked" in str(e):
+            snapshot_text = _read_text_if_exists(snapshot_path)
+            if snapshot_text is not None:
+                return _clean_ishares_data(snapshot_text)
+            raise RuntimeError(
+                "iShares blocked the request and no snapshot file was found. "
+                "Set UNIVERSE_SNAPSHOT_PATH or refresh the snapshot offline."
+            ) from e
+
         # 3) Cache fallback
         if cache_path.exists():
             # Even if stale, use it (per your prior behavior)
