@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -21,6 +22,7 @@ ENTRY_MODEL_NEXT_OPEN = "next_open"
 ENTRY_MODEL_SAME_CLOSE = "same_close"
 
 TRIM_PCT = 0.30
+EPSILON = 1e-9
 
 
 @dataclass
@@ -121,6 +123,71 @@ def _direction_sign(direction: str) -> int:
     return -1 if direction.lower() == "short" else 1
 
 
+def _cfg_value(cfg, name: str, fallback_name: str, default):
+    if hasattr(cfg, name):
+        return getattr(cfg, name)
+    return getattr(cfg, fallback_name, default)
+
+
+def _apply_slippage(price: float, *, bps: float, direction: str, is_entry: bool) -> float:
+    sign = _direction_sign(direction)
+    slip = bps / 10_000.0
+    if is_entry:
+        return price * (1 + slip * sign)
+    return price * (1 - slip * sign)
+
+
+def _marketable_limit_ok(
+    *, ideal: float, slipped: float, direction: str, entry_limit_bps: float
+) -> bool:
+    sign = _direction_sign(direction)
+    limit = entry_limit_bps / 10_000.0
+    if sign > 0:
+        return slipped <= ideal * (1 + limit + EPSILON)
+    return slipped >= ideal * (1 - limit - EPSILON)
+
+
+def _compute_positions_value(
+    history: pd.DataFrame, positions: dict[str, dict], session_date: pd.Timestamp
+) -> float:
+    positions_value = 0.0
+    for symbol, pos in positions.items():
+        sym_hist = get_symbol_history(history, symbol, session_date)
+        if sym_hist.empty:
+            continue
+        last_close = float(sym_hist.iloc[-1]["Close"])
+        sign = _direction_sign(pos["direction"])
+        positions_value += sign * last_close * pos["remaining_qty"]
+    return positions_value
+
+
+def _compute_gross_exposure(
+    history: pd.DataFrame, positions: dict[str, dict], session_date: pd.Timestamp
+) -> float:
+    gross_value = 0.0
+    for symbol, pos in positions.items():
+        sym_hist = get_symbol_history(history, symbol, session_date)
+        if sym_hist.empty:
+            continue
+        last_close = float(sym_hist.iloc[-1]["Close"])
+        gross_value += abs(last_close * pos["remaining_qty"])
+    return gross_value
+
+
+def _risk_per_share(entry_price: float, stop: float, direction: str) -> float:
+    sign = _direction_sign(direction)
+    return max(sign * (entry_price - stop), 0.01)
+
+
+def _extension_high_from_candidate(row: pd.Series) -> bool | None:
+    for key in ("Extension_High", "Setup_Extension_State", "Extension_State"):
+        if key in row and pd.notna(row.get(key)):
+            val = row.get(key)
+            if isinstance(val, (int, float)):
+                return bool(val)
+            return "extend" in str(val).lower()
+    return None
+
 def _scan_as_of(
     history: pd.DataFrame,
     symbols: list[str],
@@ -214,6 +281,18 @@ def run_backtest(
     initial_cash = float(
         getattr(cfg, "BACKTEST_INITIAL_CASH", getattr(cfg, "BACKTEST_INITIAL_EQUITY", 100_000.0))
     )
+    risk_per_trade_pct = float(_cfg_value(cfg, "BACKTEST_RISK_PER_TRADE_PCT", "BACKTEST_RISK_PCT", 0.01))
+    max_positions = int(_cfg_value(cfg, "BACKTEST_MAX_POSITIONS", "BACKTEST_MAX_CONCURRENT", 5))
+    max_gross_exposure_pct = float(
+        getattr(cfg, "BACKTEST_MAX_GROSS_EXPOSURE_PCT", 1.0)
+    )
+    min_dollar_position = float(getattr(cfg, "BACKTEST_MIN_DOLLAR_POSITION", 0.0))
+    slippage_bps = float(getattr(cfg, "BACKTEST_SLIPPAGE_BPS", 0.0))
+    entry_limit_bps = float(getattr(cfg, "BACKTEST_ENTRY_LIMIT_BPS", slippage_bps))
+    extension_thresh = float(getattr(cfg, "BACKTEST_EXTENSION_THRESH", 0.03))
+    invalidation_stop_buffer_pct = float(
+        getattr(cfg, "BACKTEST_INVALIDATION_STOP_BUFFER_PCT", 0.0)
+    )
 
     output_dir = Path(getattr(cfg, "BACKTEST_OUTPUT_DIR", DEFAULT_OUTPUT_DIR))
     history = load_ohlcv_history(Path(getattr(cfg, "BACKTEST_OHLCV_PATH", DEFAULT_OHLCV_PATH)))
@@ -270,6 +349,15 @@ def run_backtest(
         entries_filled_today = 0
         trades_fills_today = 0
         candidates_skipped_missing_next_open_bar = 0
+        entries_skipped_max_positions = 0
+        entries_skipped_cash = 0
+        entries_skipped_gross_exposure = 0
+        entries_skipped_size_zero = 0
+        entries_missed_limit = 0
+        invalidations_today = 0
+        stops_today = 0
+        targets_r1_today = 0
+        targets_r2_today = 0
 
         if entry_model == ENTRY_MODEL_NEXT_OPEN:
             ready = [p for p in pending_entries if p["entry_date"] == session_date]
@@ -282,26 +370,72 @@ def run_backtest(
                 if bar is None:
                     candidates_skipped_missing_next_open_bar += 1
                     continue
-                entry_price = bar["Open"]
-                qty = 1.0
+                ideal_price = bar["Open"]
                 direction = entry["direction"]
+                entry_price = _apply_slippage(
+                    ideal_price, bps=slippage_bps, direction=direction, is_entry=True
+                )
+                if not _marketable_limit_ok(
+                    ideal=ideal_price,
+                    slipped=entry_price,
+                    direction=direction,
+                    entry_limit_bps=entry_limit_bps,
+                ):
+                    entries_missed_limit += 1
+                    continue
+                equity_before = cash + _compute_positions_value(history, positions, session_date)
+                if len(positions) >= max_positions:
+                    entries_skipped_max_positions += 1
+                    continue
+                risk_per_share = _risk_per_share(entry_price, entry["stop"], direction)
+                dollar_risk = equity_before * risk_per_trade_pct
+                qty = math.floor(dollar_risk / risk_per_share)
+                if qty < 1:
+                    entries_skipped_size_zero += 1
+                    continue
+                notional = entry_price * qty
+                if notional < min_dollar_position:
+                    entries_skipped_size_zero += 1
+                    continue
+                if _direction_sign(direction) > 0 and notional > cash + EPSILON:
+                    entries_skipped_cash += 1
+                    continue
+                gross_exposure = _compute_gross_exposure(history, positions, session_date)
+                if equity_before > 0 and (
+                    gross_exposure + abs(notional)
+                ) / equity_before > max_gross_exposure_pct + EPSILON:
+                    entries_skipped_gross_exposure += 1
+                    continue
                 sign = _direction_sign(direction)
                 cash -= sign * entry_price * qty
+                sym_hist = get_symbol_history(history, symbol, session_date)
+                prior_close = None
+                if len(sym_hist) >= 2:
+                    prior_close = float(sym_hist.iloc[-2]["Close"])
                 position = {
                     "position_id": entry["position_id"],
                     "symbol": symbol,
                     "direction": direction,
                     "entry_date": session_date,
                     "entry_price": entry_price,
-                    "qty": qty,
-                    "remaining_qty": qty,
+                    "qty": float(qty),
+                    "initial_qty": float(qty),
+                    "remaining_qty": float(qty),
                     "stop": entry["stop"],
                     "r1": entry["r1"],
                     "r2": entry["r2"],
                     "hold_days": 0,
                     "r1_trimmed": False,
+                    "entry_level": entry["entry_level"],
+                    "extension_high": entry["extension_high"],
+                    "avwap_reclaim_failed": entry["avwap_reclaim_failed"],
+                    "realized_pnl": 0.0,
+                    "mae_price": entry_price,
+                    "mfe_price": entry_price,
+                    "prior_close": prior_close,
                 }
                 positions[symbol] = position
+                equity_after = cash + _compute_positions_value(history, positions, session_date)
                 trades.append(
                     {
                         "date": session_date.date().isoformat(),
@@ -309,12 +443,20 @@ def run_backtest(
                         "direction": direction,
                         "fill_type": "entry",
                         "reason": "signal",
+                        "entry_reason": entry["entry_reason"],
+                        "exit_reason": None,
                         "price": entry_price,
                         "qty": qty,
                         "remaining_qty": qty,
                         "pnl": 0.0,
+                        "notional": notional,
+                        "slippage_bps": slippage_bps,
+                        "equity_before": equity_before,
+                        "equity_after": equity_after,
                         "position_id": entry["position_id"],
                         "hold_days": 0,
+                        "mae": None,
+                        "mfe": None,
                     }
                 )
                 entries_filled_today += 1
@@ -328,15 +470,65 @@ def run_backtest(
             pos["hold_days"] += 1
             sign = _direction_sign(pos["direction"])
 
+            if sign > 0:
+                pos["mfe_price"] = max(pos["mfe_price"], bar["High"])
+                pos["mae_price"] = min(pos["mae_price"], bar["Low"])
+            else:
+                pos["mfe_price"] = min(pos["mfe_price"], bar["Low"])
+                pos["mae_price"] = max(pos["mae_price"], bar["High"])
+
             stop_hit = bar["Low"] <= pos["stop"] if sign > 0 else bar["High"] >= pos["stop"]
             r1_hit = bar["High"] >= pos["r1"] if sign > 0 else bar["Low"] <= pos["r1"]
             r2_hit = bar["High"] >= pos["r2"] if sign > 0 else bar["Low"] <= pos["r2"]
 
+            rejection_bar = bar["Close"] < bar["Open"] and (
+                (bar["High"] - bar["Close"]) / (bar["High"] - bar["Low"] + EPSILON)
+            ) > 0.6
+            momentum_weakening = (
+                pos["prior_close"] is not None
+                and bar["Close"] <= pos["prior_close"] + EPSILON
+            )
+            # Proxy-only trim logic: extension condition + rejection/weak momentum on daily OHLC.
+            extension_high = pos["extension_high"]
+            if extension_high is None:
+                entry_level = pos.get("entry_level", pos["entry_price"])
+                extension_high = (
+                    (bar["High"] - entry_level) / max(entry_level, EPSILON)
+                ) >= extension_thresh
+            r1_trim_allowed = extension_high and (rejection_bar or momentum_weakening)
+
+            # Proxy invalidations: structure-break close vs stop buffer and optional AVWAP reclaim fail.
+            invalidation_triggered = False
+            invalidation_threshold = (
+                pos["stop"] * (1 + invalidation_stop_buffer_pct)
+                if sign > 0
+                else pos["stop"] * (1 - invalidation_stop_buffer_pct)
+            )
+            if sign > 0 and bar["Close"] < invalidation_threshold:
+                invalidation_triggered = True
+            if sign < 0 and bar["Close"] > invalidation_threshold:
+                invalidation_triggered = True
+            if (
+                not invalidation_triggered
+                and pos["avwap_reclaim_failed"]
+                and pos["hold_days"] >= 1
+                and bar["Close"] < pos.get("entry_level", pos["entry_price"])
+            ):
+                invalidation_triggered = True
+
             if stop_hit:
-                exit_price = pos["stop"]
+                exit_price = _apply_slippage(
+                    pos["stop"], bps=slippage_bps, direction=pos["direction"], is_entry=False
+                )
                 qty = pos["remaining_qty"]
+                equity_before = cash + _compute_positions_value(history, positions, session_date)
                 pnl = sign * (exit_price - pos["entry_price"]) * qty
                 cash += sign * exit_price * qty
+                pos["remaining_qty"] = 0.0
+                pos["realized_pnl"] += pnl
+                equity_after = cash + _compute_positions_value(history, positions, session_date)
+                mae = sign * (pos["mae_price"] - pos["entry_price"]) * pos["initial_qty"]
+                mfe = sign * (pos["mfe_price"] - pos["entry_price"]) * pos["initial_qty"]
                 trades.append(
                     {
                         "date": session_date.date().isoformat(),
@@ -344,36 +536,52 @@ def run_backtest(
                         "direction": pos["direction"],
                         "fill_type": "exit",
                         "reason": "stop",
+                        "entry_reason": None,
+                        "exit_reason": "stop",
                         "price": exit_price,
                         "qty": qty,
                         "remaining_qty": 0.0,
                         "pnl": pnl,
+                        "notional": exit_price * qty,
+                        "slippage_bps": slippage_bps,
+                        "equity_before": equity_before,
+                        "equity_after": equity_after,
                         "position_id": pos["position_id"],
                         "hold_days": pos["hold_days"],
+                        "mae": mae,
+                        "mfe": mfe,
                     }
                 )
                 trades_fills_today += 1
+                stops_today += 1
                 closed_positions.append(
                     {
                         "position_id": pos["position_id"],
                         "entry_date": pos["entry_date"],
                         "exit_date": session_date,
-                        "pnl": pnl,
+                        "pnl": pos["realized_pnl"],
                         "hold_days": pos["hold_days"],
+                        "mae": mae,
+                        "mfe": mfe,
                     }
                 )
                 del positions[symbol]
                 continue
 
-            if r1_hit and not pos["r1_trimmed"]:
-                trim_qty = pos["qty"] * TRIM_PCT
+            if r1_hit and not pos["r1_trimmed"] and r1_trim_allowed:
+                trim_qty = pos["initial_qty"] * TRIM_PCT
                 trim_qty = min(trim_qty, pos["remaining_qty"])
                 if trim_qty > 0:
-                    trim_price = pos["r1"]
+                    trim_price = _apply_slippage(
+                        pos["r1"], bps=slippage_bps, direction=pos["direction"], is_entry=False
+                    )
+                    equity_before = cash + _compute_positions_value(history, positions, session_date)
                     pnl = sign * (trim_price - pos["entry_price"]) * trim_qty
                     cash += sign * trim_price * trim_qty
                     pos["remaining_qty"] -= trim_qty
                     pos["r1_trimmed"] = True
+                    pos["realized_pnl"] += pnl
+                    equity_after = cash + _compute_positions_value(history, positions, session_date)
                     trades.append(
                         {
                             "date": session_date.date().isoformat(),
@@ -381,21 +589,38 @@ def run_backtest(
                             "direction": pos["direction"],
                             "fill_type": "trim",
                             "reason": "target_r1",
+                            "entry_reason": None,
+                            "exit_reason": "target_r1",
                             "price": trim_price,
                             "qty": trim_qty,
                             "remaining_qty": pos["remaining_qty"],
                             "pnl": pnl,
+                            "notional": trim_price * trim_qty,
+                            "slippage_bps": slippage_bps,
+                            "equity_before": equity_before,
+                            "equity_after": equity_after,
                             "position_id": pos["position_id"],
                             "hold_days": pos["hold_days"],
+                            "mae": None,
+                            "mfe": None,
                         }
                     )
                     trades_fills_today += 1
+                    targets_r1_today += 1
 
             if r2_hit and pos["remaining_qty"] > 0:
-                exit_price = pos["r2"]
+                exit_price = _apply_slippage(
+                    pos["r2"], bps=slippage_bps, direction=pos["direction"], is_entry=False
+                )
                 qty = pos["remaining_qty"]
+                equity_before = cash + _compute_positions_value(history, positions, session_date)
                 pnl = sign * (exit_price - pos["entry_price"]) * qty
                 cash += sign * exit_price * qty
+                pos["remaining_qty"] = 0.0
+                pos["realized_pnl"] += pnl
+                equity_after = cash + _compute_positions_value(history, positions, session_date)
+                mae = sign * (pos["mae_price"] - pos["entry_price"]) * pos["initial_qty"]
+                mfe = sign * (pos["mfe_price"] - pos["entry_price"]) * pos["initial_qty"]
                 trades.append(
                     {
                         "date": session_date.date().isoformat(),
@@ -403,32 +628,103 @@ def run_backtest(
                         "direction": pos["direction"],
                         "fill_type": "exit",
                         "reason": "target_r2",
+                        "entry_reason": None,
+                        "exit_reason": "target_r2",
                         "price": exit_price,
                         "qty": qty,
                         "remaining_qty": 0.0,
                         "pnl": pnl,
+                        "notional": exit_price * qty,
+                        "slippage_bps": slippage_bps,
+                        "equity_before": equity_before,
+                        "equity_after": equity_after,
                         "position_id": pos["position_id"],
                         "hold_days": pos["hold_days"],
+                        "mae": mae,
+                        "mfe": mfe,
                     }
                 )
                 trades_fills_today += 1
+                targets_r2_today += 1
                 closed_positions.append(
                     {
                         "position_id": pos["position_id"],
                         "entry_date": pos["entry_date"],
                         "exit_date": session_date,
-                        "pnl": pnl,
+                        "pnl": pos["realized_pnl"],
                         "hold_days": pos["hold_days"],
+                        "mae": mae,
+                        "mfe": mfe,
+                    }
+                )
+                del positions[symbol]
+                continue
+
+            if invalidation_triggered and pos["remaining_qty"] > 0:
+                exit_price = _apply_slippage(
+                    bar["Close"], bps=slippage_bps, direction=pos["direction"], is_entry=False
+                )
+                qty = pos["remaining_qty"]
+                equity_before = cash + _compute_positions_value(history, positions, session_date)
+                pnl = sign * (exit_price - pos["entry_price"]) * qty
+                cash += sign * exit_price * qty
+                pos["remaining_qty"] = 0.0
+                pos["realized_pnl"] += pnl
+                equity_after = cash + _compute_positions_value(history, positions, session_date)
+                mae = sign * (pos["mae_price"] - pos["entry_price"]) * pos["initial_qty"]
+                mfe = sign * (pos["mfe_price"] - pos["entry_price"]) * pos["initial_qty"]
+                trades.append(
+                    {
+                        "date": session_date.date().isoformat(),
+                        "symbol": symbol,
+                        "direction": pos["direction"],
+                        "fill_type": "exit",
+                        "reason": "invalidation",
+                        "entry_reason": None,
+                        "exit_reason": "invalidation",
+                        "price": exit_price,
+                        "qty": qty,
+                        "remaining_qty": 0.0,
+                        "pnl": pnl,
+                        "notional": exit_price * qty,
+                        "slippage_bps": slippage_bps,
+                        "equity_before": equity_before,
+                        "equity_after": equity_after,
+                        "position_id": pos["position_id"],
+                        "hold_days": pos["hold_days"],
+                        "mae": mae,
+                        "mfe": mfe,
+                    }
+                )
+                trades_fills_today += 1
+                invalidations_today += 1
+                closed_positions.append(
+                    {
+                        "position_id": pos["position_id"],
+                        "entry_date": pos["entry_date"],
+                        "exit_date": session_date,
+                        "pnl": pos["realized_pnl"],
+                        "hold_days": pos["hold_days"],
+                        "mae": mae,
+                        "mfe": mfe,
                     }
                 )
                 del positions[symbol]
                 continue
 
             if pos["hold_days"] >= max_hold_days and pos["remaining_qty"] > 0:
-                exit_price = bar["Close"]
+                exit_price = _apply_slippage(
+                    bar["Close"], bps=slippage_bps, direction=pos["direction"], is_entry=False
+                )
                 qty = pos["remaining_qty"]
+                equity_before = cash + _compute_positions_value(history, positions, session_date)
                 pnl = sign * (exit_price - pos["entry_price"]) * qty
                 cash += sign * exit_price * qty
+                pos["remaining_qty"] = 0.0
+                pos["realized_pnl"] += pnl
+                equity_after = cash + _compute_positions_value(history, positions, session_date)
+                mae = sign * (pos["mae_price"] - pos["entry_price"]) * pos["initial_qty"]
+                mfe = sign * (pos["mfe_price"] - pos["entry_price"]) * pos["initial_qty"]
                 trades.append(
                     {
                         "date": session_date.date().isoformat(),
@@ -436,12 +732,20 @@ def run_backtest(
                         "direction": pos["direction"],
                         "fill_type": "exit",
                         "reason": "time_stop",
+                        "entry_reason": None,
+                        "exit_reason": "time_stop",
                         "price": exit_price,
                         "qty": qty,
                         "remaining_qty": 0.0,
                         "pnl": pnl,
+                        "notional": exit_price * qty,
+                        "slippage_bps": slippage_bps,
+                        "equity_before": equity_before,
+                        "equity_after": equity_after,
                         "position_id": pos["position_id"],
                         "hold_days": pos["hold_days"],
+                        "mae": mae,
+                        "mfe": mfe,
                     }
                 )
                 trades_fills_today += 1
@@ -450,11 +754,16 @@ def run_backtest(
                         "position_id": pos["position_id"],
                         "entry_date": pos["entry_date"],
                         "exit_date": session_date,
-                        "pnl": pnl,
+                        "pnl": pos["realized_pnl"],
                         "hold_days": pos["hold_days"],
+                        "mae": mae,
+                        "mfe": mfe,
                     }
                 )
                 del positions[symbol]
+
+            if symbol in positions:
+                pos["prior_close"] = bar["Close"]
 
         candidates, scan_stats = _scan_as_of(
             history, symbols, sector_map, session_date, cfg, return_stats=True
@@ -484,30 +793,84 @@ def run_backtest(
             if any(p["symbol"] == symbol for p in pending_entries):
                 continue
             direction = str(row.get("Direction", "Long"))
+            entry_level = float(row.get("Entry_Level", row.get("Price", row["Stop_Loss"])))
+            extension_high = _extension_high_from_candidate(row)
+            avwap_reclaim = str(row.get("Setup_AVWAP_Reclaim", "")).lower()
+            avwap_accept = str(row.get("Setup_AVWAP_Acceptance", "")).lower()
+            avwap_reclaim_failed = any(token in avwap_reclaim for token in ("fail", "reject")) or any(
+                token in avwap_accept for token in ("fail", "reject")
+            )
+            entry_reason = "signal"
 
             if entry_model == ENTRY_MODEL_SAME_CLOSE:
                 bar = get_bar(history, symbol, session_date)
                 if bar is None:
                     continue
-                entry_price = bar["Close"]
-                qty = 1.0
+                ideal_price = bar["Close"]
+                entry_price = _apply_slippage(
+                    ideal_price, bps=slippage_bps, direction=direction, is_entry=True
+                )
+                if not _marketable_limit_ok(
+                    ideal=ideal_price,
+                    slipped=entry_price,
+                    direction=direction,
+                    entry_limit_bps=entry_limit_bps,
+                ):
+                    entries_missed_limit += 1
+                    continue
+                equity_before = cash + _compute_positions_value(history, positions, session_date)
+                if len(positions) >= max_positions:
+                    entries_skipped_max_positions += 1
+                    continue
+                risk_per_share = _risk_per_share(entry_price, float(row["Stop_Loss"]), direction)
+                dollar_risk = equity_before * risk_per_trade_pct
+                qty = math.floor(dollar_risk / risk_per_share)
+                if qty < 1:
+                    entries_skipped_size_zero += 1
+                    continue
+                notional = entry_price * qty
+                if notional < min_dollar_position:
+                    entries_skipped_size_zero += 1
+                    continue
+                if _direction_sign(direction) > 0 and notional > cash + EPSILON:
+                    entries_skipped_cash += 1
+                    continue
+                gross_exposure = _compute_gross_exposure(history, positions, session_date)
+                if equity_before > 0 and (
+                    gross_exposure + abs(notional)
+                ) / equity_before > max_gross_exposure_pct + EPSILON:
+                    entries_skipped_gross_exposure += 1
+                    continue
                 sign = _direction_sign(direction)
                 cash -= sign * entry_price * qty
+                sym_hist = get_symbol_history(history, symbol, session_date)
+                prior_close = None
+                if len(sym_hist) >= 2:
+                    prior_close = float(sym_hist.iloc[-2]["Close"])
                 position = {
                     "position_id": next_position_id,
                     "symbol": symbol,
                     "direction": direction,
                     "entry_date": session_date,
                     "entry_price": entry_price,
-                    "qty": qty,
-                    "remaining_qty": qty,
+                    "qty": float(qty),
+                    "initial_qty": float(qty),
+                    "remaining_qty": float(qty),
                     "stop": float(row["Stop_Loss"]),
                     "r1": float(row["Target_R1"]),
                     "r2": float(row["Target_R2"]),
                     "hold_days": 0,
                     "r1_trimmed": False,
+                    "entry_level": entry_level,
+                    "extension_high": extension_high,
+                    "avwap_reclaim_failed": avwap_reclaim_failed,
+                    "realized_pnl": 0.0,
+                    "mae_price": entry_price,
+                    "mfe_price": entry_price,
+                    "prior_close": prior_close,
                 }
                 positions[symbol] = position
+                equity_after = cash + _compute_positions_value(history, positions, session_date)
                 trades.append(
                     {
                         "date": session_date.date().isoformat(),
@@ -515,12 +878,20 @@ def run_backtest(
                         "direction": direction,
                         "fill_type": "entry",
                         "reason": "signal",
+                        "entry_reason": entry_reason,
+                        "exit_reason": None,
                         "price": entry_price,
                         "qty": qty,
                         "remaining_qty": qty,
                         "pnl": 0.0,
+                        "notional": notional,
+                        "slippage_bps": slippage_bps,
+                        "equity_before": equity_before,
+                        "equity_after": equity_after,
                         "position_id": next_position_id,
                         "hold_days": 0,
+                        "mae": None,
+                        "mfe": None,
                     }
                 )
                 entries_placed_today += 1
@@ -538,6 +909,10 @@ def run_backtest(
                         "stop": float(row["Stop_Loss"]),
                         "r1": float(row["Target_R1"]),
                         "r2": float(row["Target_R2"]),
+                        "entry_level": entry_level,
+                        "extension_high": extension_high,
+                        "avwap_reclaim_failed": avwap_reclaim_failed,
+                        "entry_reason": entry_reason,
                         "position_id": next_position_id,
                     }
                 )
@@ -593,6 +968,15 @@ def run_backtest(
                 "candidates_skipped_missing_next_open_bar": candidates_skipped_missing_next_open_bar,
                 "entries_placed": entries_placed_today,
                 "entries_filled": entries_filled_today,
+                "entries_skipped_max_positions": entries_skipped_max_positions,
+                "entries_skipped_cash": entries_skipped_cash,
+                "entries_skipped_gross_exposure": entries_skipped_gross_exposure,
+                "entries_skipped_size_zero": entries_skipped_size_zero,
+                "entries_missed_limit": entries_missed_limit,
+                "invalidations_today": invalidations_today,
+                "stops_today": stops_today,
+                "targets_r1_today": targets_r1_today,
+                "targets_r2_today": targets_r2_today,
                 "open_positions_end_of_day": len(positions),
                 "trades_fills_today": trades_fills_today,
                 "equity_end_of_day": round(equity, 4),
@@ -621,12 +1005,20 @@ def run_backtest(
         "direction",
         "fill_type",
         "reason",
+        "entry_reason",
+        "exit_reason",
         "price",
         "qty",
         "remaining_qty",
         "pnl",
+        "notional",
+        "slippage_bps",
+        "equity_before",
+        "equity_after",
         "position_id",
         "hold_days",
+        "mae",
+        "mfe",
     ]
     positions_columns = [
         "date",
@@ -665,7 +1057,22 @@ def run_backtest(
     else:
         equity_df = pd.DataFrame(columns=equity_columns)
 
-    trades_df = _round_frame(trades_df, ["price", "qty", "remaining_qty", "pnl"], decimals=4)
+    trades_df = _round_frame(
+        trades_df,
+        [
+            "price",
+            "qty",
+            "remaining_qty",
+            "pnl",
+            "notional",
+            "slippage_bps",
+            "equity_before",
+            "equity_after",
+            "mae",
+            "mfe",
+        ],
+        decimals=4,
+    )
     positions_df = _round_frame(
         positions_df,
         [
@@ -690,6 +1097,18 @@ def run_backtest(
         wins = sum(1 for pos in closed_positions if pos["pnl"] > 0)
         avg_hold_days = sum(pos["hold_days"] for pos in closed_positions) / len(closed_positions)
     win_rate = (wins / len(closed_positions)) if closed_positions else 0.0
+    win_pnls = [pos["pnl"] for pos in closed_positions if pos["pnl"] > 0]
+    loss_pnls = [pos["pnl"] for pos in closed_positions if pos["pnl"] < 0]
+    gross_profit = sum(win_pnls)
+    gross_loss = abs(sum(loss_pnls))
+    profit_factor = (gross_profit / gross_loss) if gross_loss else 0.0
+    avg_win = (sum(win_pnls) / len(win_pnls)) if win_pnls else 0.0
+    avg_loss = (abs(sum(loss_pnls)) / len(loss_pnls)) if loss_pnls else 0.0
+    expectancy = (
+        sum(pos["pnl"] for pos in closed_positions) / len(closed_positions)
+        if closed_positions
+        else 0.0
+    )
 
     max_drawdown = 0.0
     if not equity_df.empty:
@@ -699,6 +1118,17 @@ def run_backtest(
 
     final_equity = float(equity_df["equity"].iloc[-1]) if not equity_df.empty else initial_cash
     total_return = (final_equity - initial_cash) / initial_cash if initial_cash else 0.0
+    exposure_avg_pct = 0.0
+    max_concurrent_positions = 0
+    if not equity_df.empty:
+        exposure_series = equity_df["positions_value"] / equity_df["equity"].replace(0, pd.NA)
+        exposure_avg_pct = float(exposure_series.fillna(0).mean())
+        max_concurrent_positions = int(equity_df["open_positions"].max())
+    avg_position_size = (
+        float(trades_df.loc[trades_df["fill_type"] == "entry", "notional"].mean())
+        if not trades_df.empty and "notional" in trades_df.columns
+        else 0.0
+    )
 
     summary = {
         "start_date": start_dt.date().isoformat(),
@@ -710,6 +1140,13 @@ def run_backtest(
         "win_rate": round(win_rate, 6),
         "max_drawdown": round(max_drawdown, 6),
         "avg_hold_days": round(avg_hold_days, 4),
+        "profit_factor": round(profit_factor, 6),
+        "avg_win": round(avg_win, 4),
+        "avg_loss": round(avg_loss, 4),
+        "expectancy": round(expectancy, 4),
+        "exposure_avg_pct": round(exposure_avg_pct, 6),
+        "avg_position_size": round(avg_position_size, 4),
+        "max_concurrent_positions": max_concurrent_positions,
     }
 
     trades_path = output_dir / "trades.csv"
@@ -733,6 +1170,15 @@ def run_backtest(
         "candidates_skipped_missing_next_open_bar",
         "entries_placed",
         "entries_filled",
+        "entries_skipped_max_positions",
+        "entries_skipped_cash",
+        "entries_skipped_gross_exposure",
+        "entries_skipped_size_zero",
+        "entries_missed_limit",
+        "invalidations_today",
+        "stops_today",
+        "targets_r1_today",
+        "targets_r2_today",
         "open_positions_end_of_day",
         "trades_fills_today",
         "equity_end_of_day",

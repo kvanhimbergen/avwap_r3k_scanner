@@ -147,6 +147,8 @@ def test_backtest_scan_diagnostics(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(cfg, "BACKTEST_ENTRY_MODEL", "next_open")
     monkeypatch.setattr(cfg, "BACKTEST_MAX_HOLD_DAYS", 2)
     monkeypatch.setattr(cfg, "BACKTEST_INITIAL_CASH", 100_000.0)
+    monkeypatch.setattr(cfg, "BACKTEST_SLIPPAGE_BPS", 5.0)
+    monkeypatch.setattr(cfg, "BACKTEST_ENTRY_LIMIT_BPS", 1.0)
 
     backtest_engine.run_backtest(
         cfg, dates[0].date(), dates[-1].date(), universe_symbols=["AAA", "BBB"]
@@ -156,6 +158,18 @@ def test_backtest_scan_diagnostics(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert diagnostics_path.exists()
 
     diagnostics = pd.read_csv(diagnostics_path)
+    for col in [
+        "entries_skipped_max_positions",
+        "entries_skipped_cash",
+        "entries_skipped_gross_exposure",
+        "entries_skipped_size_zero",
+        "entries_missed_limit",
+        "invalidations_today",
+        "stops_today",
+        "targets_r1_today",
+        "targets_r2_today",
+    ]:
+        assert col in diagnostics.columns
     first_day = diagnostics[diagnostics["date"] == dates[0].date().isoformat()].iloc[0]
     second_day = diagnostics[diagnostics["date"] == dates[1].date().isoformat()].iloc[0]
 
