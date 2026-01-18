@@ -10,8 +10,9 @@ pytest.importorskip("pandas")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
 
+from setup_context import load_setup_rules
 from config import cfg
-from scanner import score_candidate
+import scan_engine
 
 
 def _make_ohlcv(start: str, periods: int) -> pd.DataFrame:
@@ -43,7 +44,14 @@ def test_scan_does_not_use_future_bars(monkeypatch: pytest.MonkeyPatch) -> None:
         "Volume": 5_000_000.0,
     }
 
-    df_as_of = df_with_future.loc[:as_of_dt]
-    result = score_candidate(df_as_of, df_as_of, "Long")
+    setup_rules = load_setup_rules()
+    result = scan_engine.build_candidate_row(
+        df_with_future,
+        "TEST",
+        "TestSector",
+        setup_rules,
+        as_of_dt=as_of_dt,
+        direction="Long",
+    )
     assert result is not None
     assert result["Price"] == round(float(df.loc[as_of_dt, "Close"]), 2)
