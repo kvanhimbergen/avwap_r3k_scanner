@@ -33,7 +33,44 @@ def test_scan_does_not_use_future_bars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cfg, "MIN_PRICE", 0.0)
 
     df = _make_ohlcv("2024-01-01", 130)
-    as_of_dt = df.index[-2]
+    as_of_dt = pd.Timestamp("2024-04-06")
+    assert as_of_dt.weekday() == 5
+
+    def _fake_setup_context(*_args, **_kwargs):
+        return type(
+            "SetupContextStub",
+            (),
+            {
+                "vwap_control": "inside",
+                "vwap_reclaim": "none",
+                "vwap_acceptance": "accepted",
+                "vwap_dist_pct": 1.23,
+                "avwap_control": "inside",
+                "avwap_reclaim": "none",
+                "avwap_acceptance": "accepted",
+                "avwap_dist_pct": 2.34,
+                "extension_state": "neutral",
+                "gap_reset": "none",
+                "structure_state": "neutral",
+            },
+        )()
+
+    monkeypatch.setattr(
+        scan_engine,
+        "shannon_quality_gates",
+        lambda *_args, **_kwargs: {"TrendTier": "A"},
+    )
+    monkeypatch.setattr(
+        scan_engine,
+        "pick_best_anchor",
+        lambda *_args, **_kwargs: ("TestAnchor", 100.0, 0.01, 50.0, 2.0),
+    )
+    monkeypatch.setattr(
+        scan_engine,
+        "get_pivot_targets",
+        lambda *_args, **_kwargs: (111.0, 122.0),
+    )
+    monkeypatch.setattr(scan_engine, "compute_setup_context", _fake_setup_context)
 
     df_with_future = df.copy()
     df_with_future.iloc[-1] = {
@@ -45,7 +82,15 @@ def test_scan_does_not_use_future_bars(monkeypatch: pytest.MonkeyPatch) -> None:
     }
 
     setup_rules = load_setup_rules()
-    result = scan_engine.build_candidate_row(
+    base_result = scan_engine.build_candidate_row(
+        df,
+        "TEST",
+        "TestSector",
+        setup_rules,
+        as_of_dt=as_of_dt,
+        direction="Long",
+    )
+    future_result = scan_engine.build_candidate_row(
         df_with_future,
         "TEST",
         "TestSector",
@@ -53,5 +98,19 @@ def test_scan_does_not_use_future_bars(monkeypatch: pytest.MonkeyPatch) -> None:
         as_of_dt=as_of_dt,
         direction="Long",
     )
-    assert result is not None
-    assert result["Price"] == round(float(df.loc[as_of_dt, "Close"]), 2)
+    assert base_result is not None
+    assert future_result is not None
+    assert base_result["Price"] == round(float(df.loc[as_of_dt, "Close"]), 2)
+
+    for key in (
+        "Price",
+        "Entry_Level",
+        "Entry_DistPct",
+        "Stop_Loss",
+        "Target_R1",
+        "Target_R2",
+        "TrendTier",
+        "TrendScore",
+        "AVWAP_Slope",
+    ):
+        assert base_result[key] == future_result[key]
