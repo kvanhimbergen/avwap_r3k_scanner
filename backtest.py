@@ -3,8 +3,7 @@ import numpy as np
 import yfinance as yf
 from config import cfg
 from anchors import anchored_vwap, anchor_swing_low
-from indicators import slope_last
-from rs import relative_strength
+from indicators import trend_strength_series
 
 def market_regime_series(index_df: pd.DataFrame, chop_band_pct: float = 0.01) -> pd.Series:
     loc = anchor_swing_low(index_df, cfg.SWING_LOOKBACK)
@@ -36,19 +35,18 @@ def backtest_symbol(symbol: str, start="2022-01-01", end=None, direction="Long",
     regimes = market_regime_series(idx).reindex(px.index).ffill()
 
     avwap = rolling_swing_avwap(px)
-    # basic RS scalar each day (use lookback return difference)
-    rs_series = (px["Close"].pct_change(cfg.RS_LOOKBACK) - idx["Close"].pct_change(cfg.RS_LOOKBACK)).reindex(px.index)
+    trend_series = trend_strength_series(px).reindex(px.index)
 
     # signal
     if direction == "Long":
-        signal = (px["Close"] > avwap) & (rs_series > 0)
+        signal = (px["Close"] > avwap) & (trend_series > float(getattr(cfg, "TREND_SCORE_MIN_LONG", 5.0)))
         exit_cond = (px["Close"] < avwap)
     else:
-        signal = (px["Close"] < avwap) & (rs_series < 0)
+        signal = (px["Close"] < avwap) & (trend_series < float(getattr(cfg, "TREND_SCORE_MIN_SHORT", -5.0)))
         exit_cond = (px["Close"] > avwap)
 
     trades = []
-    i = cfg.SWING_LOOKBACK + cfg.RS_LOOKBACK
+    i = cfg.SWING_LOOKBACK + int(getattr(cfg, "TREND_SCORE_WARMUP", 120))
 
     while i < len(px) - 2:
         if not bool(signal.iloc[i]) or pd.isna(avwap.iloc[i]):

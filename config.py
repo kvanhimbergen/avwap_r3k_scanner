@@ -24,13 +24,15 @@ class CFG:
     TOP_PER_SECTOR_BY_LIQ: int = 250
     SNAPSHOT_MAX_TICKERS: int = 3000
 
-    # AVWAP / RS
+    # AVWAP / Trend
     ANCHOR_LOOKBACK: int = 60
     SWING_LOOKBACK: int = 20
-    RS_LOOKBACK: int = 20
     GAP_PCT: float = 0.04
     VOL_SPIKE_MULT: float = 1.8
     MAX_DIST_FROM_AVWAP_PCT: float = 6.0
+    TREND_SCORE_MIN_LONG: float = 5.0
+    TREND_SCORE_MIN_SHORT: float = -5.0
+    TREND_SCORE_WARMUP: int = 120
 
     # Output caps
     CANDIDATE_CAP: int = 200
@@ -182,4 +184,3 @@ class CFG:
     
 
 cfg = CFG()
-
