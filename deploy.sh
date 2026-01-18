@@ -29,7 +29,7 @@ python -m py_compile \
   universe.py \
   run_scan.py \
   sentinel.py \
-  execution.py \
+  execution_v2/execution_main.py \
   config.py
 
 echo "Ensuring cache directory exists..."

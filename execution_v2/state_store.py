@@ -143,6 +143,14 @@ class StateStore:
         cur.execute("SELECT symbol FROM candidates WHERE expires_ts >= ? ORDER BY symbol;", (now_ts,))
         return [r["symbol"] for r in cur.fetchall()]
 
+    def get_candidate_notes(self, symbol: str) -> Optional[str]:
+        cur = self.conn.cursor()
+        cur.execute("SELECT notes FROM candidates WHERE symbol=?;", (symbol,))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return row["notes"]
+
     # -------------------------
     # Entry intents
     # -------------------------
