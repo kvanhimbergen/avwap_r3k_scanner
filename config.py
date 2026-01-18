@@ -128,6 +128,9 @@ class CFG:
 
     # Backtest configuration
     BACKTEST_AUTO_ADJUST: bool = True
+    BACKTEST_ENTRY_MODEL: str = "next_open"
+    BACKTEST_MAX_HOLD_DAYS: int = 5
+    BACKTEST_INITIAL_CASH: float = 100_000.0
     BACKTEST_INITIAL_EQUITY: float = 100_000.0
     BACKTEST_RISK_PCT: float = 0.01
     BACKTEST_MAX_CONCURRENT: int = 5
@@ -145,6 +148,10 @@ class CFG:
     BACKTEST_DYNAMIC_SCAN: bool = True
     BACKTEST_STATIC_UNIVERSE: bool = True
     BACKTEST_USE_DATED_UNIVERSE_SNAPSHOTS: bool = False
+    BACKTEST_START_DATE: str | None = None
+    BACKTEST_END_DATE: str | None = None
+    BACKTEST_OHLCV_PATH: str = "cache/ohlcv_history.parquet"
+    BACKTEST_OUTPUT_DIR: str = "backtests"
 
     # Determinism
     BACKTEST_RANDOM_SEED: int = 42
