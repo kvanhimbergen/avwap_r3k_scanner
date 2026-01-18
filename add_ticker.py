@@ -22,7 +22,7 @@ def add_manual_ticker(ticker, floor, stop):
         "Stop_Loss": float(stop),
         "R1_Trim": float(floor) * 1.03,  # Sets a default 3% trim target
         "R2_Target": float(floor) * 1.07, # Sets a default 7% final target
-        "RS": 0.0,
+        "TrendScore": 0.0,
         "Sector": "Manual Entry"
     }
     

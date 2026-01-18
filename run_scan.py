@@ -23,8 +23,14 @@ from alpaca.data.timeframe import TimeFrame
 from config import cfg
 from universe import load_universe
 from anchors import anchored_vwap, get_anchor_candidates
-from indicators import slope_last, sma, atr, rolling_percentile, get_pivot_targets
-from rs import relative_strength
+from indicators import (
+    slope_last,
+    sma,
+    atr,
+    rolling_percentile,
+    get_pivot_targets,
+    trend_strength_score,
+)
 import cache_store as cs
 from setup_context import compute_setup_context, load_setup_rules
 
@@ -143,10 +149,10 @@ def _get_avwap_slope_threshold(direction: str, is_weekend: bool) -> float:
         return float(getattr(cfg, "MIN_AVWAP_SLOPE_LONG", default))
     return float(getattr(cfg, "MIN_AVWAP_SLOPE_SHORT", 0.03 if not is_weekend else 0.05))
 
-def pick_best_anchor(df: pd.DataFrame, index_df: pd.DataFrame, direction: str):
+def pick_best_anchor(df: pd.DataFrame, direction: str):
     if df is None or len(df) < 2: return None
     px, prev_px = float(df["Close"].iloc[-1]), float(df["Close"].iloc[-2])
-    rs_now = relative_strength(df, index_df)
+    trend_score = trend_strength_score(df)
     is_weekend = datetime.now().weekday() >= 5
     best, best_score = None, -1e18
 
@@ -176,12 +182,12 @@ def pick_best_anchor(df: pd.DataFrame, index_df: pd.DataFrame, direction: str):
         
         if dist > cfg.MAX_DIST_FROM_AVWAP_PCT: continue
 
-        score = a["priority"] + (rs_now * 100.0) - abs(dist) + (50.0 if 0.1 <= dist <= 1.5 else 0.0) + (40.0 if is_reclaim else 0.0)
+        score = a["priority"] + (trend_score * 1.5) - abs(dist) + (50.0 if 0.1 <= dist <= 1.5 else 0.0) + (40.0 if is_reclaim else 0.0)
         if score > best_score:
-            best_score, best = score, (a["name"], av_now, av_s, rs_now, dist)
+            best_score, best = score, (a["name"], av_now, av_s, trend_score, dist)
     return best
 
-def build_liquidity_snapshot(universe, index_df, data_client):
+def build_liquidity_snapshot(universe, data_client):
     is_weekend = datetime.now().weekday() >= 5
     tickers = [t.upper() for t in universe["Ticker"].tolist() if is_valid_ticker(t) and t not in BAD_TICKERS]
     rows = []
@@ -209,13 +215,13 @@ def build_liquidity_snapshot(universe, index_df, data_client):
                 rows.append({
                     "Ticker": t, "AvgDollarVol20": dv,
                     "Sector": universe.loc[universe["Ticker"] == t, "Sector"].values[0],
-                    "RS20": relative_strength(sub.set_index('Date'), index_df),
+                    "TrendScore": trend_strength_score(sub.set_index('Date')),
                 })
         except: continue
     snap = pd.DataFrame(rows)
     if snap.empty: return snap
     if is_weekend: return snap.sort_values("AvgDollarVol20", ascending=False).head(cfg.SNAPSHOT_MAX_TICKERS)
-    sector_rank = snap.groupby("Sector")["RS20"].mean().sort_values(ascending=False).head(cfg.TOP_SECTORS_TO_SCAN).index
+    sector_rank = snap.groupby("Sector")["TrendScore"].mean().sort_values(ascending=False).head(cfg.TOP_SECTORS_TO_SCAN).index
     return snap[snap["Sector"].isin(sector_rank)].sort_values("AvgDollarVol20", ascending=False).head(cfg.SNAPSHOT_MAX_TICKERS)
 
 # =========================
@@ -368,10 +374,7 @@ def main():
     BAD_TICKERS = load_bad_tickers()
     universe = load_universe()
     
-    spy_req = StockBarsRequest(symbol_or_symbols="SPY", timeframe=TimeFrame.Day, start=datetime.now() - timedelta(days=730))
-    index_df = standardize_alpaca_to_yf(data_client.get_stock_bars(spy_req).df).set_index('Date')
-
-    snap = build_liquidity_snapshot(universe, index_df, data_client)
+    snap = build_liquidity_snapshot(universe, data_client)
     filtered = snap["Ticker"].tolist()
 
     # --- TEST MODE: limit scan universe for faster iteration ---
@@ -438,9 +441,9 @@ def main():
         # Determine logical stop: The lower of the 5-DMA or 5-Day Low with a 0.3% buffer
         structural_stop = min(curr_sma5, curr_low5) * 0.997 
 
-        best = pick_best_anchor(df, index_df, "Long")
+        best = pick_best_anchor(df, "Long")
         if best:
-            name, av, avs, rs, d = best
+            name, av, avs, trend_score, d = best
             r1, r2 = get_pivot_targets(df)
             setup_ctx = compute_setup_context(df, name, setup_rules)
             results.append({
@@ -455,7 +458,7 @@ def main():
                 "Stop_Loss": round(structural_stop, 2),
                 "Target_R1": r1,
                 "Target_R2": r2,
-                "RS": round(rs, 6),
+                "TrendScore": round(trend_score, 6),
                 "Sector": snap.loc[snap["Ticker"]==t, "Sector"].values[0],
                 "Anchor": name,
                 "AVWAP_Slope": round(float(avs), 4),
@@ -483,7 +486,7 @@ def main():
     print(f"\nDEBUG: Scan finished. Found {len(out)} total candidates. Wrote: {OUT_PATH}")
 
     if not out.empty:
-        out = out.sort_values(["TrendTier", "RS"], ascending=[True, False]).head(ALGO_CANDIDATE_CAP)
+        out = out.sort_values(["TrendTier", "TrendScore"], ascending=[True, False]).head(ALGO_CANDIDATE_CAP)
         out.to_csv(OUT_PATH, index=False)
         print(f"Wrote candidates to: {OUT_PATH}")
 

@@ -4,8 +4,7 @@ import pandas as pd
 from datetime import datetime
 
 from anchors import anchored_vwap, get_anchor_candidates
-from indicators import slope_last
-from rs import relative_strength
+from indicators import slope_last, trend_strength_score
 from config import cfg
 
 warnings.warn(
@@ -140,7 +139,7 @@ def pick_best_anchor(
     stats: dict | None = None,
 ):
     """
-    Find the best anchor for the given symbol based on AVWAP structure and RS.
+    Find the best anchor for the given symbol based on AVWAP structure and trend strength.
     Backward compatible: returns either None or a dict describing the best anchor.
     """
     if df is None or len(df) < 2:
@@ -153,7 +152,7 @@ def pick_best_anchor(
     px = float(df["Close"].iloc[-1])
     prev_px = float(df["Close"].iloc[-2])
 
-    rs_now = relative_strength(df, index_df)
+    trend_score = trend_strength_score(df)
     is_weekend = datetime.now().weekday() >= 5
 
     slope_n = int(getattr(cfg, "AVWAP_SLOPE_LOOKBACK", 5))
@@ -218,11 +217,11 @@ def pick_best_anchor(
             _stat_inc(stats, "dist_gate_fail", 1)
             continue
 
-        # Scoring (kept consistent with your run_scan approach, but safe if rs_now is NaN)
-        rs_term = 0.0 if (rs_now is None or np.isnan(rs_now)) else float(rs_now) * 100.0
+        # Scoring (kept consistent with your run_scan approach, but safe if trend_score is NaN)
+        trend_term = 0.0 if (trend_score is None or np.isnan(trend_score)) else float(trend_score)
         score = (
             float(a.get("priority", 0))
-            + (rs_term if direction == "Long" else -rs_term)
+            + (trend_term if direction == "Long" else -trend_term)
             - abs(dist)
             + (50.0 if 0.1 <= dist <= 1.5 else 0.0)
             + (40.0 if is_reclaim else 0.0)
@@ -234,7 +233,7 @@ def pick_best_anchor(
                 "Anchor": a.get("name", ""),
                 "AVWAP": av_now,
                 "AVWAP_Slope": float(av_s),
-                "RS": float(rs_now) if rs_now is not None and not np.isnan(rs_now) else 0.0,
+                "TrendScore": float(trend_score) if trend_score is not None and not np.isnan(trend_score) else 0.0,
                 "Price": px,
                 "DistFromAVWAP%": float(dist),
             }
@@ -279,7 +278,7 @@ def score_candidate(
         "Price": round(float(best["Price"]), 2),
         "AVWAP": round(float(best["AVWAP"]), 2),
         "AVWAP_Slope": round(float(best["AVWAP_Slope"]), 6),
-        "RS": round(float(best["RS"]), 6),
+        "TrendScore": round(float(best["TrendScore"]), 6),
         "DistFromAVWAP%": round(float(best["DistFromAVWAP%"]), 2),
         "Anchor": best["Anchor"],
         "AvgDollarVol20": round(avg_dollar_vol(df), 0),

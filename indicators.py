@@ -82,6 +82,78 @@ def rolling_percentile(series: pd.Series, window: int, q: float) -> pd.Series:
     """Returns the q-th quantile (0-1) over a rolling window."""
     return series.rolling(window).quantile(q)
 
+def trend_strength_score(
+    df: pd.DataFrame,
+    sma_len: int = 50,
+    slope_lookback: int = 10,
+    adx_len: int = 14,
+    atr_len: int = 14,
+    atr_window: int = 120,
+) -> float:
+    """
+    Composite trend score that blends SMA slope direction, ADX strength,
+    and volatility compression (ATR percentile vs. median).
+    """
+    if df is None or df.empty:
+        return np.nan
+    if "Close" not in df.columns:
+        return np.nan
+
+    close = df["Close"]
+    sma_series = sma(close, sma_len)
+    slope_pct = slope_last(sma_series, n=slope_lookback) * 100.0
+    if np.isnan(slope_pct):
+        return np.nan
+
+    adx_series = adx(df, n=adx_len)
+    if adx_series is None or adx_series.empty:
+        return np.nan
+    adx_now = float(adx_series.iloc[-1])
+
+    atr_series = atr(df, n=atr_len)
+    if atr_series is None or atr_series.empty:
+        return np.nan
+    atr_pct = (atr_series / close) * 100.0
+    atr_pct_p50 = rolling_percentile(atr_pct, atr_window, 0.5)
+    atr_pct_now = float(atr_pct.iloc[-1])
+    atr_pct_med = float(atr_pct_p50.iloc[-1]) if not atr_pct_p50.empty else np.nan
+    vol_ratio = atr_pct_now / atr_pct_med if atr_pct_med and not np.isnan(atr_pct_med) else 1.0
+
+    slope_sign = 1.0 if slope_pct > 0 else (-1.0 if slope_pct < 0 else 0.0)
+    score = (slope_pct * 2.0) + (adx_now * 0.7 * slope_sign) - (vol_ratio * 10.0)
+    return float(score)
+
+
+def trend_strength_series(
+    df: pd.DataFrame,
+    sma_len: int = 50,
+    slope_lookback: int = 10,
+    adx_len: int = 14,
+    atr_len: int = 14,
+    atr_window: int = 120,
+) -> pd.Series:
+    """
+    Rolling trend-strength score series (same math as trend_strength_score).
+    """
+    if df is None or df.empty or "Close" not in df.columns:
+        return pd.Series(dtype=float)
+
+    close = df["Close"]
+    sma_series = sma(close, sma_len)
+    slope_pct = (sma_series - sma_series.shift(slope_lookback)) / sma_series.shift(slope_lookback)
+    slope_pct = slope_pct * 100.0
+
+    adx_series = adx(df, n=adx_len)
+    atr_series = atr(df, n=atr_len)
+    atr_pct = (atr_series / close) * 100.0
+    atr_pct_p50 = rolling_percentile(atr_pct, atr_window, 0.5)
+    vol_ratio = atr_pct / atr_pct_p50
+    vol_ratio = vol_ratio.replace([np.inf, -np.inf], np.nan).fillna(1.0)
+
+    slope_sign = slope_pct.apply(lambda v: 1.0 if v > 0 else (-1.0 if v < 0 else 0.0))
+    score = (slope_pct * 2.0) + (adx_series * 0.7 * slope_sign) - (vol_ratio * 10.0)
+    return score
+
 def get_pivot_targets(df: pd.DataFrame):
     """
     Calculates Daily R1 and R2 based on the previous session's H/L/C.
@@ -104,5 +176,4 @@ def get_pivot_targets(df: pd.DataFrame):
     r2 = pivot + (h - l)
     
     return round(r1, 2), round(r2, 2)
-
 
