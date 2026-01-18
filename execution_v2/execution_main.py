@@ -122,6 +122,12 @@ def _get_account_equity(trading_client: TradingClient) -> float:
     account = trading_client.get_account()
     return float(account.equity)
 
+def _format_ts(ts: float) -> str:
+    try:
+        return datetime.fromtimestamp(ts).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    except Exception:
+        return "unknown"
+
 
 def run_once(cfg) -> None:
     store = StateStore(cfg.db_path)
@@ -176,10 +182,16 @@ def run_once(cfg) -> None:
         try:
             order_id = _submit_bracket_order(trading_client, intent, cfg.dry_run)
             _log(f"SUBMITTED {intent.symbol}: qty={intent.size_shares} order_id={order_id}")
+            candidate_notes = store.get_candidate_notes(intent.symbol) or "scan:n/a"
             slack_alert(
                 "TRADE",
                 f"SUBMITTED {intent.symbol}",
-                f"qty={intent.size_shares} SL={intent.stop_loss} TP={intent.take_profit}",
+                (
+                    f"qty={intent.size_shares} ref={intent.ref_price} "
+                    f"pivot={intent.pivot_level} dist={intent.dist_pct:.2f}% "
+                    f"SL={intent.stop_loss} TP={intent.take_profit} "
+                    f"boh_at={_format_ts(intent.boh_confirmed_at)} reason={candidate_notes}"
+                ),
                 component="EXECUTION_V2",
                 throttle_key=f"submit_{intent.symbol}",
                 throttle_seconds=60,
@@ -217,6 +229,10 @@ def run_once(cfg) -> None:
             total_qty = int(float(position.qty))
         except Exception:
             continue
+        state = store.get_position(symbol)
+        stop_price = None
+        if state is not None:
+            stop_price = state.stop_price
 
         pct = float(intent["pct"])
         reason = intent["reason"]
@@ -232,7 +248,10 @@ def run_once(cfg) -> None:
             slack_alert(
                 "TRADE",
                 f"CLOSE {symbol}",
-                f"reason={reason} qty={total_qty}",
+                (
+                    f"reason={reason} qty={total_qty} "
+                    f"price={current_price} stop={stop_price}"
+                ),
                 component="EXECUTION_V2",
                 throttle_key=f"close_{symbol}",
                 throttle_seconds=60,
@@ -266,7 +285,10 @@ def run_once(cfg) -> None:
         slack_alert(
             "TRADE",
             f"TRIM {symbol}",
-            f"reason={reason} qty={qty} pct={pct:.2f}",
+            (
+                f"reason={reason} qty={qty} pct={pct:.2f} "
+                f"price={current_price} stop={stop_price}"
+            ),
             component="EXECUTION_V2",
             throttle_key=f"trim_{symbol}_{reason}",
             throttle_seconds=60,

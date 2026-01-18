@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 import pandas as pd
 from datetime import datetime
@@ -6,6 +7,12 @@ from anchors import anchored_vwap, get_anchor_candidates
 from indicators import slope_last
 from rs import relative_strength
 from config import cfg
+
+warnings.warn(
+    "scanner.py is deprecated. Use run_scan.py for the active scan pipeline.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 # -----------------------------
@@ -278,4 +285,3 @@ def score_candidate(
         "AvgDollarVol20": round(avg_dollar_vol(df), 0),
     }
     return out
-

@@ -1,4 +1,5 @@
 import os
+import warnings
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,15 @@ from alpaca.trading.enums import (
     TimeInForce,
     OrderClass,
     QueryOrderStatus,
+)
+
+# ----------------------------
+# DEPRECATION NOTICE
+# ----------------------------
+warnings.warn(
+    "execution.py (Execution v1) is deprecated. Use execution_v2/execution_main.py instead.",
+    DeprecationWarning,
+    stacklevel=2,
 )
 
 # ----------------------------
