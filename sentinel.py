@@ -11,6 +11,7 @@ from alerts.slack import slack_alert
 from execution import (
     execute_buy_bracket, 
     execute_partial_sell, 
+    execute_full_exit,
     get_account_details, 
     trading_client, 
     get_daily_summary_data
@@ -28,6 +29,7 @@ load_dotenv()
 WATCHLIST_FILE = "daily_candidates.csv"
 TRADE_LOG = "trade_log.csv"
 TZ_ET = pytz.timezone("US/Eastern")
+TRAILING_STOP_PCT = float(os.getenv("TRAILING_STOP_PCT", "0.05"))
 
 def now_et_str() -> str:
     return datetime.now(TZ_ET).strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -78,6 +80,15 @@ def is_market_open():
     if now.weekday() > 4: return False
     return now.replace(hour=9, minute=30) <= now <= now.replace(hour=16, minute=0)
 
+def within_trade_window(start_hour=9, start_minute=45, end_hour=15, end_minute=30) -> bool:
+    """
+    Enforce a trading window between 09:45 and 15:30 ET.
+    """
+    now = datetime.now(TZ_ET)
+    start = now.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
+    end = now.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
+    return start <= now <= end
+
 def get_market_regime():
     try:
         spy_req = StockBarsRequest(symbol_or_symbols="SPY", timeframe=TimeFrame.Day, start=datetime.now() - timedelta(days=300))
@@ -100,6 +111,14 @@ def get_alpaca_intraday(ticker):
 
 def monitor_watchlist():
     is_bullish = get_market_regime()
+    if not within_trade_window():
+        print(f"[{now_et_str()}] Outside trading window (09:45-15:30 ET); skipping trades.", flush=True)
+        return
+    open_positions = {}
+    try:
+        open_positions = {p.symbol: p for p in trading_client.get_all_positions()}
+    except Exception as e:
+        print(f"[{now_et_str()}] Positions fetch error: {e}", flush=True)
 
     # --- Watchlist staleness + load diagnostics ---
     try:
@@ -146,10 +165,34 @@ def monitor_watchlist():
         curr_price = df['Close'].iloc[-1]
         prev_price = df['Close'].iloc[-2]
 
+        if ticker not in OPEN_TRADE_STATS and ticker in open_positions:
+            pos = open_positions[ticker]
+            entry_price = float(getattr(pos, "avg_entry_price", curr_price))
+            OPEN_TRADE_STATS[ticker] = {
+                'entry': entry_price,
+                'max_high': curr_price,
+                'min_low': curr_price,
+                'signal': avwap_floor,
+                'stop_loss': min(structural_stop, entry_price * 0.98),
+                'trailing_stop': min(structural_stop, entry_price * 0.98),
+                'trimmed': False,
+            }
+
         if ticker in OPEN_TRADE_STATS:
             OPEN_TRADE_STATS[ticker]['max_high'] = max(OPEN_TRADE_STATS[ticker]['max_high'], curr_price)
             OPEN_TRADE_STATS[ticker]['min_low'] = min(OPEN_TRADE_STATS[ticker]['min_low'], curr_price)
-        
+            OPEN_TRADE_STATS[ticker].setdefault('stop_loss', structural_stop)
+            OPEN_TRADE_STATS[ticker].setdefault('trailing_stop', structural_stop)
+            OPEN_TRADE_STATS[ticker].setdefault('trimmed', False)
+
+            max_high = OPEN_TRADE_STATS[ticker]['max_high']
+            new_trailing = max_high * (1 - TRAILING_STOP_PCT)
+            OPEN_TRADE_STATS[ticker]['trailing_stop'] = max(
+                OPEN_TRADE_STATS[ticker]['trailing_stop'],
+                new_trailing,
+                OPEN_TRADE_STATS[ticker]['stop_loss'],
+            )
+
         reclaimed = (prev_price <= avwap_floor) and (curr_price > avwap_floor)
         
         if reclaimed and ticker not in TRADED_TODAY and is_bullish:
@@ -159,7 +202,15 @@ def monitor_watchlist():
             except:
                 print(f"🚀 Signal: {ticker} reclaimed. Stop: ${structural_stop}")
                 execute_buy_bracket(ticker, structural_stop, r2_target)
-                OPEN_TRADE_STATS[ticker] = {'entry': curr_price, 'max_high': curr_price, 'min_low': curr_price, 'signal': avwap_floor}
+                OPEN_TRADE_STATS[ticker] = {
+                    'entry': curr_price,
+                    'max_high': curr_price,
+                    'min_low': curr_price,
+                    'signal': avwap_floor,
+                    'stop_loss': structural_stop,
+                    'trailing_stop': structural_stop,
+                    'trimmed': False,
+                }
                 log_trade_to_csv(ticker, 'BUY', curr_price, avwap_floor)
                 slack_alert(
                     "TRADE",
@@ -171,14 +222,48 @@ def monitor_watchlist():
                 )
                 TRADED_TODAY.add(ticker)
 
+        if ticker in OPEN_TRADE_STATS:
+            stop_loss = OPEN_TRADE_STATS[ticker].get('stop_loss', structural_stop)
+            trailing_stop = OPEN_TRADE_STATS[ticker].get('trailing_stop', stop_loss)
+
+            if curr_price <= stop_loss:
+                execute_full_exit(ticker, reason="stop_loss")
+                log_trade_to_csv(ticker, 'SELL', curr_price, stop_loss, pnl=curr_price - OPEN_TRADE_STATS[ticker]['entry'])
+                slack_alert(
+                    "TRADE",
+                    f"STOP {ticker}",
+                    f"exit @ ${curr_price:.2f} <= stop=${stop_loss:.2f}",
+                    component="SENTINEL",
+                    throttle_key=f"stop_{ticker}",
+                    throttle_seconds=120,
+                )
+                OPEN_TRADE_STATS.pop(ticker, None)
+                continue
+
+            if curr_price <= trailing_stop:
+                execute_full_exit(ticker, reason="trailing_stop")
+                log_trade_to_csv(ticker, 'SELL', curr_price, trailing_stop, pnl=curr_price - OPEN_TRADE_STATS[ticker]['entry'])
+                slack_alert(
+                    "TRADE",
+                    f"TRAIL {ticker}",
+                    f"exit @ ${curr_price:.2f} <= trail=${trailing_stop:.2f}",
+                    component="SENTINEL",
+                    throttle_key=f"trail_{ticker}",
+                    throttle_seconds=120,
+                )
+                OPEN_TRADE_STATS.pop(ticker, None)
+                continue
+
         # Optimization: Only check for trim if we actually own the stock
         if ticker in OPEN_TRADE_STATS:
             near_r1 = abs(curr_price - r1_target) / r1_target < 0.002
-            if near_r1:
+            if near_r1 and not OPEN_TRADE_STATS[ticker].get('trimmed', False):
                 try:
                     execute_partial_sell(ticker, sell_percentage=0.5)
                     s = OPEN_TRADE_STATS[ticker]
                     log_trade_to_csv(ticker, 'TRIM', curr_price, r1_target, s['max_high'] - s['entry'], s['entry'] - s['min_low'], curr_price - s['entry'])
+                    s['trimmed'] = True
+                    s['stop_loss'] = max(s['stop_loss'], s['entry'])
                     slack_alert(
                         "TRADE",
                         f"TRIM {ticker}",
