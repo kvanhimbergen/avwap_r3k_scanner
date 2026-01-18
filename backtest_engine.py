@@ -127,14 +127,21 @@ def _scan_as_of(
     sector_map: dict[str, str],
     as_of_dt: pd.Timestamp,
     scan_cfg,
-) -> pd.DataFrame:
+    *,
+    return_stats: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, dict[str, int]]:
     scan_engine._ACTIVE_CFG = scan_cfg
     setup_rules = load_setup_rules()
     rows: list[dict] = []
+    symbols_scanned = 0
+    symbols_with_ohlcv_today = 0
     for symbol in symbols:
         sym_hist = get_symbol_history(history, symbol, as_of_dt)
         if sym_hist.empty:
             continue
+        symbols_scanned += 1
+        if (sym_hist["Date"] == as_of_dt).any():
+            symbols_with_ohlcv_today += 1
         df = sym_hist.set_index("Date").sort_index()
         row = scan_engine.build_candidate_row(
             df,
@@ -146,7 +153,43 @@ def _scan_as_of(
         )
         if row:
             rows.append(row)
-    return scan_engine._build_candidates_dataframe(rows)
+    candidates = scan_engine._build_candidates_dataframe(rows)
+    if return_stats:
+        return candidates, {
+            "symbols_scanned": symbols_scanned,
+            "symbols_with_ohlcv_today": symbols_with_ohlcv_today,
+        }
+    return candidates
+
+
+def _validate_candidates(
+    candidates: pd.DataFrame, *, strict_schema: bool
+) -> tuple[pd.DataFrame, int]:
+    if candidates.empty:
+        return candidates, 0
+
+    required_columns = ["Symbol", "Stop_Loss", "Target_R1", "Target_R2"]
+    missing = [col for col in required_columns if col not in candidates.columns]
+    if missing:
+        if strict_schema:
+            raise ValueError(f"Candidates missing required columns: {missing}")
+        return candidates.iloc[0:0].copy(), 0
+
+    working = candidates.copy()
+    working["Symbol"] = working["Symbol"].astype(str).str.upper()
+    numeric = working[["Stop_Loss", "Target_R1", "Target_R2"]].apply(
+        pd.to_numeric, errors="coerce"
+    )
+    valid_mask = (
+        working["Symbol"].notna()
+        & working["Symbol"].str.len().gt(0)
+        & numeric.notna().all(axis=1)
+    )
+    valid = working.loc[valid_mask].copy()
+    for col in ["Stop_Loss", "Target_R1", "Target_R2"]:
+        valid[col] = numeric.loc[valid_mask, col].astype(float)
+    valid = valid.reindex(columns=candidates.columns)
+    return valid, int(valid_mask.sum())
 
 
 def run_backtest(
@@ -162,6 +205,10 @@ def run_backtest(
     entry_model = getattr(cfg, "BACKTEST_ENTRY_MODEL", ENTRY_MODEL_NEXT_OPEN)
     if entry_model not in (ENTRY_MODEL_NEXT_OPEN, ENTRY_MODEL_SAME_CLOSE):
         raise ValueError(f"Unsupported entry model: {entry_model}")
+
+    verbose = bool(getattr(cfg, "BACKTEST_VERBOSE", False))
+    debug_save_candidates = bool(getattr(cfg, "BACKTEST_DEBUG_SAVE_CANDIDATES", False))
+    strict_schema = bool(getattr(cfg, "BACKTEST_STRICT_SCHEMA", False))
 
     max_hold_days = int(getattr(cfg, "BACKTEST_MAX_HOLD_DAYS", 5))
     initial_cash = float(
@@ -210,6 +257,7 @@ def run_backtest(
     position_snapshots: list[dict] = []
     equity_curve: list[dict] = []
     closed_positions: list[dict] = []
+    diagnostics_rows: list[dict] = []
 
     cash = initial_cash
     positions: dict[str, dict] = {}
@@ -218,6 +266,10 @@ def run_backtest(
 
     for idx, session_date in enumerate(trading_days):
         session_date = pd.Timestamp(session_date)
+        entries_placed_today = 0
+        entries_filled_today = 0
+        trades_fills_today = 0
+        candidates_skipped_missing_next_open_bar = 0
 
         if entry_model == ENTRY_MODEL_NEXT_OPEN:
             ready = [p for p in pending_entries if p["entry_date"] == session_date]
@@ -228,6 +280,7 @@ def run_backtest(
                     continue
                 bar = get_bar(history, symbol, session_date)
                 if bar is None:
+                    candidates_skipped_missing_next_open_bar += 1
                     continue
                 entry_price = bar["Open"]
                 qty = 1.0
@@ -264,6 +317,8 @@ def run_backtest(
                         "hold_days": 0,
                     }
                 )
+                entries_filled_today += 1
+                trades_fills_today += 1
 
         for symbol in sorted(list(positions.keys())):
             pos = positions[symbol]
@@ -297,6 +352,7 @@ def run_backtest(
                         "hold_days": pos["hold_days"],
                     }
                 )
+                trades_fills_today += 1
                 closed_positions.append(
                     {
                         "position_id": pos["position_id"],
@@ -333,6 +389,7 @@ def run_backtest(
                             "hold_days": pos["hold_days"],
                         }
                     )
+                    trades_fills_today += 1
 
             if r2_hit and pos["remaining_qty"] > 0:
                 exit_price = pos["r2"]
@@ -354,6 +411,7 @@ def run_backtest(
                         "hold_days": pos["hold_days"],
                     }
                 )
+                trades_fills_today += 1
                 closed_positions.append(
                     {
                         "position_id": pos["position_id"],
@@ -386,6 +444,7 @@ def run_backtest(
                         "hold_days": pos["hold_days"],
                     }
                 )
+                trades_fills_today += 1
                 closed_positions.append(
                     {
                         "position_id": pos["position_id"],
@@ -397,9 +456,26 @@ def run_backtest(
                 )
                 del positions[symbol]
 
-        candidates = _scan_as_of(history, symbols, sector_map, session_date, cfg)
-        if not candidates.empty:
+        candidates, scan_stats = _scan_as_of(
+            history, symbols, sector_map, session_date, cfg, return_stats=True
+        )
+        if not candidates.empty and "Symbol" in candidates.columns:
             candidates = candidates.sort_values(["Symbol"]).reset_index(drop=True)
+
+        if debug_save_candidates:
+            candidates_snapshot = candidates
+            if "Symbol" in candidates_snapshot.columns:
+                candidates_snapshot = candidates_snapshot.sort_values(["Symbol"]).reset_index(
+                    drop=True
+                )
+            candidates_snapshot = candidates_snapshot.reindex(columns=candidates.columns)
+            snapshot_path = output_dir / "candidates" / f"{session_date.date().isoformat()}.csv"
+            _atomic_write_csv(candidates_snapshot, snapshot_path)
+
+        candidates_total = int(len(candidates))
+        candidates, candidates_with_required_fields = _validate_candidates(
+            candidates, strict_schema=strict_schema
+        )
 
         for _, row in candidates.iterrows():
             symbol = str(row["Symbol"]).upper()
@@ -447,6 +523,9 @@ def run_backtest(
                         "hold_days": 0,
                     }
                 )
+                entries_placed_today += 1
+                entries_filled_today += 1
+                trades_fills_today += 1
                 next_position_id += 1
             else:
                 if idx + 1 >= len(trading_days):
@@ -462,6 +541,7 @@ def run_backtest(
                         "position_id": next_position_id,
                     }
                 )
+                entries_placed_today += 1
                 next_position_id += 1
 
         positions_value = 0.0
@@ -502,6 +582,34 @@ def run_backtest(
                 "open_positions": len(positions),
             }
         )
+        diagnostics_rows.append(
+            {
+                "date": session_date.date().isoformat(),
+                "universe_symbols": len(symbols),
+                "symbols_with_ohlcv_today": scan_stats["symbols_with_ohlcv_today"],
+                "symbols_scanned": scan_stats["symbols_scanned"],
+                "candidates_total": candidates_total,
+                "candidates_with_required_fields": candidates_with_required_fields,
+                "candidates_skipped_missing_next_open_bar": candidates_skipped_missing_next_open_bar,
+                "entries_placed": entries_placed_today,
+                "entries_filled": entries_filled_today,
+                "open_positions_end_of_day": len(positions),
+                "trades_fills_today": trades_fills_today,
+                "equity_end_of_day": round(equity, 4),
+            }
+        )
+        if verbose:
+            print(
+                " | ".join(
+                    [
+                        f"{session_date.date().isoformat()}",
+                        f"candidates={candidates_total}",
+                        f"entries_filled={entries_filled_today}",
+                        f"open_positions={len(positions)}",
+                        f"equity={round(equity, 4)}",
+                    ]
+                )
+            )
 
     trades_df = pd.DataFrame(trades)
     positions_df = pd.DataFrame(position_snapshots)
@@ -608,11 +716,33 @@ def run_backtest(
     positions_path = output_dir / "positions.csv"
     equity_curve_path = output_dir / "equity_curve.csv"
     summary_path = output_dir / "summary.json"
+    diagnostics_path = output_dir / "scan_diagnostics.csv"
 
     _atomic_write_csv(trades_df, trades_path)
     _atomic_write_csv(positions_df, positions_path)
     _atomic_write_csv(equity_df, equity_curve_path)
     _atomic_write_json(summary, summary_path)
+    diagnostics_df = pd.DataFrame(diagnostics_rows)
+    diagnostics_columns = [
+        "date",
+        "universe_symbols",
+        "symbols_with_ohlcv_today",
+        "symbols_scanned",
+        "candidates_total",
+        "candidates_with_required_fields",
+        "candidates_skipped_missing_next_open_bar",
+        "entries_placed",
+        "entries_filled",
+        "open_positions_end_of_day",
+        "trades_fills_today",
+        "equity_end_of_day",
+    ]
+    if not diagnostics_df.empty:
+        diagnostics_df = diagnostics_df.reindex(columns=diagnostics_columns)
+        diagnostics_df = diagnostics_df.sort_values(["date"]).reset_index(drop=True)
+    else:
+        diagnostics_df = pd.DataFrame(columns=diagnostics_columns)
+    _atomic_write_csv(diagnostics_df, diagnostics_path)
 
     return BacktestResult(
         output_dir=output_dir,

@@ -152,6 +152,9 @@ class CFG:
     BACKTEST_END_DATE: str | None = None
     BACKTEST_OHLCV_PATH: str = "cache/ohlcv_history.parquet"
     BACKTEST_OUTPUT_DIR: str = "backtests"
+    BACKTEST_DEBUG_SAVE_CANDIDATES: bool = False
+    BACKTEST_VERBOSE: bool = False
+    BACKTEST_STRICT_SCHEMA: bool = False
 
     # Determinism
     BACKTEST_RANDOM_SEED: int = 42
