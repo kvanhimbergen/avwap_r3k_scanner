@@ -43,3 +43,4 @@ execution_v2.sqlite-*
 # --- Knowledge base generated artifacts ---
 knowledge/kb.sqlite
 knowledge/raw/
+state/
