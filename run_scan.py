@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from alerts.slack import slack_alert
 import json
 from datetime import date
+import csv
 
 # Modern Alpaca-py imports
 from alpaca.data.historical import StockHistoricalDataClient
@@ -301,6 +302,49 @@ def is_near_earnings_cached(ticker: str) -> bool:
     return val
 
 
+def write_tradingview_watchlist(
+    candidates_csv_path,
+    watchlist_path,
+    symbol_col: str = "Symbol",
+) -> int:
+    """
+    Builds a TradingView watchlist file (one symbol per line) from the scan output CSV.
+    - Sorted
+    - De-duplicated
+    - Uppercased
+    Returns the number of symbols written.
+    """
+    symbols = set()
+
+    with open(candidates_csv_path, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames or symbol_col not in reader.fieldnames:
+            raise ValueError(
+                f"Expected column '{symbol_col}' not found in {candidates_csv_path}. "
+                f"Found columns: {reader.fieldnames}"
+            )
+
+        for row in reader:
+            s = (row.get(symbol_col) or "").strip().upper()
+            if not s:
+                continue
+            allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+            if any(ch not in allowed for ch in s):
+                continue
+            symbols.add(s)
+
+    sorted_symbols = sorted(symbols)
+
+    tmp_path = str(watchlist_path) + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8", newline="\n") as out:
+        for s in sorted_symbols:
+            out.write(f"{s}\n")
+
+    import os
+    os.replace(tmp_path, watchlist_path)
+
+    return len(sorted_symbols)
+
 def main():
     load_dotenv()
     data_client = StockHistoricalDataClient(os.getenv('APCA_API_KEY_ID'), os.getenv('APCA_API_SECRET_KEY'))
@@ -430,12 +474,19 @@ def main():
 
     out = pd.DataFrame(results)
     out.to_csv(OUT_PATH, index=False)
+
+        # --- TradingView watchlist export ---
+    watchlist_path = BASE_DIR / "tradingview_watchlist.txt"
+    n = write_tradingview_watchlist(OUT_PATH, watchlist_path, symbol_col="Symbol")
+    print(f"[watchlist] wrote {n} symbols -> {watchlist_path}")
+
     print(f"\nDEBUG: Scan finished. Found {len(out)} total candidates. Wrote: {OUT_PATH}")
 
     if not out.empty:
         out = out.sort_values(["TrendTier", "RS"], ascending=[True, False]).head(ALGO_CANDIDATE_CAP)
         out.to_csv(OUT_PATH, index=False)
         print(f"Wrote candidates to: {OUT_PATH}")
+
         slack_alert(
             "INFO",
             "Scan complete",

@@ -44,3 +44,7 @@ execution_v2.sqlite-*
 knowledge/kb.sqlite
 knowledge/raw/
 state/
+
+# Runtime artifacts
+tradingview_watchlist.txt
+0001-Ignore-runtime-state-directory.patch
