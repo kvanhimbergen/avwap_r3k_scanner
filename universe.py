@@ -1,5 +1,9 @@
+import html
 import io
 import os
+import re
+import time
+import urllib.parse
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -12,6 +16,7 @@ from config import cfg
 # --- CONFIGURATION (script-relative cache path) ---
 _BASE_DIR = Path(__file__).resolve().parent
 LOCAL_CACHE_PATH = str(_BASE_DIR / "cache" / "iwv_holdings.csv")
+DEFAULT_SNAPSHOT_PATH = "universe/cache/iwv_holdings.csv"
 
 # Default rules path (repo-relative, from universe.py location)
 DEFAULT_RULES_PATH = str((_BASE_DIR / "knowledge" / "rules" / "universe_rules.yaml").resolve())
@@ -66,25 +71,110 @@ def _clean_ishares_data(raw_text: str) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def _browser_headers(referer: Optional[str] = None) -> Dict[str, str]:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/123.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive",
+    }
+    if referer:
+        headers["Referer"] = referer
+    return headers
+
+
+def _request_with_retries(
+    url: str,
+    *,
+    headers: Dict[str, str],
+    timeout: int = 30,
+    max_retries: int = 3,
+    backoff_base: float = 1.0,
+) -> requests.Response:
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.get(url, headers=headers, timeout=timeout)
+            if resp.status_code == 403 or "robot" in resp.text.lower():
+                raise RuntimeError(
+                    "iShares blocked the request (403/robot detection). "
+                    "Please use the cached/snapshot holdings file."
+                )
+            resp.raise_for_status()
+            return resp
+        except Exception as exc:
+            if isinstance(exc, RuntimeError) and "iShares blocked" in str(exc):
+                raise
+            last_exc = exc
+            if attempt == max_retries:
+                break
+            sleep_s = backoff_base * (2 ** (attempt - 1))
+            time.sleep(sleep_s)
+    raise RuntimeError(f"Failed to fetch URL after {max_retries} attempts: {url}") from last_exc
+
+
+def _discover_iwv_holdings_url(html_text: str, base_url: str) -> str:
+    decoded = html.unescape(html_text)
+    ajax_links = re.findall(r'([^\s"\']+\.ajax[^\s"\']*)', decoded)
+    for link in ajax_links:
+        if all(
+            token in link
+            for token in (
+                "fileType=csv",
+                "fileName=IWV_holdings",
+                "dataType=fund",
+            )
+        ):
+            return urllib.parse.urljoin(base_url, link)
+    raise RuntimeError("Could not discover IWV holdings CSV link in iShares HTML.")
+
+
 def _download_iwv_holdings_csv() -> str:
     """
-    Downloads IWV holdings CSV from iShares.
-    We keep this function simple and rely on the existing cache fallback if the endpoint changes.
+    Downloads IWV holdings CSV from iShares using link discovery.
     """
-    # Note: iShares endpoints can change; this is kept aligned with your existing implementation.
-    # If you have a known-good URL in your current file, keep/replace it here.
-    url = "https://www.ishares.com/us/products/239714/ishares-russell-3000-etf/1467271812596.ajax?fileType=csv&fileName=IWV_holdings&dataType=fund"
+    product_url = "https://www.ishares.com/us/products/239714/ishares-russell-3000-etf"
+    product_resp = _request_with_retries(
+        product_url,
+        headers=_browser_headers(),
+        timeout=30,
+        max_retries=3,
+        backoff_base=1.0,
+    )
+    holdings_url = _discover_iwv_holdings_url(product_resp.text, product_url)
 
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "text/csv,application/csv,text/plain,*/*",
-    }
-    resp = requests.get(url, headers=headers, timeout=30)
-    resp.raise_for_status()
-    return resp.text
+    csv_headers = _browser_headers(referer=product_url)
+    csv_headers["Accept"] = "text/csv,application/csv,text/plain,*/*"
+
+    csv_resp = _request_with_retries(
+        holdings_url,
+        headers=csv_headers,
+        timeout=30,
+        max_retries=3,
+        backoff_base=1.0,
+    )
+    return csv_resp.text
 
 
-def load_r3k_universe_from_iwv(force_refresh: bool = False) -> pd.DataFrame:
+def _snapshot_path() -> Path:
+    configured = getattr(cfg, "UNIVERSE_SNAPSHOT_PATH", None)
+    return Path(configured or DEFAULT_SNAPSHOT_PATH)
+
+
+def _read_text_if_exists(path: Path) -> Optional[str]:
+    if path.exists():
+        return path.read_text()
+    return None
+
+
+def load_r3k_universe_from_iwv(
+    force_refresh: bool = False,
+    allow_network: Optional[bool] = None,
+) -> pd.DataFrame:
     """
     Primary universe loader:
       1) Try live download (unless cache is fresh and not forced)
@@ -93,22 +183,42 @@ def load_r3k_universe_from_iwv(force_refresh: bool = False) -> pd.DataFrame:
     """
     Path(_BASE_DIR / "cache").mkdir(parents=True, exist_ok=True)
 
+    cache_path = Path(LOCAL_CACHE_PATH)
+    snapshot_path = _snapshot_path()
+
     # 1) Use fresh cache if allowed
-    if (not force_refresh) and Path(LOCAL_CACHE_PATH).exists() and _cache_is_fresh(LOCAL_CACHE_PATH, max_age_days=7):
-        cache_text = Path(LOCAL_CACHE_PATH).read_text()
+    if (not force_refresh) and cache_path.exists() and _cache_is_fresh(LOCAL_CACHE_PATH, max_age_days=7):
+        cache_text = cache_path.read_text()
         return _clean_ishares_data(cache_text)
+
+    if allow_network is False:
+        cache_text = _read_text_if_exists(cache_path)
+        if cache_text is not None:
+            return _clean_ishares_data(cache_text)
+
+        snapshot_text = _read_text_if_exists(snapshot_path)
+        if snapshot_text is not None:
+            return _clean_ishares_data(snapshot_text)
+
+        raise RuntimeError(
+            "Network access disabled and no local cache or snapshot found."
+        )
 
     # 2) Try live download
     try:
         raw_text = _download_iwv_holdings_csv()
-        Path(LOCAL_CACHE_PATH).write_text(raw_text)
+        cache_path.write_text(raw_text)
         return _clean_ishares_data(raw_text)
     except Exception as e:
         # 3) Cache fallback
-        if Path(LOCAL_CACHE_PATH).exists():
+        if cache_path.exists():
             # Even if stale, use it (per your prior behavior)
-            cache_text = Path(LOCAL_CACHE_PATH).read_text()
+            cache_text = cache_path.read_text()
             return _clean_ishares_data(cache_text)
+
+        snapshot_text = _read_text_if_exists(snapshot_path)
+        if snapshot_text is not None:
+            return _clean_ishares_data(snapshot_text)
 
         raise RuntimeError(f"No live data and no local cache found. Last error: {e}") from e
 
@@ -258,12 +368,12 @@ def apply_universe_rules(df: pd.DataFrame, rules: Dict[str, Any]) -> pd.DataFram
     out = df.loc[keep].reset_index(drop=True)
     return out    
     
-def load_universe(force_refresh: bool = False) -> pd.DataFrame:
+def load_universe(force_refresh: bool = False, allow_network: Optional[bool] = None) -> pd.DataFrame:
     """
     Public entry point used by the scanner.
     Loads IWV-based R3K universe, then applies YAML rules if available.
     """
-    df = load_r3k_universe_from_iwv(force_refresh=force_refresh)
+    df = load_r3k_universe_from_iwv(force_refresh=force_refresh, allow_network=allow_network)
 
     rules = load_universe_rules()
     df = apply_universe_rules(df, rules)
