@@ -113,6 +113,21 @@ class CFG:
     USE_PAPER_DATA: bool = True
     DATA_FEED: str = "sip"  # Use 'iex' if on free tier, 'sip' if on paid tier
 
+    # Backtest configuration
+    BACKTEST_AUTO_ADJUST: bool = True
+    BACKTEST_INITIAL_EQUITY: float = 100_000.0
+    BACKTEST_RISK_PCT: float = 0.01
+    BACKTEST_MAX_CONCURRENT: int = 5
+    BACKTEST_SLIPPAGE_BPS: float = 2.5
+    BACKTEST_COMMISSION_PER_TRADE: float = 1.0
+    BACKTEST_BOOTSTRAP_SAMPLES: int = 1000
+    BACKTEST_WINDOW_MONTHS: int = 12
+    BACKTEST_WINDOW_STEP_MONTHS: int = 3
+    BACKTEST_TICKER_SOURCE: str = "manual"  # manual | screen | universe
+    BACKTEST_TICKER_LIMIT: int = 250
+    BACKTEST_CANDIDATES_PATH: str = "daily_candidates.csv"
+    BACKTEST_BENCHMARK_SYMBOL: str = "SPY"
+
     def get_universe_metrics(self, tickers: list[str]) -> dict[str, dict]:
         """
         Minimal universe metrics provider for universe.py.
