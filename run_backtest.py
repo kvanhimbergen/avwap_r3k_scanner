@@ -26,6 +26,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=cfg.BACKTEST_OUTPUT_DIR,
         help="Directory for backtest artifacts.",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        default=cfg.BACKTEST_VERBOSE,
+        help="Print per-day backtest summary lines.",
+    )
     return parser
 
 
@@ -40,6 +46,7 @@ def main() -> None:
 
     cfg.BACKTEST_ENTRY_MODEL = args.entry_model
     cfg.BACKTEST_OUTPUT_DIR = str(Path(args.output_dir))
+    cfg.BACKTEST_VERBOSE = bool(args.verbose)
 
     result = run_backtest(cfg, start_date, end_date)
     print(f"Backtest artifacts written to: {result.output_dir}")
