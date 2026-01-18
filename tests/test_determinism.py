@@ -10,8 +10,9 @@ pytest.importorskip("pandas")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
 
+from setup_context import load_setup_rules
 from config import cfg
-from scanner import score_candidate
+import scan_engine
 
 
 def _make_ohlcv(start: str, periods: int) -> pd.DataFrame:
@@ -35,8 +36,24 @@ def test_candidate_generation_is_deterministic(monkeypatch: pytest.MonkeyPatch) 
     np.random.seed(cfg.BACKTEST_RANDOM_SEED)
 
     df = _make_ohlcv("2024-02-01", 130)
+    setup_rules = load_setup_rules()
+    as_of_dt = df.index[-1]
 
-    first = score_candidate(df, df, "Long")
-    second = score_candidate(df, df, "Long")
+    first = scan_engine.build_candidate_row(
+        df,
+        "TEST",
+        "TestSector",
+        setup_rules,
+        as_of_dt=as_of_dt,
+        direction="Long",
+    )
+    second = scan_engine.build_candidate_row(
+        df,
+        "TEST",
+        "TestSector",
+        setup_rules,
+        as_of_dt=as_of_dt,
+        direction="Long",
+    )
 
     assert first == second
