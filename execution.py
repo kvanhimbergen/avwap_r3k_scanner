@@ -244,7 +244,9 @@ def calculate_position_size(entry_price: float, stop_loss_price: float, risk_pct
         return 0
 
     qty_by_risk = int(cash_risk / risk_per_share)
-    qty = qty_by_risk if max_bp_qty <= 0 else min(qty_by_risk, max_bp_qty)
+    if max_bp_qty <= 0:
+        return 0
+    qty = min(qty_by_risk, max_bp_qty)
     return qty if qty > 0 else 0
 
 
