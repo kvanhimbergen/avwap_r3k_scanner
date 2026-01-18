@@ -1,3 +1,4 @@
+
 """Run all tests with: python tests/run_tests.py"""
 
 from __future__ import annotations
@@ -6,6 +7,7 @@ import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+import os
 
 
 def _pytest_available() -> bool:
@@ -20,15 +22,23 @@ def main() -> int:
         return 1
 
     root = Path(__file__).resolve().parents[1]
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(root)
+
     tests = [
         root / "tests" / "test_universe.py",
         root / "tests" / "test_no_lookahead.py",
         root / "tests" / "test_determinism.py",
+        root / "tests" / "test_backtest_observability.py",
     ]
 
     any_fail = False
     for test_path in tests:
-        result = subprocess.run([sys.executable, "-m", "pytest", str(test_path)])
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", str(test_path)],
+            env=env,
+        )
         if result.returncode == 0:
             print(f"PASS: {test_path}")
         else:

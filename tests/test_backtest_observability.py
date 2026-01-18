@@ -172,7 +172,7 @@ def test_backtest_scan_diagnostics(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 
 def test_backtest_scan_parity_offline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    dates = pd.date_range("2024-01-02", periods=5, freq="B")
+    dates = pd.date_range("2024-01-02", periods=90, freq="B")
     history = _make_history_frame(dates)
     history_path = tmp_path / "ohlcv_history.parquet"
     history.to_parquet(history_path, index=False)

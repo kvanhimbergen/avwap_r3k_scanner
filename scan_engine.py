@@ -430,7 +430,7 @@ def is_near_earnings_cached(ticker: str) -> bool:
 
 def _build_candidates_dataframe(rows: list[dict]) -> pd.DataFrame:
     if not rows:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=CANDIDATE_COLUMNS)
     return pd.DataFrame(rows).reindex(columns=CANDIDATE_COLUMNS)
 
 
