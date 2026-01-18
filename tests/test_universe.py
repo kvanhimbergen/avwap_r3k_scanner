@@ -12,13 +12,14 @@ import universe
 
 
 def test_allow_network_false_avoids_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    cache_path = tmp_path / "iwv_holdings.csv"
-    cache_path.write_text("Ticker,Weight (%)\nAAPL,1.0\n")
+    snapshot_path = tmp_path / "iwv_holdings_snapshot.csv"
+    snapshot_path.write_text("Ticker,Weight (%)\nAAPL,1.0\n")
 
     def _raise_on_get(*_args, **_kwargs):
         raise AssertionError("requests.get should not be called when allow_network=False")
 
-    monkeypatch.setattr(universe, "LOCAL_CACHE_PATH", str(cache_path))
+    monkeypatch.setattr(universe, "LOCAL_CACHE_PATH", str(tmp_path / "missing_cache.csv"))
+    monkeypatch.setattr(universe.cfg, "UNIVERSE_SNAPSHOT_PATH", str(snapshot_path))
     monkeypatch.setattr(universe.requests, "get", _raise_on_get)
 
     df = universe.load_r3k_universe_from_iwv(allow_network=False)

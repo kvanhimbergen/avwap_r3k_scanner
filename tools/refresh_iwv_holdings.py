@@ -5,17 +5,19 @@ from pathlib import Path
 
 import pandas as pd
 
-from universe import (
-    _clean_ishares_data,
-    _download_iwv_holdings_csv,
-)
+from config import cfg
+from universe import _clean_ishares_data, _download_iwv_holdings_csv
+
+DEFAULT_SNAPSHOT_PATH = "universe/snapshots/iwv_holdings_latest.csv"
 
 
 def main() -> None:
     raw_text = _download_iwv_holdings_csv()
-    cache_path = Path("universe/cache/iwv_holdings.csv")
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(raw_text)
+    snapshot_path = Path(
+        getattr(cfg, "UNIVERSE_SNAPSHOT_PATH", None) or DEFAULT_SNAPSHOT_PATH
+    )
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(raw_text)
 
     df = _clean_ishares_data(raw_text)
     timestamp = datetime.now().isoformat(timespec="seconds")
