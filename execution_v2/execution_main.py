@@ -7,7 +7,7 @@ from __future__ import annotations
 import argparse
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
@@ -18,6 +18,7 @@ from alpaca.trading.requests import (
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
 
 from alerts.slack import slack_alert
+from datetime import timezone
 from execution_v2 import buy_loop, sell_loop
 from execution_v2.market_data import from_env as market_data_from_env
 from execution_v2.orders import generate_idempotency_key
@@ -71,7 +72,37 @@ def _has_open_order_or_position(trading_client: TradingClient, symbol: str) -> b
 
 def _submit_bracket_order(trading_client: TradingClient, intent, dry_run: bool) -> str | None:
     if dry_run:
+        import json
+        from datetime import datetime
+        
+        ledger_path = "/root/avwap_r3k_scanner/state/dry_run_ledger.json"
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        key = f"{today}:{intent.symbol}"
+        
+        try:
+            with open(ledger_path, "r") as f:
+                ledger = json.load(f)
+        except Exception:
+            ledger = {}
+        
+        if key in ledger:
+            _log(f"DRY_RUN: already submitted today -> {intent.symbol}; skipping")
+            return "dry-run-skipped"
+
         _log(f"DRY_RUN: would submit {intent.symbol} qty={intent.size_shares} SL={intent.stop_loss} TP={intent.take_profit}")
+
+        ledger[key] = {
+            "symbol": intent.symbol,
+            "qty": intent.size_shares,
+            "ts": datetime.utcnow(timezone.utc).isoformat(),
+        }
+
+        try:
+            with open(ledger_path, "w") as f:
+                json.dump(ledger, f)
+        except Exception as exc:
+            _log(f"WARNING: failed to write dry run ledger: {exc}")
+
         return "dry-run"
 
     order = MarketOrderRequest(
@@ -104,8 +135,19 @@ def run_once(cfg) -> None:
     sell_cfg = sell_loop.SellLoopConfig(candidates_csv=cfg.candidates_csv)
     trading_client = _get_trading_client()
     md = market_data_from_env()
+    # Diagnostics: confirm which candidates CSV execution will use (observability only).
+    try:
+        import os as _os
+        from datetime import datetime as _dt
 
-    if not _market_open(trading_client):
+        p = _os.path.abspath(cfg.candidates_csv)
+        exists = _os.path.exists(p)
+        mtime = _dt.fromtimestamp(_os.path.getmtime(p), tz=timezone.utc).isoformat()
+        _log(f"Candidates CSV: {p} | exists={exists} | mtime_utc={mtime}")
+    except Exception:
+        pass
+    
+    if (not _market_open(trading_client)) and (not getattr(cfg, 'ignore_market_hours', False)):
         _log("Market closed; skipping cycle.")
         return
 
@@ -113,7 +155,6 @@ def run_once(cfg) -> None:
     created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
     if created:
         _log(f"Created {created} entry intents.")
-
     sell_loop.evaluate_positions(store, trading_client, sell_cfg)
 
     now_ts = time.time()
@@ -237,6 +278,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--candidates-csv", default=os.getenv("WATCHLIST_FILE", "daily_candidates.csv"))
     parser.add_argument("--db-path", default=os.getenv("EXECUTION_V2_DB", "data/execution_v2.sqlite"))
     parser.add_argument("--poll-seconds", type=int, default=int(os.getenv("EXECUTION_POLL_SECONDS", "300")))
+    parser.add_argument("--ignore-market-hours", action="store_true", default=(os.getenv("EXEC_V2_IGNORE_MARKET_HOURS","0").strip() in ("1","true","TRUE","yes","YES")), help="Test-only: run cycles even when market is closed")
     parser.add_argument(
         "--entry-delay-min",
         dest="entry_delay_min_sec",
@@ -250,7 +292,12 @@ def _parse_args() -> argparse.Namespace:
         default=int(os.getenv("ENTRY_DELAY_MAX_SECONDS", "240")),
     )
     parser.add_argument("--dry-run", action="store_true", default=os.getenv("DRY_RUN", "0") == "1")
-    parser.add_argument("--once", action="store_true")
+    parser.add_argument(
+        "--run-once",
+        action="store_true",
+        help="Run a single execution cycle then exit cleanly",
+    )
+
     return parser.parse_args()
 
 
@@ -269,7 +316,7 @@ def main() -> None:
         throttle_seconds=300,
     )
 
-    if cfg.once:
+    if cfg.run_once:
         run_once(cfg)
         _log("Execution V2 run_once complete.")
         return
@@ -287,6 +334,11 @@ def main() -> None:
                 throttle_key="execution_v2_exception",
                 throttle_seconds=300,
             )
+
+        if cfg.run_once:
+            slack_alert("execution_v2: --run-once enabled; exiting after single cycle.")
+            break
+        
         time.sleep(cfg.poll_seconds)
 
 

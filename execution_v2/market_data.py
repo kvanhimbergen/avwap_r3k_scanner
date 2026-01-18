@@ -18,7 +18,7 @@ from typing import Optional
 
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
-from alpaca.data.timeframe import TimeFrame
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from execution_v2.pivots import DailyBar
 from execution_v2.boh import Bar10m
@@ -73,7 +73,7 @@ class MarketData:
         We request a small lookback window and then take last two completed bars.
         """
         start = datetime.now(timezone.utc) - timedelta(days=self.cfg.intraday_lookback_days)
-        req = StockBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame.Minute * 10, start=start)
+        req = StockBarsRequest(symbol_or_symbols=symbol, timeframe=TimeFrame(10, TimeFrameUnit.Minute), start=start)
         bars = self.client.get_stock_bars(req).df
         if bars is None or bars.empty:
             return []
