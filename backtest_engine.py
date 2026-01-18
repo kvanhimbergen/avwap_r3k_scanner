@@ -43,25 +43,38 @@ def load_ohlcv_history(data_path: Path) -> pd.DataFrame:
     if df.empty:
         raise ValueError(f"OHLCV history is empty at {data_path}")
     df = df.copy()
-    df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
+    df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None).dt.normalize()
     df["Ticker"] = df["Ticker"].astype(str).str.upper()
-    return df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
+    df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
+    df = df.set_index(["Ticker", "Date"]).sort_index()
+    return df
 
 
 def get_symbol_history(df: pd.DataFrame, symbol: str, end_dt: pd.Timestamp) -> pd.DataFrame:
-    mask = (df["Ticker"] == symbol) & (df["Date"] <= end_dt)
-    out = df.loc[mask].copy()
+    # df is indexed by [Ticker, Date] for speed and determinism
+    symbol = str(symbol).upper()
+    end_dt = pd.Timestamp(end_dt)
+    try:
+        out = df.loc[(symbol, slice(None, end_dt)), :]
+    except KeyError:
+        return pd.DataFrame()
     if out.empty:
-        return out
-    return out.sort_values("Date").reset_index(drop=True)
+        return pd.DataFrame()
+    # return as a flat frame with Date as a column (matches prior behavior)
+    out = out.reset_index(level=0, drop=True).reset_index()
+    return out
 
 
 def get_bar(df: pd.DataFrame, symbol: str, session_date: pd.Timestamp) -> dict | None:
-    mask = (df["Ticker"] == symbol) & (df["Date"] == session_date)
-    row = df.loc[mask]
-    if row.empty:
+    symbol = str(symbol).upper()
+    session_date = pd.Timestamp(session_date)
+    try:
+        rec = df.loc[(symbol, session_date)]
+    except KeyError:
         return None
-    rec = row.iloc[0]
+    # If duplicates ever exist, take the first deterministically
+    if isinstance(rec, pd.DataFrame):
+        rec = rec.iloc[0]
     return {
         "Open": float(rec["Open"]),
         "High": float(rec["High"]),
@@ -163,8 +176,14 @@ def run_backtest(
     if start_dt > end_dt:
         raise ValueError("start_date must be <= end_date")
 
+    dates = history.index.get_level_values("Date")
     trading_days = (
-        history["Date"].dropna().dt.normalize().drop_duplicates().sort_values().tolist()
+        pd.Series(dates)
+        .dropna()
+        .dt.normalize()
+        .drop_duplicates()
+        .sort_values()
+        .tolist()
     )
     trading_days = [d for d in trading_days if start_dt <= d <= end_dt]
 
