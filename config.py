@@ -51,6 +51,19 @@ class CFG:
     SNAPSHOT_MAX_AGE_DAYS: int = 7
     HISTORY_MAX_AGE_DAYS: int = 7
 
+    # Universe sourcing controls
+    UNIVERSE_ALLOW_NETWORK: bool = True
+    BACKTEST_UNIVERSE_ALLOW_NETWORK: bool = False
+
+    # Use the committed snapshot as the default offline universe source
+    UNIVERSE_SNAPSHOT_PATH: str = "universe/snapshots/iwv_holdings_latest.csv"
+
+    # Optional future enhancement location
+    UNIVERSE_SNAPSHOT_DIR: str = "universe/snapshots"
+
+    # Scan time control (None => live scan uses now)
+    SCAN_AS_OF_DT: str | None = None
+
     # --- Setup: Pullback-in-Uptrend (daily bars) ---
     PULLBACK_TREND_ENABLED: bool = True
 
@@ -127,6 +140,14 @@ class CFG:
     BACKTEST_TICKER_LIMIT: int = 250
     BACKTEST_CANDIDATES_PATH: str = "daily_candidates.csv"
     BACKTEST_BENCHMARK_SYMBOL: str = "SPY"
+
+    # Backtest controls
+    BACKTEST_DYNAMIC_SCAN: bool = True
+    BACKTEST_STATIC_UNIVERSE: bool = True
+    BACKTEST_USE_DATED_UNIVERSE_SNAPSHOTS: bool = False
+
+    # Determinism
+    BACKTEST_RANDOM_SEED: int = 42
 
     def get_universe_metrics(self, tickers: list[str]) -> dict[str, dict]:
         """
