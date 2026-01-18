@@ -214,30 +214,37 @@ def get_account_details() -> dict:
     }
 
 
-def calculate_position_size(symbol_price: float, risk_pct: float = DEFAULT_RISK_PCT) -> int:
+def calculate_position_size(entry_price: float, stop_loss_price: float, risk_pct: float = DEFAULT_RISK_PCT) -> int:
     """
-    Calculates quantity based on a percentage of total equity.
+    Calculates quantity based on a percentage of total equity and per-share risk.
     Default: Use DEFAULT_RISK_PCT of total account equity per trade.
     """
     account = trading_client.get_account()
     equity = float(account.equity)
 
-    cash_to_spend = equity * float(risk_pct)
+    cash_risk = equity * float(risk_pct)
 
-    # Ensure we don't exceed available buying power
     bp = float(account.buying_power)
-    if cash_to_spend > bp:
-        cash_to_spend = bp * 0.95  # Leave 5% buffer
 
     try:
-        price = float(symbol_price)
+        price = float(entry_price)
+        stop = float(stop_loss_price)
     except Exception:
         return 0
 
     if price <= 0:
         return 0
 
-    qty = int(cash_to_spend / price)
+    max_bp_qty = 0
+    if bp > 0:
+        max_bp_qty = int((bp * 0.95) / price)  # Leave 5% buffer
+
+    risk_per_share = abs(price - stop)
+    if risk_per_share <= 0:
+        return 0
+
+    qty_by_risk = int(cash_risk / risk_per_share)
+    qty = qty_by_risk if max_bp_qty <= 0 else min(qty_by_risk, max_bp_qty)
     return qty if qty > 0 else 0
 
 
@@ -258,7 +265,7 @@ def execute_buy_bracket(symbol: str, stop_loss_price: float, take_profit_price: 
 
     # Use watchlist Price if available; otherwise use a conservative proxy
     base_price = float(ref_price) if ref_price and ref_price > 0 else float(take_profit_price) * 0.9
-    qty = calculate_position_size(base_price, risk_pct=DEFAULT_RISK_PCT)
+    qty = calculate_position_size(base_price, stop_loss_price, risk_pct=DEFAULT_RISK_PCT)
 
     if qty <= 0:
         log(f"❌ Insufficient funds/size to buy {sym}")
@@ -306,11 +313,29 @@ def execute_partial_sell(symbol: str, sell_percentage: float = 0.5) -> None:
         qty_to_sell = round(total_qty * float(sell_percentage), 2)
 
         close_options = ClosePositionRequest(qty=str(qty_to_sell))
-        trading_client.close_position(sym, close_options=close_options)
+        trading_client.close_position(symbol_or_asset_id=sym, close_options=close_options)
 
         log(f"✂️ Trimmed {sell_percentage*100:.0f}% of {sym} ({qty_to_sell} shares)")
     except Exception as e:
         log(f"❌ Trim Failed for {sym}: {e}")
+
+
+def execute_full_exit(symbol: str, reason: str | None = None) -> None:
+    """Closes an entire position for the given symbol."""
+    sym = (symbol or "").upper().strip()
+    if not sym:
+        log("SKIP exit: empty symbol")
+        return
+
+    if DRY_RUN:
+        log(f"DRY_RUN: would close position for {sym} ({reason or 'no reason'})")
+        return
+
+    try:
+        trading_client.close_position(symbol_or_asset_id=sym)
+        log(f"🚪 Closed position for {sym} ({reason or 'no reason'})")
+    except Exception as e:
+        log(f"❌ Exit Failed for {sym}: {e}")
 
 
 def get_daily_summary_data() -> dict:
