@@ -32,6 +32,7 @@ def main() -> int:
         root / "tests" / "test_determinism.py",
         root / "tests" / "test_backtest_observability.py",
         root / "tests" / "test_backtest_sizing.py",
+        root / "tests" / "test_sweep_runner.py",
     ]
 
     any_fail = False
