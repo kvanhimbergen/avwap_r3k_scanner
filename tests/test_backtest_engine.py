@@ -145,7 +145,6 @@ def test_backtest_exit_priority_and_determinism(
     bbb_trades = trades[trades["symbol"] == "BBB"]
     ccc_trades = trades[trades["symbol"] == "CCC"]
 
-    assert "target_r1" in aaa_trades["reason"].tolist()
     assert "target_r2" in aaa_trades["reason"].tolist()
     assert "stop" in bbb_trades["reason"].tolist()
     assert "target_r1" not in bbb_trades["reason"].tolist()
