@@ -1,5 +1,8 @@
 
-"""Run all tests with: python tests/run_tests.py"""
+"""Run all tests with: python tests/run_tests.py
+
+This is the single source of truth for the test entrypoint in CI and operator workflows.
+"""
 
 from __future__ import annotations
 
@@ -27,14 +30,18 @@ def main() -> int:
     env["PYTHONPATH"] = str(root)
 
     tests = [
-        root / "tests" / "test_universe.py",
-        root / "tests" / "test_no_lookahead.py",
-        root / "tests" / "test_determinism.py",
+        root / "tests" / "test_backtest_engine.py",
+        root / "tests" / "test_backtest_guardrails.py",
         root / "tests" / "test_backtest_observability.py",
         root / "tests" / "test_backtest_sizing.py",
+        root / "tests" / "test_ci_docs_trust.py",
+        root / "tests" / "test_determinism.py",
+        root / "tests" / "test_no_lookahead.py",
         root / "tests" / "test_parity_scan_backtest.py",
-        root / "tests" / "test_sweep_runner.py",
         root / "tests" / "test_provenance.py",
+        root / "tests" / "test_scan_engine_schema.py",
+        root / "tests" / "test_sweep_runner.py",
+        root / "tests" / "test_universe.py",
     ]
 
     any_fail = False
