@@ -220,9 +220,9 @@ def compare_scan_backtest(
     }
 
     is_equal = schema_equal and row_count_equal and frames_equal
+    _atomic_write_json(report, PARITY_REPORT_PATH)
 
     if not is_equal:
-        _atomic_write_json(report, PARITY_REPORT_PATH)
         if diff_df is not None and not diff_df.empty:
             _atomic_write_csv(diff_df, PARITY_DIFF_PATH)
 
