@@ -106,7 +106,8 @@ def _atomic_write_json(payload: dict, path: Path) -> None:
 
 
 def _round_series(series: pd.Series, decimals: int = 4) -> pd.Series:
-    return series.round(decimals)
+    numeric = pd.to_numeric(series, errors="coerce")
+    return numeric.round(decimals)
 
 
 def _round_frame(df: pd.DataFrame, columns: Iterable[str], decimals: int = 4) -> pd.DataFrame:
@@ -210,6 +211,9 @@ def _scan_as_of(
         if (sym_hist["Date"] == as_of_dt).any():
             symbols_with_ohlcv_today += 1
         df = sym_hist.set_index("Date").sort_index()
+        # Ensure unique session bars per symbol; duplicates break anchor index lookups
+        if not df.index.is_unique:
+            df = df[~df.index.duplicated(keep="first")]
         row = scan_engine.build_candidate_row(
             df,
             symbol,
