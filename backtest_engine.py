@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import math
 import os
+import platform
+import sys
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -14,6 +16,14 @@ import scan_engine
 from config import cfg as default_cfg
 from setup_context import load_setup_rules
 from universe import load_universe
+from provenance import (
+    compute_config_hash,
+    compute_data_hash,
+    compute_run_id,
+    git_sha,
+    require_provenance_fields,
+    validate_execution_mode,
+)
 
 DEFAULT_OHLCV_PATH = Path("cache") / "ohlcv_history.parquet"
 DEFAULT_OUTPUT_DIR = Path("backtests")
@@ -355,10 +365,14 @@ def run_backtest(
     end_date: str | date | datetime,
     *,
     universe_symbols: list[str] | None = None,
+    parameters_used: dict | None = None,
+    execution_mode: str = "single",
+    write_run_meta: bool = True,
 ) -> BacktestResult:
     if getattr(cfg, "BACKTEST_UNIVERSE_ALLOW_NETWORK", False):
         raise ValueError("BACKTEST_UNIVERSE_ALLOW_NETWORK must be False for offline backtests.")
 
+    validate_execution_mode(execution_mode)
     entry_model = getattr(cfg, "BACKTEST_ENTRY_MODEL", ENTRY_MODEL_NEXT_OPEN)
     if entry_model not in (ENTRY_MODEL_NEXT_OPEN, ENTRY_MODEL_SAME_CLOSE):
         raise ValueError(f"Unsupported entry model: {entry_model}")
@@ -379,14 +393,46 @@ def run_backtest(
     invalidation_stop_buffer_pct = float(
         getattr(cfg, "BACKTEST_INVALIDATION_STOP_BUFFER_PCT", 0.0)
     )
+    max_positions = int(_cfg_value(cfg, "BACKTEST_MAX_POSITIONS", "BACKTEST_MAX_CONCURRENT", 5))
+    max_gross_exposure_pct = float(getattr(cfg, "BACKTEST_MAX_GROSS_EXPOSURE_PCT", 1.0))
 
     output_dir = Path(getattr(cfg, "BACKTEST_OUTPUT_DIR", DEFAULT_OUTPUT_DIR))
-    history = load_ohlcv_history(Path(getattr(cfg, "BACKTEST_OHLCV_PATH", DEFAULT_OHLCV_PATH)))
+    data_path = Path(getattr(cfg, "BACKTEST_OHLCV_PATH", DEFAULT_OHLCV_PATH))
+    history = load_ohlcv_history(data_path)
 
     start_dt = _normalize_date(start_date)
     end_dt = _normalize_date(end_date)
     if start_dt > end_dt:
         raise ValueError("start_date must be <= end_date")
+
+    if parameters_used is None:
+        parameters_used = {
+            "start_date": start_dt.date().isoformat(),
+            "end_date": end_dt.date().isoformat(),
+            "entry_model": entry_model,
+            "slippage_bps": slippage_bps,
+            "entry_limit_bps": entry_limit_bps,
+            "risk_per_trade_pct": risk_per_trade_pct,
+            "max_positions": max_positions,
+            "max_gross_exposure_pct": max_gross_exposure_pct,
+            "stop_buffer": invalidation_stop_buffer_pct,
+            "extension_thresh": extension_thresh,
+            "invalidation_stop_buffer_pct": invalidation_stop_buffer_pct,
+        }
+    else:
+        parameters_used = dict(parameters_used)
+
+    git_sha_value = git_sha()
+    config_hash = compute_config_hash(cfg)
+    data_hash = compute_data_hash(data_path)
+    run_id = compute_run_id(
+        git_sha_value,
+        config_hash,
+        data_hash,
+        execution_mode,
+        parameters_used,
+    )
+    cfg.BACKTEST_RUN_ID = run_id
 
     dates = history.index.get_level_values("Date")
     trading_days = (
@@ -1248,6 +1294,36 @@ def run_backtest(
         "max_concurrent_positions": max_concurrent_positions,
     }
 
+    summary.update(
+        {
+            "run_id": run_id,
+            "git_sha": git_sha_value,
+            "config_hash": config_hash,
+            "data_hash": data_hash,
+            "data_path": str(data_path),
+            "execution_mode": execution_mode,
+            "parameters_used": parameters_used,
+        }
+    )
+    require_provenance_fields(summary, context="summary.json")
+
+    run_meta = {
+        "run_id": run_id,
+        "git_sha": git_sha_value,
+        "config_hash": config_hash,
+        "data_hash": data_hash,
+        "data_path": str(data_path),
+        "execution_mode": execution_mode,
+        "parameters_used": parameters_used,
+        "command": " ".join(sys.argv),
+        "timestamp_utc": datetime.utcnow().isoformat() + "Z",
+        "environment": {
+            "python": sys.version,
+            "platform": platform.platform(),
+        },
+    }
+    require_provenance_fields(run_meta, context="run_meta.json")
+
     trades_path = output_dir / "trades.csv"
     positions_path = output_dir / "positions.csv"
     equity_curve_path = output_dir / "equity_curve.csv"
@@ -1258,6 +1334,8 @@ def run_backtest(
     _atomic_write_csv(positions_df, positions_path)
     _atomic_write_csv(equity_df, equity_curve_path)
     _atomic_write_json(summary, summary_path)
+    if write_run_meta:
+        _atomic_write_json(run_meta, output_dir / "run_meta.json")
     diagnostics_df = pd.DataFrame(diagnostics_rows)
     diagnostics_columns = [
         "date",

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,7 +11,13 @@ import pandas as pd
 
 import backtest_engine
 import scan_engine
-from backtest_sweep import compute_config_hash, compute_data_hash
+from provenance import (
+    compute_config_hash,
+    compute_data_hash,
+    compute_run_id,
+    git_sha,
+    require_provenance_fields,
+)
 from setup_context import load_setup_rules
 
 PARITY_DIR = Path("backtests") / "parity"
@@ -32,19 +37,6 @@ class ParityMismatchError(AssertionError):
         super().__init__("Parity mismatch between scan_engine and backtest_engine outputs.")
         self.report = report
         self.diff = diff
-
-
-def _git_sha() -> str:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        return result.stdout.strip()
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return "unknown"
 
 
 def _atomic_write_json(payload: dict, path: Path) -> None:
@@ -198,14 +190,33 @@ def compare_scan_backtest(
         direct_norm, backtest_norm, canonical_columns
     )
 
-    data_hash = "unknown"
-    if history_path is not None:
-        data_hash = compute_data_hash(Path(history_path))
+    data_path = str(history_path) if history_path is not None else "unknown"
+    data_hash = (
+        compute_data_hash(Path(history_path)) if history_path is not None else "unknown"
+    )
+    parameters_used = {
+        "as_of_dt": as_of_ts.date().isoformat(),
+        "symbols": symbols_list,
+    }
+    execution_mode = "single"
+    git_sha_value = git_sha()
+    config_hash = compute_config_hash(scan_cfg)
+    run_id = compute_run_id(
+        git_sha_value,
+        config_hash,
+        data_hash,
+        execution_mode,
+        parameters_used,
+    )
 
     report = {
-        "git_sha": _git_sha(),
-        "config_hash": compute_config_hash(scan_cfg),
+        "run_id": run_id,
+        "git_sha": git_sha_value,
+        "config_hash": config_hash,
         "data_hash": data_hash,
+        "data_path": data_path,
+        "execution_mode": execution_mode,
+        "parameters_used": parameters_used,
         "as_of_dt": as_of_ts.date().isoformat(),
         "symbol_count": len(symbols_list),
         "schema_a": list(direct_df.columns),
@@ -218,6 +229,7 @@ def compare_scan_backtest(
             **diff_summary,
         },
     }
+    require_provenance_fields(report, context="parity_report.json")
 
     is_equal = schema_equal and row_count_equal and frames_equal
     _atomic_write_json(report, PARITY_REPORT_PATH)
