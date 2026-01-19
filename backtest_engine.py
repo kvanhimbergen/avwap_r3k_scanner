@@ -6,7 +6,7 @@ import os
 import platform
 import sys
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -1316,7 +1316,7 @@ def run_backtest(
         "execution_mode": execution_mode,
         "parameters_used": parameters_used,
         "command": " ".join(sys.argv),
-        "timestamp_utc": datetime.utcnow().isoformat() + "Z",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00","Z"),
         "environment": {
             "python": sys.version,
             "platform": platform.platform(),
