@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import os
 import platform
-import subprocess
 import sys
 from dataclasses import asdict
 from datetime import datetime
@@ -22,6 +20,14 @@ from backtest_engine import (
     ENTRY_MODEL_NEXT_OPEN,
     load_ohlcv_history,
     run_backtest,
+)
+from provenance import (
+    compute_config_hash,
+    compute_data_hash,
+    compute_run_id,
+    git_sha,
+    require_provenance_fields,
+    validate_execution_mode,
 )
 
 
@@ -78,56 +84,6 @@ SUMMARY_COLUMNS = [
     "avg_position_size",
     "max_concurrent_positions",
 ]
-
-
-def _ensure_local_path(path: Path) -> None:
-    parsed = urlparse(str(path))
-    if parsed.scheme or parsed.netloc:
-        raise ValueError(f"Only local filesystem paths are allowed: {path}")
-
-
-def _canonical_json(payload: dict) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
-
-
-def _sha256_bytes(payload: bytes) -> str:
-    return hashlib.sha256(payload).hexdigest()
-
-
-def compute_data_hash(path: Path) -> str:
-    _ensure_local_path(path)
-    with open(path, "rb") as handle:
-        return _sha256_bytes(handle.read())
-
-
-def compute_config_hash(cfg) -> str:
-    keys = [
-        "BACKTEST_ENTRY_MODEL",
-        "BACKTEST_MAX_HOLD_DAYS",
-        "BACKTEST_INITIAL_CASH",
-        "BACKTEST_INITIAL_EQUITY",
-        "BACKTEST_MIN_DOLLAR_POSITION",
-        "BACKTEST_STRICT_SCHEMA",
-        "BACKTEST_DEBUG_SAVE_CANDIDATES",
-        "BACKTEST_VERBOSE",
-        "BACKTEST_DYNAMIC_SCAN",
-        "BACKTEST_STATIC_UNIVERSE",
-        "BACKTEST_USE_DATED_UNIVERSE_SNAPSHOTS",
-    ]
-    subset = {key: getattr(cfg, key, None) for key in keys}
-    return _sha256_bytes(_canonical_json(subset).encode("utf-8"))
-
-
-def compute_run_id(
-    git_sha: str, config_hash: str, params: dict, data_hash: str
-) -> str:
-    payload = {
-        "git_sha": git_sha,
-        "config_hash": config_hash,
-        "params": params,
-        "data_hash": data_hash,
-    }
-    return _sha256_bytes(_canonical_json(payload).encode("utf-8"))
 
 
 def load_sweep_spec(path: Path) -> dict:
@@ -343,19 +299,6 @@ def _atomic_write_csv(df: pd.DataFrame, path: Path) -> None:
     os.replace(tmp_path, path)
 
 
-def _git_sha() -> str:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        return result.stdout.strip()
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return "unknown"
-
-
 def _data_label_from_path(path: Path) -> str:
     return path.stem
 
@@ -511,6 +454,8 @@ def run_sweep(
         base_params["end_date"] = end_date
     if entry_model:
         base_params["entry_model"] = entry_model
+    if "entry_model" not in base_params:
+        base_params["entry_model"] = getattr(cfg, "BACKTEST_ENTRY_MODEL", ENTRY_MODEL_NEXT_OPEN)
 
     grid = spec.get("grid", {})
     _validate_param_keys(grid, ALLOWED_SWEEP_PARAMS)
@@ -537,19 +482,22 @@ def run_sweep(
     runs_dir = output_root / "runs"
     compare_dir = output_root / "compare"
 
-    git_sha = _git_sha()
-    config_hash = compute_config_hash(cfg)
+    git_sha_value = git_sha()
     all_rows = []
 
     for data_entry in normalized_entries:
         data_path = Path(data_entry["path"])
         data_label = data_entry["label"]
-        _ensure_local_path(data_path)
+        parsed = urlparse(str(data_path))
+        if parsed.scheme or parsed.netloc:
+            raise ValueError(f"Only local filesystem paths are allowed: {data_path}")
         data_hash = compute_data_hash(data_path)
 
         history = load_ohlcv_history(data_path)
         trading_days = _trading_days_from_history(history)
         wf_spec = walk_forward_spec or spec.get("walk_forward")
+        execution_mode = "walk_forward" if wf_spec else "sweep"
+        validate_execution_mode(execution_mode)
         splits = compute_walk_forward_splits(trading_days, wf_spec)
 
         regime_df = compute_regime_labels(history, trading_days)
@@ -568,21 +516,37 @@ def run_sweep(
                 params["start_date"] = str(run_start.date())
                 params["end_date"] = str(run_end.date())
 
-                run_id = compute_run_id(git_sha, config_hash, params, data_hash)
+                cfg_run = _prepare_cfg(cfg, params, data_path, output_root)
+                config_hash = compute_config_hash(cfg_run)
+                run_id = compute_run_id(
+                    git_sha_value,
+                    config_hash,
+                    data_hash,
+                    execution_mode,
+                    params,
+                )
                 run_dir = runs_dir / run_id
-
-                cfg_run = _prepare_cfg(cfg, params, data_path, run_dir)
-                result = run_backtest(cfg_run, run_start, run_end)
+                cfg_run.BACKTEST_OUTPUT_DIR = str(run_dir)
+                result = run_backtest(
+                    cfg_run,
+                    run_start,
+                    run_end,
+                    parameters_used=params,
+                    execution_mode=execution_mode,
+                    write_run_meta=False,
+                )
 
                 params_path = run_dir / "params.json"
                 _atomic_write_json(params, params_path)
 
                 meta = {
                     "run_id": run_id,
-                    "git_sha": git_sha,
+                    "git_sha": git_sha_value,
                     "config_hash": config_hash,
                     "data_hash": data_hash,
                     "data_path": str(data_path),
+                    "execution_mode": execution_mode,
+                    "parameters_used": params,
                     "data_label": data_label,
                     "command": " ".join(sys.argv),
                     "timestamp_utc": datetime.utcnow().isoformat() + "Z",
@@ -591,6 +555,7 @@ def run_sweep(
                         "platform": platform.platform(),
                     },
                 }
+                require_provenance_fields(meta, context="sweep run_meta.json")
                 _atomic_write_json(meta, run_dir / "run_meta.json")
 
                 if not regime_df.empty:

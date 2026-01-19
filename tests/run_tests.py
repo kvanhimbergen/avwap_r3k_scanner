@@ -34,6 +34,7 @@ def main() -> int:
         root / "tests" / "test_backtest_sizing.py",
         root / "tests" / "test_parity_scan_backtest.py",
         root / "tests" / "test_sweep_runner.py",
+        root / "tests" / "test_provenance.py",
     ]
 
     any_fail = False

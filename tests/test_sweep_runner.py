@@ -5,17 +5,16 @@ import pandas as pd
 from backtest_sweep import (
     SUMMARY_COLUMNS,
     build_summary_table,
-    compute_data_hash,
-    compute_run_id,
     compute_walk_forward_splits,
     expand_grid,
 )
+from provenance import compute_data_hash, compute_run_id
 
 
 def test_run_id_deterministic() -> None:
     params = {"start_date": "2024-01-01", "end_date": "2024-02-01", "slippage_bps": 2.0}
-    run_id_a = compute_run_id("abc123", "cfg456", params, "data789")
-    run_id_b = compute_run_id("abc123", "cfg456", params, "data789")
+    run_id_a = compute_run_id("abc123", "cfg456", "data789", "single", params)
+    run_id_b = compute_run_id("abc123", "cfg456", "data789", "single", params)
     assert run_id_a == run_id_b
 
 
