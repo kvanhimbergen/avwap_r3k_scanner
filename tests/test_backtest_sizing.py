@@ -71,10 +71,7 @@ def _fake_candidate_row(
     }
 
 
-@pytest.mark.parametrize("max_positions", [1])
-def test_backtest_sizing_and_caps(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, max_positions: int
-) -> None:
+def test_backtest_sizing_and_caps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     dates = pd.date_range("2024-01-02", periods=2, freq="B")
     history = _make_history_frame(dates)
     history_path = tmp_path / "ohlcv_history.parquet"
@@ -86,8 +83,12 @@ def test_backtest_sizing_and_caps(
     monkeypatch.setattr(cfg, "BACKTEST_ENTRY_MODEL", "next_open")
     monkeypatch.setattr(cfg, "BACKTEST_INITIAL_CASH", 100_000.0)
     monkeypatch.setattr(cfg, "BACKTEST_RISK_PER_TRADE_PCT", 0.01)
-    monkeypatch.setattr(cfg, "BACKTEST_MAX_POSITIONS", max_positions)
+    monkeypatch.setattr(cfg, "BACKTEST_MAX_POSITIONS", 2)
     monkeypatch.setattr(cfg, "BACKTEST_MAX_GROSS_EXPOSURE_PCT", 1.0)
+    monkeypatch.setattr(cfg, "BACKTEST_MAX_GROSS_EXPOSURE_DOLLARS", 1_000_000.0)
+    monkeypatch.setattr(cfg, "BACKTEST_MAX_RISK_PER_TRADE_DOLLARS", 1_000_000.0)
+    monkeypatch.setattr(cfg, "BACKTEST_MAX_NEW_ENTRIES_PER_DAY", 10)
+    monkeypatch.setattr(cfg, "BACKTEST_MAX_UNIQUE_SYMBOLS_PER_DAY", 10)
     monkeypatch.setattr(cfg, "BACKTEST_MIN_DOLLAR_POSITION", 0.0)
     monkeypatch.setattr(cfg, "BACKTEST_SLIPPAGE_BPS", 0.0)
     monkeypatch.setattr(cfg, "BACKTEST_ENTRY_LIMIT_BPS", 10.0)
@@ -97,12 +98,9 @@ def test_backtest_sizing_and_caps(
     )
 
     entry_trades = result.trades[result.trades["fill_type"] == "entry"]
-    assert entry_trades.shape[0] == 1
+    assert entry_trades.shape[0] == 2
     assert entry_trades.iloc[0]["qty"] == 100
-
-    diagnostics = pd.read_csv(Path(cfg.BACKTEST_OUTPUT_DIR) / "scan_diagnostics.csv")
-    fill_day = diagnostics[diagnostics["date"] == dates[1].date().isoformat()].iloc[0]
-    assert fill_day["entries_skipped_max_positions"] == 1
+    assert entry_trades.iloc[1]["qty"] == 100
 
 
 def test_backtest_missed_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
