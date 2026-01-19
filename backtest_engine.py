@@ -180,6 +180,92 @@ def _risk_per_share(entry_price: float, stop: float, direction: str) -> float:
     return max(sign * (entry_price - stop), 0.01)
 
 
+def _get_run_id(scan_cfg) -> str | None:
+    for attr in ("RUN_ID", "BACKTEST_RUN_ID"):
+        if hasattr(scan_cfg, attr):
+            value = getattr(scan_cfg, attr)
+            if value:
+                return str(value)
+    return None
+
+
+def _guardrail_violation(name: str, current: float | int | str, limit: float | int | str, run_id: str | None) -> None:
+    run_id_value = run_id or "n/a"
+    raise RuntimeError(
+        f"Guardrail {name} violated: current={current} limit={limit} run_id={run_id_value}"
+    )
+
+
+def _kill_switch_active(scan_cfg, session_date: pd.Timestamp) -> bool:
+    if bool(getattr(scan_cfg, "BACKTEST_KILL_SWITCH", False)):
+        return True
+    start_date = getattr(scan_cfg, "BACKTEST_KILL_SWITCH_START_DATE", None)
+    if start_date:
+        start_dt = _normalize_date(start_date)
+        return pd.Timestamp(session_date).normalize() >= start_dt
+    return False
+
+
+def _enforce_entry_guardrails(
+    *,
+    scan_cfg,
+    session_date: pd.Timestamp,
+    symbol: str,
+    entries_filled_today: int,
+    unique_symbols_today: set[str],
+    positions: dict[str, dict],
+    equity_before: float,
+    gross_exposure: float,
+    notional: float,
+    trade_risk: float,
+) -> None:
+    run_id = _get_run_id(scan_cfg)
+
+    if _kill_switch_active(scan_cfg, session_date):
+        _guardrail_violation("kill_switch", True, False, run_id)
+
+    max_positions = int(_cfg_value(scan_cfg, "BACKTEST_MAX_POSITIONS", "BACKTEST_MAX_CONCURRENT", 5))
+    if len(positions) >= max_positions:
+        _guardrail_violation("max_concurrent_positions", len(positions) + 1, max_positions, run_id)
+
+    max_new_entries = int(getattr(scan_cfg, "BACKTEST_MAX_NEW_ENTRIES_PER_DAY", 10_000))
+    if entries_filled_today + 1 > max_new_entries:
+        _guardrail_violation(
+            "max_new_entries_per_day", entries_filled_today + 1, max_new_entries, run_id
+        )
+
+    max_unique_symbols = int(getattr(scan_cfg, "BACKTEST_MAX_UNIQUE_SYMBOLS_PER_DAY", 10_000))
+    projected_unique = len(unique_symbols_today) + (0 if symbol in unique_symbols_today else 1)
+    if projected_unique > max_unique_symbols:
+        _guardrail_violation(
+            "max_unique_symbols_per_day", projected_unique, max_unique_symbols, run_id
+        )
+
+    max_risk_abs = float(getattr(scan_cfg, "BACKTEST_MAX_RISK_PER_TRADE_DOLLARS", 1_000_000.0))
+    if trade_risk > max_risk_abs + EPSILON:
+        _guardrail_violation("max_risk_per_trade_abs", round(trade_risk, 6), max_risk_abs, run_id)
+
+    max_gross_exposure_pct = float(getattr(scan_cfg, "BACKTEST_MAX_GROSS_EXPOSURE_PCT", 1.0))
+    projected_gross = gross_exposure + abs(notional)
+    if equity_before > 0 and (
+        projected_gross / equity_before > max_gross_exposure_pct + EPSILON
+    ):
+        _guardrail_violation(
+            "max_gross_exposure_pct",
+            round(projected_gross / equity_before, 6),
+            max_gross_exposure_pct,
+            run_id,
+        )
+
+    max_gross_exposure_abs = float(
+        getattr(scan_cfg, "BACKTEST_MAX_GROSS_EXPOSURE_DOLLARS", 1_000_000.0)
+    )
+    if projected_gross > max_gross_exposure_abs + EPSILON:
+        _guardrail_violation(
+            "max_gross_exposure_abs", round(projected_gross, 6), max_gross_exposure_abs, run_id
+        )
+
+
 def _extension_high_from_candidate(row: pd.Series) -> bool | None:
     for key in ("Extension_High", "Setup_Extension_State", "Extension_State"):
         if key in row and pd.notna(row.get(key)):
@@ -286,10 +372,6 @@ def run_backtest(
         getattr(cfg, "BACKTEST_INITIAL_CASH", getattr(cfg, "BACKTEST_INITIAL_EQUITY", 100_000.0))
     )
     risk_per_trade_pct = float(_cfg_value(cfg, "BACKTEST_RISK_PER_TRADE_PCT", "BACKTEST_RISK_PCT", 0.01))
-    max_positions = int(_cfg_value(cfg, "BACKTEST_MAX_POSITIONS", "BACKTEST_MAX_CONCURRENT", 5))
-    max_gross_exposure_pct = float(
-        getattr(cfg, "BACKTEST_MAX_GROSS_EXPOSURE_PCT", 1.0)
-    )
     min_dollar_position = float(getattr(cfg, "BACKTEST_MIN_DOLLAR_POSITION", 0.0))
     slippage_bps = float(getattr(cfg, "BACKTEST_SLIPPAGE_BPS", 0.0))
     entry_limit_bps = float(getattr(cfg, "BACKTEST_ENTRY_LIMIT_BPS", slippage_bps))
@@ -351,6 +433,7 @@ def run_backtest(
         session_date = pd.Timestamp(session_date)
         entries_placed_today = 0
         entries_filled_today = 0
+        symbols_traded_today: set[str] = set()
         trades_fills_today = 0
         candidates_skipped_missing_next_open_bar = 0
         entries_skipped_max_positions = 0
@@ -388,9 +471,6 @@ def run_backtest(
                     entries_missed_limit += 1
                     continue
                 equity_before = cash + _compute_positions_value(history, positions, session_date)
-                if len(positions) >= max_positions:
-                    entries_skipped_max_positions += 1
-                    continue
                 risk_per_share = _risk_per_share(entry_price, entry["stop"], direction)
                 dollar_risk = equity_before * risk_per_trade_pct
                 qty = math.floor(dollar_risk / risk_per_share)
@@ -405,11 +485,19 @@ def run_backtest(
                     entries_skipped_cash += 1
                     continue
                 gross_exposure = _compute_gross_exposure(history, positions, session_date)
-                if equity_before > 0 and (
-                    gross_exposure + abs(notional)
-                ) / equity_before > max_gross_exposure_pct + EPSILON:
-                    entries_skipped_gross_exposure += 1
-                    continue
+                trade_risk = risk_per_share * qty
+                _enforce_entry_guardrails(
+                    scan_cfg=cfg,
+                    session_date=session_date,
+                    symbol=symbol,
+                    entries_filled_today=entries_filled_today,
+                    unique_symbols_today=symbols_traded_today,
+                    positions=positions,
+                    equity_before=equity_before,
+                    gross_exposure=gross_exposure,
+                    notional=notional,
+                    trade_risk=trade_risk,
+                )
                 sign = _direction_sign(direction)
                 cash -= sign * entry_price * qty
                 sym_hist = get_symbol_history(history, symbol, session_date)
@@ -465,6 +553,7 @@ def run_backtest(
                 )
                 entries_filled_today += 1
                 trades_fills_today += 1
+                symbols_traded_today.add(symbol)
 
         for symbol in sorted(list(positions.keys())):
             pos = positions[symbol]
@@ -823,9 +912,6 @@ def run_backtest(
                     entries_missed_limit += 1
                     continue
                 equity_before = cash + _compute_positions_value(history, positions, session_date)
-                if len(positions) >= max_positions:
-                    entries_skipped_max_positions += 1
-                    continue
                 risk_per_share = _risk_per_share(entry_price, float(row["Stop_Loss"]), direction)
                 dollar_risk = equity_before * risk_per_trade_pct
                 qty = math.floor(dollar_risk / risk_per_share)
@@ -840,11 +926,19 @@ def run_backtest(
                     entries_skipped_cash += 1
                     continue
                 gross_exposure = _compute_gross_exposure(history, positions, session_date)
-                if equity_before > 0 and (
-                    gross_exposure + abs(notional)
-                ) / equity_before > max_gross_exposure_pct + EPSILON:
-                    entries_skipped_gross_exposure += 1
-                    continue
+                trade_risk = risk_per_share * qty
+                _enforce_entry_guardrails(
+                    scan_cfg=cfg,
+                    session_date=session_date,
+                    symbol=symbol,
+                    entries_filled_today=entries_filled_today,
+                    unique_symbols_today=symbols_traded_today,
+                    positions=positions,
+                    equity_before=equity_before,
+                    gross_exposure=gross_exposure,
+                    notional=notional,
+                    trade_risk=trade_risk,
+                )
                 sign = _direction_sign(direction)
                 cash -= sign * entry_price * qty
                 sym_hist = get_symbol_history(history, symbol, session_date)
@@ -901,6 +995,7 @@ def run_backtest(
                 entries_placed_today += 1
                 entries_filled_today += 1
                 trades_fills_today += 1
+                symbols_traded_today.add(symbol)
                 next_position_id += 1
             else:
                 if idx + 1 >= len(trading_days):
