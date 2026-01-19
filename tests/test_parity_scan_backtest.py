@@ -69,7 +69,7 @@ def test_parity_scan_backtest_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         )
         assert result.is_equal
 
-    assert not PARITY_REPORT_PATH.exists()
+    assert PARITY_REPORT_PATH.exists()
     assert not PARITY_DIFF_PATH.exists()
 
 
