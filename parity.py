@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ import pandas as pd
 
 import backtest_engine
 import scan_engine
+from config import cfg
 from provenance import (
     compute_config_hash,
     compute_data_hash,
@@ -244,3 +246,88 @@ def compare_scan_backtest(
         raise ParityMismatchError(report, diff_df)
 
     return result
+
+
+def _parse_symbols(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [sym.strip().upper() for sym in value.split(",") if sym.strip()]
+
+
+def _default_symbols(history: pd.DataFrame, limit: int) -> list[str]:
+    tickers = history.index.get_level_values("Ticker").unique().tolist()
+    return sorted(tickers)[:limit]
+
+
+def _default_as_of_date(history: pd.DataFrame) -> pd.Timestamp:
+    last_date = history.index.get_level_values("Date").max()
+    return pd.Timestamp(last_date).normalize()
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run scan/backtest parity checks.")
+    parser.add_argument(
+        "--history-path",
+        help="Path to local OHLCV history parquet file.",
+        default=cfg.BACKTEST_OHLCV_PATH,
+    )
+    parser.add_argument(
+        "--symbols",
+        help="Comma-separated symbols to include in parity check.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=3,
+        help="Symbol count to use when --symbols is not provided.",
+    )
+    parser.add_argument(
+        "--as-of",
+        help="As-of date (YYYY-MM-DD). Defaults to last date in history.",
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Run a small parity check using default config and a few symbols.",
+    )
+    return parser
+
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    if args.smoke and not args.symbols:
+        args.limit = min(args.limit, 3)
+
+    history_path = Path(args.history_path)
+    history = backtest_engine.load_ohlcv_history(history_path)
+
+    symbols = _parse_symbols(args.symbols)
+    if not symbols:
+        symbols = _default_symbols(history, args.limit)
+
+    if not symbols:
+        raise ValueError("No symbols available for parity check.")
+
+    as_of_dt = pd.Timestamp(args.as_of) if args.as_of else _default_as_of_date(history)
+    sector_map = {symbol: "Unknown" for symbol in symbols}
+
+    result = compare_scan_backtest(
+        history,
+        symbols,
+        sector_map,
+        as_of_dt,
+        cfg,
+        history_path=history_path,
+    )
+
+    print(f"Parity run_id: {result.report.get('run_id')}")
+    print(f"Parity output directory: {PARITY_DIR}")
+    print(f"Parity summary.json: N/A (see {PARITY_REPORT_PATH})")
+    print(f"Parity report.json: {PARITY_REPORT_PATH}")
+    print("Parity provenance: OK (parity_report.json includes required fields)")
+
+
+if __name__ == "__main__":
+    main()

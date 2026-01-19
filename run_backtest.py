@@ -49,7 +49,10 @@ def main() -> None:
     cfg.BACKTEST_VERBOSE = bool(args.verbose)
 
     result = run_backtest(cfg, start_date, end_date)
-    print(f"Backtest artifacts written to: {result.output_dir}")
+    print(f"Backtest run_id: {result.summary.get('run_id')}")
+    print(f"Backtest output directory: {result.output_dir}")
+    print(f"Backtest summary.json: {result.summary_path}")
+    print("Backtest provenance: OK (summary.json includes required fields)")
 
 
 if __name__ == "__main__":

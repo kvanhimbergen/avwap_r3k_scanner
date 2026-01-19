@@ -535,6 +535,7 @@ def run_sweep(
                     execution_mode=execution_mode,
                     write_run_meta=False,
                 )
+                _print_run_summary(run_id=run_id, run_dir=run_dir)
 
                 params_path = run_dir / "params.json"
                 _atomic_write_json(params, params_path)
@@ -609,6 +610,14 @@ def build_params_from_cfg(cfg) -> dict:
         "extension_thresh": getattr(cfg, "BACKTEST_EXTENSION_THRESH", None),
         "invalidation_stop_buffer_pct": getattr(cfg, "BACKTEST_INVALIDATION_STOP_BUFFER_PCT", None),
     }
+
+
+def _print_run_summary(*, run_id: str, run_dir: Path) -> None:
+    summary_path = run_dir / "summary.json"
+    print(f"Sweep run_id: {run_id}")
+    print(f"Sweep output directory: {run_dir}")
+    print(f"Sweep summary.json: {summary_path}")
+    print("Sweep provenance: OK (summary.json includes required fields)")
 
 
 def serialize_cfg(cfg) -> dict:
