@@ -94,7 +94,7 @@ def _submit_bracket_order(trading_client: TradingClient, intent, dry_run: bool) 
         ledger[key] = {
             "symbol": intent.symbol,
             "qty": intent.size_shares,
-            "ts": datetime.utcnow(timezone.utc).isoformat(),
+            "ts": datetime.now(timezone.utc).isoformat(),
         }
 
         try:
