@@ -25,6 +25,7 @@ def main() -> None:
 
     print(f"\nDEBUG: Scan finished. Found {len(out)} total candidates. Wrote: {OUT_PATH}")
 
+    scan_date = datetime.now(pytz.timezone("America/New_York")).date()
     if not out.empty:
         out = out.sort_values(["TrendTier", "TrendScore"], ascending=[True, False]).head(
             scan_engine.ALGO_CANDIDATE_CAP
@@ -32,21 +33,32 @@ def main() -> None:
         scan_engine.write_candidates_csv(out, OUT_PATH)
         print(f"Wrote candidates to: {OUT_PATH}")
 
-        scan_date = datetime.now(pytz.timezone("America/New_York")).date()
         slack_alert(
             "INFO",
             "Scan complete",
-            f"Saved {len(out)} candidates to {OUT_PATH.name}",
+            (
+                f"date_ny={scan_date}\n"
+                f"candidates_csv={OUT_PATH}\n"
+                f"watchlist_path={watchlist_path}\n"
+                f"candidates_count={len(out)}\n"
+                f"watchlist_count={n}"
+            ),
             component="SCAN",
             throttle_key=f"scan_complete_{scan_date}",
             throttle_seconds=3600,
         )
     else:
-        scan_date = datetime.now(pytz.timezone("America/New_York")).date()
         slack_alert(
             "WARNING",
             "Scan complete (empty)",
-            f"No candidates met gates; wrote empty {OUT_PATH.name} to prevent stale execution.",
+            (
+                f"date_ny={scan_date}\n"
+                f"candidates_csv={OUT_PATH}\n"
+                f"watchlist_path={watchlist_path}\n"
+                "candidates_count=0\n"
+                f"watchlist_count={n}\n"
+                f"notes=No candidates met gates; wrote empty {OUT_PATH.name} to prevent stale execution."
+            ),
             component="SCAN",
             throttle_key=f"scan_empty_{scan_date}",
             throttle_seconds=3600,
