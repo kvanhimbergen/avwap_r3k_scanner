@@ -5,6 +5,13 @@
 - **No strategy changes are in scope.** This runbook only covers operating the existing execution pipeline safely.
 - **No systemd units are committed to git.** All systemd changes are deployment-only and should remain local.
 
+**Operational clarification (important):**
+- All systemd configuration changes must be made using **drop-in files** on the droplet only.
+- Use: `/etc/systemd/system/execution.service.d/*.conf`
+- Do **not** copy systemd unit files or drop-ins into this repository.
+- Before committing any changes, run `git status` and confirm **no systemd files appear**.
+
+
 ## 2) Safety Model Summary (plain English)
 - **Fail-closed:** If anything is missing or inconsistent (token mismatch, ledger missing, positions unknown, etc.), the system **falls back to DRY_RUN** automatically.
 - **Two-key confirmation:** LIVE requires **both** `LIVE_TRADING=1` **and** a matching `LIVE_CONFIRM_TOKEN` that **exactly matches** the file contents in the state directory.
@@ -21,9 +28,24 @@
 - [ ] **Execution V2 service is running** and **DRY_RUN is enforced** via a systemd drop-in or environment.
 
 **Safe inspection commands (examples):**
-- `systemctl status execution_v2.service`
-- `journalctl -u execution_v2.service -n 200 --no-pager`
+- `systemctl status execution.service`
+- `journalctl -u execution.service -n 200 --no-pager`
 - `date`
+
+## 3.5) Go / No-Go Gate Before Enabling LIVE (Hard Requirement)
+
+**Do NOT enable LIVE unless all of the following are true in the same session/day:**
+
+- [ ] Watchlist freshness gate is passing (no preflight failures).
+- [ ] Execution service is running and stable in DRY_RUN.
+- [ ] Slack heartbeat and daily summary are visible.
+- [ ] Logs show explicit gate output in DRY_RUN:
+  - `Gate mode=DRY_RUN status=FAIL reason=...`
+- [ ] Day-1 caps and (if used) allowlist are explicitly set and conservative.
+- [ ] You understand how to immediately trigger the kill switch.
+
+**LIVE enablement is a deliberate operator decision.**  
+If any item above is not satisfied, do **not** proceed.
 
 ## 4) Live Enablement Procedure (Step-by-step, exact commands)
 > **Important:** Do not remove DRY_RUN enforcement until the two-key confirmation is in place.
@@ -59,7 +81,7 @@ MAX_LIVE_NOTIONAL_PER_SYMBOL=250
 - Reload and restart the service:
 ```bash
 systemctl daemon-reload
-systemctl restart execution_v2.service
+systemctl restart execution.service
 ```
 
 ### 4.4 Live ledger requirement
@@ -67,7 +89,27 @@ The live ledger must exist at:
 ```
 ${STATE_DIR}/live_orders_today.json
 ```
-**Behavior:** If the ledger is missing or unreadable, LIVE is **blocked for that cycle**, and the system attempts to create the file for the next cycle. (This is fail-closed.)
+**Behavior:** If the ledger is missing or unreadable, LIVE is **blocked for that cycle** and the system remains in DRY_RUN. This is fail-closed.
+
+### 4.5 Enable LIVE for a Single Day (Recommended First Deployment)
+
+This procedure allows controlled exposure for one session/day.
+
+**Enable (pre-market):**
+- Set `LIVE_TRADING=1` and `LIVE_CONFIRM_TOKEN` in the systemd drop-in.
+- Ensure caps and allowlist are conservative.
+- Remove or override `DRY_RUN=1`.
+- Restart the service and confirm logs show:
+  - `Gate mode=LIVE status=PASS ...`
+
+**Disable (after market close):**
+- Re-enable `DRY_RUN=1` in the same systemd drop-in.
+- Optionally remove `LIVE_TRADING=1`.
+- Restart the service.
+- Confirm logs show:
+  - `Gate mode=DRY_RUN status=FAIL reason=DRY_RUN enabled`
+
+**Rule:** LIVE should never be left enabled overnight unintentionally.
 
 ## 5) Verification Checklist (prove LIVE is enabled)
 **Journalctl log lines to confirm:**
@@ -85,14 +127,14 @@ ${STATE_DIR}/live_orders_today.json
 ## 6) Normal Daily Ops Workflow (Solo Operator)
 ### Morning checklist (pre-market)
 - [ ] Confirm today’s scan artifacts exist and are fresh.
-- [ ] Verify `execution_v2` is running.
+- [ ] Verify `execution` is running.
 - [ ] Check Slack heartbeat and daily summary.
 - [ ] Review yesterday’s live ledger (if LIVE was enabled).
 
 ### During market hours
 - [ ] Watch `journalctl` for gate lines and any `ERROR` or `WARNING` messages.
 - [ ] If LIVE, confirm allowlist and caps are printed as expected.
-- [ ] Confirm no unexpected repeated submissions (idempotency is enforced, but monitor anyway).
+- [ ] Confirm no unexpected repeated submissions. Same-day duplicates are prevented per symbol in the DRY_RUN ledger (best-effort); duplicates across days may occur. Operator should monitor logs and validate the ledger.
 
 ### After close
 - [ ] Review the live ledger file for recorded orders.
@@ -109,7 +151,7 @@ ${STATE_DIR}/live_orders_today.json
 # In systemd drop-in or service env
 KILL_SWITCH=1
 systemctl daemon-reload
-systemctl restart execution_v2.service
+systemctl restart execution.service
 ```
 
 ### Immediate disable via state file kill switch
@@ -123,7 +165,7 @@ touch "${STATE_DIR}/KILL_SWITCH"
 # In systemd drop-in or service env
 DRY_RUN=1
 systemctl daemon-reload
-systemctl restart execution_v2.service
+systemctl restart execution.service
 ```
 
 ### Confirm shutdown state
@@ -169,10 +211,10 @@ systemctl restart execution_v2.service
 - Live ledger: `${STATE_DIR}/live_orders_today.json`
 
 ### Safe inspection commands
-- `systemctl status execution_v2.service`
-- `systemctl cat execution_v2.service`
-- `systemctl cat execution_v2.service.d/override.conf`
-- `journalctl -u execution_v2.service -n 200 --no-pager`
-- `journalctl -u execution_v2.service --since "today" --no-pager`
+- `systemctl status execution.service`
+- `systemctl cat execution.service`
+- `systemctl cat execution.service.d/override.conf`
+- `journalctl -u execution.service -n 200 --no-pager`
+- `journalctl -u execution.service --since "today" --no-pager`
 - `cat ${STATE_DIR}/live_confirm_token.txt`
 - `cat ${STATE_DIR}/live_orders_today.json`
