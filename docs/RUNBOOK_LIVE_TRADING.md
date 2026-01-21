@@ -17,6 +17,7 @@
 - **Two-key confirmation:** LIVE requires **both** `LIVE_TRADING=1` **and** a matching `LIVE_CONFIRM_TOKEN` that **exactly matches** the file contents in the state directory.
 - **Caps + allowlist:** Even when LIVE is enabled, orders are blocked if they exceed daily caps (orders/positions/notional) or are not on the allowlist (if configured).
 - **Kill switch:** Setting `KILL_SWITCH=1` or creating the `KILL_SWITCH` file **immediately disables LIVE** and forces DRY_RUN behavior.
+- **Phase C constraints (optional):** When `PHASE_C=1`, LIVE also requires a one-day NY date permit and a single-symbol allowlist (see §4.6).
 
 ## 3) Preconditions / Pre-LIVE Checklist
 **Must be true before enabling LIVE:**
@@ -111,6 +112,32 @@ This procedure allows controlled exposure for one session/day.
 
 **Rule:** LIVE should never be left enabled overnight unintentionally.
 
+### 4.6 Phase C: Controlled Live Trading (one-day permit + single-symbol allowlist)
+
+Phase C adds **extra, hard constraints** on top of the two-key gate. These checks apply **only** when `PHASE_C=1` and LIVE would otherwise be enabled.
+
+**Required env vars (in addition to existing LIVE settings):**
+```bash
+PHASE_C=1
+LIVE_ENABLE_DATE_NY=YYYY-MM-DD   # must equal today's NY trading date
+ALLOWLIST_SYMBOLS=SYMBOL         # must contain exactly one symbol
+```
+
+**Fail-closed behavior (explicit gate reasons):**
+- Missing or mismatched date → `phase_c_live_date_not_permitted`
+- Missing/empty/multi-symbol allowlist → `phase_c_allowlist_must_be_single_symbol`
+
+**PASS log example (Phase C):**
+- `Gate mode=LIVE status=PASS reason=live trading confirmed; phase_c=1 date_ny=YYYY-MM-DD allowlist=SYMBOL`
+
+**Minimal Phase C Day Checklist**
+- [ ] Pre-market: set `PHASE_C=1`, set `LIVE_ENABLE_DATE_NY` to **today’s NY date**, set `ALLOWLIST_SYMBOLS` to **exactly one** symbol.
+- [ ] Confirm two-key gate in place (`LIVE_TRADING=1` + matching token file).
+- [ ] Remove `DRY_RUN=1` only after all above are set.
+- [ ] Verify logs show Phase C PASS reason line.
+- [ ] After close: re-enable `DRY_RUN=1` (or remove `LIVE_TRADING=1`).
+- [ ] Reconcile live ledger and broker fills before next session.
+
 ## 5) Verification Checklist (prove LIVE is enabled)
 
 **Important timing note:**  
@@ -125,6 +152,7 @@ In that case, gate lines will **not** appear in logs until the market is open.
 
 **Journalctl log lines to confirm:**
 - `Gate mode=LIVE status=PASS reason=live trading confirmed`
+- **Phase C:** `Gate mode=LIVE status=PASS reason=live trading confirmed; phase_c=1 date_ny=YYYY-MM-DD allowlist=SYMBOL`
 - `Gate allowlist=ALL` **or** `Gate allowlist=SYM1,SYM2`
 - `Gate caps(orders/day=..., positions=..., gross_notional=..., per_symbol=...)`
 
@@ -192,6 +220,7 @@ systemctl restart execution.service
 - **Stale watchlist:** execution won’t start (watchlist gate enforces freshness).
 - **Alpaca clock errors:** market assumed closed; execution skips cycle.
 - **Live token mismatch:** system stays in DRY_RUN.
+- **Phase C not permitted:** missing/mismatched `LIVE_ENABLE_DATE_NY` or allowlist not exactly one symbol → DRY_RUN.
 - **Live ledger missing or unreadable:** LIVE is blocked for that cycle and the system remains in DRY_RUN (fail-closed).
 - **Slack failures:** trading continues; operator should treat as degraded observability.
 
@@ -210,6 +239,8 @@ systemctl restart execution.service
 - `KILL_SWITCH=1` → disables LIVE immediately.
 - `AVWAP_STATE_DIR` → overrides state dir (default: `/root/avwap_r3k_scanner/state`).
 - `ALLOWLIST_SYMBOLS` → comma-separated; empty allows all.
+- `PHASE_C=1` → enables Phase C constraints (one-day permit + single-symbol allowlist).
+- `LIVE_ENABLE_DATE_NY` → required when `PHASE_C=1`; must match today's NY date (YYYY-MM-DD).
 - `MAX_LIVE_ORDERS_PER_DAY` (default **5**)
 - `MAX_LIVE_POSITIONS` (default **5**)
 - `MAX_LIVE_GROSS_NOTIONAL` (default **5000.0**)
