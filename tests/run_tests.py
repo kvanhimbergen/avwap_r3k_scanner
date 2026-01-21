@@ -36,6 +36,7 @@ def main() -> int:
         root / "tests" / "test_backtest_sizing.py",
         root / "tests" / "test_ci_docs_trust.py",
         root / "tests" / "test_determinism.py",
+        root / "tests" / "test_execution_v2_live_gate.py",
         root / "tests" / "test_no_lookahead.py",
         root / "tests" / "test_parity_scan_backtest.py",
         root / "tests" / "test_provenance.py",
