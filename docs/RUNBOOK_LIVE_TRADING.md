@@ -25,7 +25,7 @@
 - [ ] **Slack alerts are healthy** (heartbeat and daily summary visible).
 - [ ] **Broker credentials configured** (APCA_API_KEY_ID / APCA_API_SECRET_KEY present on the host).
 - [ ] **System time/timezone are correct** (host clock aligned; logs show ET timestamps).
-- [ ] **Execution V2 service is running** and **DRY_RUN is enforced** via a systemd drop-in or environment.
+- [ ] **execution.service is running** and **DRY_RUN is enforced** via a systemd drop-in or environment.
 
 **Safe inspection commands (examples):**
 - `systemctl status execution.service`
@@ -112,6 +112,17 @@ This procedure allows controlled exposure for one session/day.
 **Rule:** LIVE should never be left enabled overnight unintentionally.
 
 ## 5) Verification Checklist (prove LIVE is enabled)
+
+**Important timing note:**  
+Gate status lines (`Gate mode=...`, allowlist, caps) are emitted **only when the execution loop reaches the market-hours evaluation path**.  
+If the market is closed (and `--ignore-market-hours` is not set), execution returns early after logging:
+
+```
+Market closed; skipping cycle.
+```
+
+In that case, gate lines will **not** appear in logs until the market is open.
+
 **Journalctl log lines to confirm:**
 - `Gate mode=LIVE status=PASS reason=live trading confirmed`
 - `Gate allowlist=ALL` **or** `Gate allowlist=SYM1,SYM2`
@@ -181,7 +192,7 @@ systemctl restart execution.service
 - **Stale watchlist:** execution won’t start (watchlist gate enforces freshness).
 - **Alpaca clock errors:** market assumed closed; execution skips cycle.
 - **Live token mismatch:** system stays in DRY_RUN.
-- **Live ledger missing:** LIVE blocked for that cycle; ledger file initialized for next cycle.
+- **Live ledger missing or unreadable:** LIVE is blocked for that cycle and the system remains in DRY_RUN (fail-closed).
 - **Slack failures:** trading continues; operator should treat as degraded observability.
 
 ## 9) Post-Incident Recovery Checklist
