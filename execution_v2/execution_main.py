@@ -17,7 +17,12 @@ from alpaca.trading.requests import (
 )
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
 
-from alerts.slack import slack_alert
+from alerts.slack import (
+    slack_alert,
+    send_verbose_alert,
+    maybe_send_heartbeat,
+    maybe_send_daily_summary,
+)
 from datetime import timezone
 from execution_v2 import buy_loop, sell_loop
 from execution_v2.market_data import from_env as market_data_from_env
@@ -153,7 +158,11 @@ def run_once(cfg) -> None:
     except Exception:
         pass
     
-    if (not _market_open(trading_client)) and (not getattr(cfg, 'ignore_market_hours', False)):
+    market_is_open = _market_open(trading_client)
+    maybe_send_heartbeat(dry_run=cfg.dry_run, market_open=market_is_open)
+    maybe_send_daily_summary(dry_run=cfg.dry_run, market_open=market_is_open)
+
+    if (not market_is_open) and (not getattr(cfg, 'ignore_market_hours', False)):
         _log("Market closed; skipping cycle.")
         return
 
@@ -183,7 +192,7 @@ def run_once(cfg) -> None:
             order_id = _submit_bracket_order(trading_client, intent, cfg.dry_run)
             _log(f"SUBMITTED {intent.symbol}: qty={intent.size_shares} order_id={order_id}")
             candidate_notes = store.get_candidate_notes(intent.symbol) or "scan:n/a"
-            slack_alert(
+            send_verbose_alert(
                 "TRADE",
                 f"SUBMITTED {intent.symbol}",
                 (
@@ -245,7 +254,7 @@ def run_once(cfg) -> None:
                 continue
             close_opts = ClosePositionRequest(qty=str(total_qty))
             trading_client.close_position(symbol, close_options=close_opts)
-            slack_alert(
+            send_verbose_alert(
                 "TRADE",
                 f"CLOSE {symbol}",
                 (
@@ -282,7 +291,7 @@ def run_once(cfg) -> None:
         order_id = getattr(response, "id", None)
         if order_id:
             store.update_external_order_id(key, order_id)
-        slack_alert(
+        send_verbose_alert(
             "TRADE",
             f"TRIM {symbol}",
             (
