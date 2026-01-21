@@ -25,6 +25,7 @@ from alerts.slack import (
 )
 from datetime import timezone
 from execution_v2 import buy_loop, sell_loop
+from execution_v2 import live_gate
 from execution_v2.market_data import from_env as market_data_from_env
 from execution_v2.orders import generate_idempotency_key
 from execution_v2.state_store import StateStore
@@ -166,6 +167,38 @@ def run_once(cfg) -> None:
         _log("Market closed; skipping cycle.")
         return
 
+    gate_result = live_gate.resolve_live_mode(cfg.dry_run)
+    allowlist = live_gate.parse_allowlist()
+    caps = live_gate.CapsConfig.from_env()
+    live_active = gate_result.live_enabled
+    live_reason = gate_result.reason
+    live_ledger = None
+    positions_count = None
+
+    if live_active:
+        live_ledger, ledger_reason = live_gate.load_live_ledger()
+        if live_ledger is None:
+            live_active = False
+            live_reason = f"ledger unavailable ({ledger_reason})"
+        else:
+            if live_ledger.was_reset:
+                _log("Live ledger reset for new NY day.")
+            try:
+                positions = trading_client.get_all_positions()
+                positions_count = len(positions)
+            except Exception as exc:
+                live_active = False
+                live_reason = f"positions unavailable ({type(exc).__name__})"
+
+    live_gate.notify_kill_switch(gate_result.kill_switch_active)
+    live_gate.notify_live_status(live_active)
+
+    mode = "LIVE" if live_active else "DRY_RUN"
+    status = "PASS" if live_active else "FAIL"
+    _log(f"Gate mode={mode} status={status} reason={live_reason}")
+    _log(f"Gate {live_gate.allowlist_summary(allowlist)}")
+    _log(f"Gate {caps.summary()}")
+
     account_equity = _get_account_equity(trading_client)
     created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
     if created:
@@ -178,18 +211,35 @@ def run_once(cfg) -> None:
         intents = []
 
     for intent in intents:
+        effective_dry_run = not live_active
+        if effective_dry_run and allowlist and intent.symbol.upper() not in allowlist:
+            _log(f"Gate DRY_RUN allowlist would block {intent.symbol}")
+
         if _has_open_order_or_position(trading_client, intent.symbol):
             _log(f"SKIP {intent.symbol}: open order/position exists")
             continue
 
         key = generate_idempotency_key(intent.symbol, "buy", intent.size_shares, intent.ref_price)
-        if not cfg.dry_run:
+        if not effective_dry_run:
             if not store.record_order_once(key, intent.symbol, "buy", intent.size_shares):
                 _log(f"SKIP {intent.symbol}: idempotency key already used")
                 continue
 
+        if live_active and live_ledger is not None:
+            allowed, cap_reason = live_gate.enforce_caps(
+                intent,
+                live_ledger,
+                allowlist,
+                caps,
+                open_positions=positions_count,
+            )
+            status = "PASS" if allowed else "FAIL"
+            _log(f"Gate {status} {intent.symbol}: {cap_reason}")
+            if not allowed:
+                continue
+
         try:
-            order_id = _submit_bracket_order(trading_client, intent, cfg.dry_run)
+            order_id = _submit_bracket_order(trading_client, intent, effective_dry_run)
             _log(f"SUBMITTED {intent.symbol}: qty={intent.size_shares} order_id={order_id}")
             candidate_notes = store.get_candidate_notes(intent.symbol) or "scan:n/a"
             send_verbose_alert(
@@ -205,8 +255,22 @@ def run_once(cfg) -> None:
                 throttle_key=f"submit_{intent.symbol}",
                 throttle_seconds=60,
             )
-            if order_id and not cfg.dry_run:
+            if order_id and not effective_dry_run:
                 store.update_external_order_id(key, order_id)
+                if live_active and live_ledger is not None:
+                    try:
+                        from datetime import datetime
+
+                        notional = float(intent.size_shares) * float(intent.ref_price)
+                        live_ledger.add_entry(
+                            order_id or key,
+                            intent.symbol,
+                            notional,
+                            datetime.now(tz=timezone.utc).isoformat(),
+                        )
+                        live_ledger.save()
+                    except Exception as exc:
+                        _log(f"WARNING: failed to update live ledger: {exc}")
         except Exception as exc:
             _log(f"ERROR submitting {intent.symbol}: {exc}")
             slack_alert(
@@ -249,7 +313,7 @@ def run_once(cfg) -> None:
             continue
 
         if pct >= 1.0:
-            if cfg.dry_run:
+            if not live_active:
                 _log(f"DRY_RUN: would close {symbol} (reason={reason})")
                 continue
             close_opts = ClosePositionRequest(qty=str(total_qty))
@@ -273,11 +337,11 @@ def run_once(cfg) -> None:
 
         ref_price = current_price or float(position.avg_entry_price)
         key = generate_idempotency_key(symbol, "sell", qty, ref_price)
-        if not cfg.dry_run:
+        if live_active:
             if not store.record_order_once(key, symbol, "sell", qty):
                 continue
 
-        if cfg.dry_run:
+        if not live_active:
             _log(f"DRY_RUN: would trim {symbol} qty={qty} reason={reason}")
             continue
 
