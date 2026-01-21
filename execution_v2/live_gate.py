@@ -85,7 +85,17 @@ class LiveModeResult:
     kill_switch_active: bool
 
 
-def resolve_live_mode(dry_run: bool, state_dir: Optional[str] = None) -> LiveModeResult:
+def _phase_c_enabled() -> bool:
+    return _truthy(os.getenv("PHASE_C", "0"))
+
+
+def resolve_live_mode(
+    dry_run: bool,
+    state_dir: Optional[str] = None,
+    *,
+    today_ny: Optional[str] = None,
+) -> LiveModeResult:
+    resolved_today_ny = today_ny or _today_ny_str()
     kill_switch_active, kill_reason = is_kill_switch_active(state_dir)
     if dry_run:
         return LiveModeResult(
@@ -112,6 +122,27 @@ def resolve_live_mode(dry_run: bool, state_dir: Optional[str] = None) -> LiveMod
             mode="DRY_RUN",
             kill_switch_active=kill_switch_active,
         )
+    if _phase_c_enabled():
+        live_enable_date_ny = os.getenv("LIVE_ENABLE_DATE_NY", "").strip()
+        if not live_enable_date_ny or live_enable_date_ny != resolved_today_ny:
+            return LiveModeResult(
+                live_enabled=False,
+                reason="phase_c_live_date_not_permitted",
+                status="FAIL",
+                mode="DRY_RUN",
+                kill_switch_active=kill_switch_active,
+            )
+        allowlist = parse_allowlist()
+        if not allowlist or len(allowlist) != 1:
+            return LiveModeResult(
+                live_enabled=False,
+                reason="phase_c_allowlist_must_be_single_symbol",
+                status="FAIL",
+                mode="DRY_RUN",
+                kill_switch_active=kill_switch_active,
+            )
+        only_symbol = next(iter(allowlist))
+        reason = f"{reason}; phase_c=1 date_ny={resolved_today_ny} allowlist={only_symbol}"
     return LiveModeResult(
         live_enabled=True,
         reason=reason,

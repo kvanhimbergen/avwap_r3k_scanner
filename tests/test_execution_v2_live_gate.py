@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 from execution_v2 import live_gate
 from execution_v2.config_types import EntryIntent
 
@@ -67,6 +69,96 @@ def test_dry_run_mode_does_not_require_confirmation(monkeypatch, tmp_path) -> No
     assert result.live_enabled is False
     assert result.mode == "DRY_RUN"
     assert "DRY_RUN" in result.reason
+
+
+def _enable_live(monkeypatch, tmp_path, *, token: str = "token-123") -> None:
+    token_path = tmp_path / "live_confirm_token.txt"
+    token_path.write_text(token)
+    monkeypatch.setenv("AVWAP_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("LIVE_TRADING", "1")
+    monkeypatch.setenv("LIVE_CONFIRM_TOKEN", token)
+
+
+def test_phase_c_requires_live_enable_date(monkeypatch, tmp_path) -> None:
+    _enable_live(monkeypatch, tmp_path)
+    monkeypatch.setenv("PHASE_C", "1")
+    monkeypatch.setenv("ALLOWLIST_SYMBOLS", "AAPL")
+    result = live_gate.resolve_live_mode(
+        dry_run=False,
+        state_dir=str(tmp_path),
+        today_ny="2024-07-01",
+    )
+    assert result.live_enabled is False
+    assert result.mode == "DRY_RUN"
+    assert result.reason == "phase_c_live_date_not_permitted"
+
+
+def test_phase_c_rejects_mismatched_date(monkeypatch, tmp_path) -> None:
+    _enable_live(monkeypatch, tmp_path)
+    monkeypatch.setenv("PHASE_C", "1")
+    monkeypatch.setenv("ALLOWLIST_SYMBOLS", "AAPL")
+    monkeypatch.setenv("LIVE_ENABLE_DATE_NY", "2024-07-02")
+    result = live_gate.resolve_live_mode(
+        dry_run=False,
+        state_dir=str(tmp_path),
+        today_ny="2024-07-01",
+    )
+    assert result.live_enabled is False
+    assert result.reason == "phase_c_live_date_not_permitted"
+
+
+@pytest.mark.parametrize(
+    "allowlist_env",
+    [
+        None,
+        "",
+        "AAPL,MSFT",
+    ],
+)
+def test_phase_c_requires_single_symbol_allowlist(monkeypatch, tmp_path, allowlist_env) -> None:
+    _enable_live(monkeypatch, tmp_path)
+    monkeypatch.setenv("PHASE_C", "1")
+    monkeypatch.setenv("LIVE_ENABLE_DATE_NY", "2024-07-01")
+    if allowlist_env is None:
+        monkeypatch.delenv("ALLOWLIST_SYMBOLS", raising=False)
+    else:
+        monkeypatch.setenv("ALLOWLIST_SYMBOLS", allowlist_env)
+    result = live_gate.resolve_live_mode(
+        dry_run=False,
+        state_dir=str(tmp_path),
+        today_ny="2024-07-01",
+    )
+    assert result.live_enabled is False
+    assert result.reason == "phase_c_allowlist_must_be_single_symbol"
+
+
+def test_phase_c_live_passes_with_single_symbol(monkeypatch, tmp_path) -> None:
+    _enable_live(monkeypatch, tmp_path)
+    monkeypatch.setenv("PHASE_C", "1")
+    monkeypatch.setenv("LIVE_ENABLE_DATE_NY", "2024-07-01")
+    monkeypatch.setenv("ALLOWLIST_SYMBOLS", " aapl ")
+    result = live_gate.resolve_live_mode(
+        dry_run=False,
+        state_dir=str(tmp_path),
+        today_ny="2024-07-01",
+    )
+    assert result.live_enabled is True
+    assert result.mode == "LIVE"
+    assert "phase_c=1" in result.reason
+
+
+def test_phase_c_disabled_keeps_live_behavior(monkeypatch, tmp_path) -> None:
+    _enable_live(monkeypatch, tmp_path)
+    monkeypatch.delenv("PHASE_C", raising=False)
+    monkeypatch.delenv("LIVE_ENABLE_DATE_NY", raising=False)
+    monkeypatch.delenv("ALLOWLIST_SYMBOLS", raising=False)
+    result = live_gate.resolve_live_mode(
+        dry_run=False,
+        state_dir=str(tmp_path),
+        today_ny="2024-07-01",
+    )
+    assert result.live_enabled is True
+    assert result.mode == "LIVE"
 
 
 def test_allowlist_blocks_symbol_in_live(monkeypatch, tmp_path) -> None:
