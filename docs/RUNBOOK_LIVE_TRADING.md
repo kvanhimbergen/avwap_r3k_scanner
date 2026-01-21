@@ -1,0 +1,178 @@
+# Live Trading Runbook (Solo Operator)
+
+## 1) Purpose & Scope
+- **Default mode is DRY_RUN.** Live orders are **OFF** unless explicitly enabled by the two-key gate. This is a safety-first runbook for enabling LIVE intentionally.
+- **No strategy changes are in scope.** This runbook only covers operating the existing execution pipeline safely.
+- **No systemd units are committed to git.** All systemd changes are deployment-only and should remain local.
+
+## 2) Safety Model Summary (plain English)
+- **Fail-closed:** If anything is missing or inconsistent (token mismatch, ledger missing, positions unknown, etc.), the system **falls back to DRY_RUN** automatically.
+- **Two-key confirmation:** LIVE requires **both** `LIVE_TRADING=1` **and** a matching `LIVE_CONFIRM_TOKEN` that **exactly matches** the file contents in the state directory.
+- **Caps + allowlist:** Even when LIVE is enabled, orders are blocked if they exceed daily caps (orders/positions/notional) or are not on the allowlist (if configured).
+- **Kill switch:** Setting `KILL_SWITCH=1` or creating the `KILL_SWITCH` file **immediately disables LIVE** and forces DRY_RUN behavior.
+
+## 3) Preconditions / Pre-LIVE Checklist
+**Must be true before enabling LIVE:**
+- [ ] **DRY_RUN has run cleanly for several days** (no errors, no unexpected skips).
+- [ ] **Scan artifacts are fresh** (daily candidates & watchlist updated today).
+- [ ] **Slack alerts are healthy** (heartbeat and daily summary visible).
+- [ ] **Broker credentials configured** (APCA_API_KEY_ID / APCA_API_SECRET_KEY present on the host).
+- [ ] **System time/timezone are correct** (host clock aligned; logs show ET timestamps).
+- [ ] **Execution V2 service is running** and **DRY_RUN is enforced** via a systemd drop-in or environment.
+
+**Safe inspection commands (examples):**
+- `systemctl status execution_v2.service`
+- `journalctl -u execution_v2.service -n 200 --no-pager`
+- `date`
+
+## 4) Live Enablement Procedure (Step-by-step, exact commands)
+> **Important:** Do not remove DRY_RUN enforcement until the two-key confirmation is in place.
+
+### 4.1 Generate a confirm token file (safe)
+```bash
+STATE_DIR="${AVWAP_STATE_DIR:-/root/avwap_r3k_scanner/state}"
+mkdir -p "${STATE_DIR}"
+TOKEN="$(openssl rand -hex 16)"
+printf "%s" "${TOKEN}" > "${STATE_DIR}/live_confirm_token.txt"
+chmod 600 "${STATE_DIR}/live_confirm_token.txt"
+```
+
+### 4.2 Configure environment variables (operator action guidance)
+Set **both** of the following in the systemd drop-in or service environment (do **not** commit changes to git):
+```bash
+LIVE_TRADING=1
+LIVE_CONFIRM_TOKEN=<paste token from live_confirm_token.txt>
+```
+
+Optional safety-first settings for day 1 (recommended):
+```bash
+ALLOWLIST_SYMBOLS=SYM1,SYM2
+MAX_LIVE_ORDERS_PER_DAY=1
+MAX_LIVE_POSITIONS=1
+MAX_LIVE_GROSS_NOTIONAL=500
+MAX_LIVE_NOTIONAL_PER_SYMBOL=250
+```
+
+### 4.3 Ensure DRY_RUN is removed only after two-key is set
+- Confirm the drop-in (or environment source) includes `LIVE_TRADING=1` and `LIVE_CONFIRM_TOKEN`.
+- **Then** remove/override `DRY_RUN=1` in the same place.
+- Reload and restart the service:
+```bash
+systemctl daemon-reload
+systemctl restart execution_v2.service
+```
+
+### 4.4 Live ledger requirement
+The live ledger must exist at:
+```
+${STATE_DIR}/live_orders_today.json
+```
+**Behavior:** If the ledger is missing or unreadable, LIVE is **blocked for that cycle**, and the system attempts to create the file for the next cycle. (This is fail-closed.)
+
+## 5) Verification Checklist (prove LIVE is enabled)
+**Journalctl log lines to confirm:**
+- `Gate mode=LIVE status=PASS reason=live trading confirmed`
+- `Gate allowlist=ALL` **or** `Gate allowlist=SYM1,SYM2`
+- `Gate caps(orders/day=..., positions=..., gross_notional=..., per_symbol=...)`
+
+**Slack expectations:**
+- One-time Slack alert: **“Live trading enabled”** (throttled).
+
+**Unambiguous confirmation of LIVE vs DRY_RUN:**
+- LIVE: `Gate mode=LIVE status=PASS ...`
+- DRY_RUN: `Gate mode=DRY_RUN status=FAIL reason=...`
+
+## 6) Normal Daily Ops Workflow (Solo Operator)
+### Morning checklist (pre-market)
+- [ ] Confirm today’s scan artifacts exist and are fresh.
+- [ ] Verify `execution_v2` is running.
+- [ ] Check Slack heartbeat and daily summary.
+- [ ] Review yesterday’s live ledger (if LIVE was enabled).
+
+### During market hours
+- [ ] Watch `journalctl` for gate lines and any `ERROR` or `WARNING` messages.
+- [ ] If LIVE, confirm allowlist and caps are printed as expected.
+- [ ] Confirm no unexpected repeated submissions (idempotency is enforced, but monitor anyway).
+
+### After close
+- [ ] Review the live ledger file for recorded orders.
+- [ ] Confirm daily summary Slack message is received.
+- [ ] If any anomalies, proceed to Emergency Procedures and record findings.
+
+### How to interpret daily summaries / ledgers
+- **Live ledger** records each LIVE order with timestamp, symbol, and notional.
+- **DRY_RUN** orders are not placed live but still log `SUBMITTED` with `order_id=dry-run`.
+
+## 7) Emergency Procedures (No thinking required)
+### Immediate disable via env kill switch
+```bash
+# In systemd drop-in or service env
+KILL_SWITCH=1
+systemctl daemon-reload
+systemctl restart execution_v2.service
+```
+
+### Immediate disable via state file kill switch
+```bash
+STATE_DIR="${AVWAP_STATE_DIR:-/root/avwap_r3k_scanner/state}"
+touch "${STATE_DIR}/KILL_SWITCH"
+```
+
+### Fallback: force DRY_RUN
+```bash
+# In systemd drop-in or service env
+DRY_RUN=1
+systemctl daemon-reload
+systemctl restart execution_v2.service
+```
+
+### Confirm shutdown state
+- Logs should show: `Gate mode=DRY_RUN status=FAIL reason=kill switch active (...)` or `reason=DRY_RUN enabled`.
+- Slack should show **“Kill switch active”** once (throttled).
+
+### Broker-side emergency steps (high-level)
+- Cancel open orders immediately.
+- Close positions if needed.
+- Disable API keys if necessary.
+
+## 8) Failure Modes & Expected System Behavior
+- **Stale watchlist:** execution won’t start (watchlist gate enforces freshness).
+- **Alpaca clock errors:** market assumed closed; execution skips cycle.
+- **Live token mismatch:** system stays in DRY_RUN.
+- **Live ledger missing:** LIVE blocked for that cycle; ledger file initialized for next cycle.
+- **Slack failures:** trading continues; operator should treat as degraded observability.
+
+## 9) Post-Incident Recovery Checklist
+- [ ] Clear kill switch (env and/or file).
+- [ ] Regenerate confirm token if necessary; update `LIVE_CONFIRM_TOKEN`.
+- [ ] Validate caps and allowlist are conservative.
+- [ ] Restart execution service safely.
+- [ ] Confirm no duplicate orders and ledger integrity.
+
+## 10) Appendix
+### Env vars (defaults and behavior)
+- `DRY_RUN=1` → forces DRY_RUN regardless of other settings.
+- `LIVE_TRADING=1` → **required** for LIVE.
+- `LIVE_CONFIRM_TOKEN` → **required** and must match file.
+- `KILL_SWITCH=1` → disables LIVE immediately.
+- `AVWAP_STATE_DIR` → overrides state dir (default: `/root/avwap_r3k_scanner/state`).
+- `ALLOWLIST_SYMBOLS` → comma-separated; empty allows all.
+- `MAX_LIVE_ORDERS_PER_DAY` (default **5**)
+- `MAX_LIVE_POSITIONS` (default **5**)
+- `MAX_LIVE_GROSS_NOTIONAL` (default **5000.0**)
+- `MAX_LIVE_NOTIONAL_PER_SYMBOL` (default **1000.0**)
+
+### File paths (Phase 6)
+- State dir: `/root/avwap_r3k_scanner/state` (override via `AVWAP_STATE_DIR`)
+- Kill switch file: `${STATE_DIR}/KILL_SWITCH`
+- Confirm token file: `${STATE_DIR}/live_confirm_token.txt`
+- Live ledger: `${STATE_DIR}/live_orders_today.json`
+
+### Safe inspection commands
+- `systemctl status execution_v2.service`
+- `systemctl cat execution_v2.service`
+- `systemctl cat execution_v2.service.d/override.conf`
+- `journalctl -u execution_v2.service -n 200 --no-pager`
+- `journalctl -u execution_v2.service --since "today" --no-pager`
+- `cat ${STATE_DIR}/live_confirm_token.txt`
+- `cat ${STATE_DIR}/live_orders_today.json`
