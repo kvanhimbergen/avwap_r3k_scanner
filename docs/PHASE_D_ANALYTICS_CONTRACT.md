@@ -1,4 +1,4 @@
-# Phase D0 Analytics Contract
+# Phase D Analytics Contract
 
 ## Scope (Read-only)
 
@@ -22,6 +22,55 @@ The analytics layer is **read-only**. It does not submit orders, cancel orders, 
 | `source_path` | `str` | Ledger file path. |
 | `raw_json` | `str \| None` | Compact JSON entry (if serializable). |
 
+## Trade Reconstruction (Phase D1)
+
+Phase D1 reconstructs executed trades from canonical fills using deterministic matching rules. It produces two additional schemas: `Lot` (open positions) and `Trade` (matched open/close segments).
+
+### Lot Schema
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `lot_id` | `str` | Deterministic SHA256 hash over stable fields. |
+| `symbol` | `str` | Uppercased symbol. |
+| `side` | `str` | `long` or `short` (short lots are currently unsupported). |
+| `open_fill_id` | `str` | Opening fill id. |
+| `open_ts_utc` | `str` | Opening timestamp (UTC). |
+| `open_date_ny` | `str` | Opening date (NY). |
+| `open_qty` | `float` | Original opening quantity. |
+| `open_price` | `float \| None` | Opening fill price. |
+| `remaining_qty` | `float` | Remaining quantity after closes. |
+| `venue` | `str` | Venue of the opening fill. |
+| `source_paths` | `list[str]` | Unique, sorted ledger paths contributing to the lot. |
+
+### Trade Schema
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `trade_id` | `str` | Deterministic SHA256 hash over stable fields. |
+| `symbol` | `str` | Uppercased symbol. |
+| `direction` | `str` | `long` or `short` (short trades are currently unsupported). |
+| `open_fill_id` | `str` | Opening fill id. |
+| `close_fill_id` | `str` | Closing fill id. |
+| `open_ts_utc` | `str` | Opening timestamp (UTC). |
+| `close_ts_utc` | `str` | Closing timestamp (UTC). |
+| `open_date_ny` | `str` | Opening date (NY). |
+| `close_date_ny` | `str` | Closing date (NY). |
+| `qty` | `float` | Matched quantity for the trade segment. |
+| `open_price` | `float \| None` | Opening price, if available. |
+| `close_price` | `float \| None` | Closing price, if available. |
+| `fees` | `float` | Pro-rated sum of fees from contributing fills. |
+| `venue` | `str` | Venue of the opening fill. |
+| `notes` | `str \| None` | Notes such as `missing_price_open` / `missing_price_close`. |
+
+### Reconstruction Result Schema
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `trades` | `list[Trade]` | Matched trade segments in deterministic order. |
+| `open_lots` | `list[Lot]` | Remaining open lots in deterministic order. |
+| `warnings` | `list[str]` | Deterministic warnings for unsupported scenarios. |
+| `source_metadata` | `dict[str, str]` | Metadata carried forward from ingestion. |
+
 ## Deterministic Ordering
 
 Canonical fills are sorted by:
@@ -34,6 +83,22 @@ Canonical fills are sorted by:
 6. `price` (None sorts last)
 7. `fill_id`
 
+Trades are emitted in deterministic order by close timestamp, symbol, open timestamp, open fill id, close fill id, quantity, and trade id. Lots are emitted in deterministic order by open timestamp, symbol, open fill id, remaining quantity, and lot id.
+
+## Matching Policy (FIFO)
+
+- Fills are sorted deterministically and processed in order.
+- `buy` fills open/increase long lots.
+- `sell` fills close/decrease open long lots using FIFO matching.
+- Partial closes split into multiple trade segments when a sell spans multiple open lots.
+- Fees are apportioned pro-rata by matched quantity from each contributing fill.
+
+## Limitations
+
+- Short sales are not supported in Phase D1. Sells without open lots emit warnings and do not create trades.
+- Corporate actions, broker reconciliation, and cross-venue netting are out of scope.
+- Missing prices are retained as `None` and noted on trades for downstream handling.
+
 ## Hashing Recipe
 
 `fill_id` is a SHA256 hash of the following string (fields are joined with `|`):
@@ -43,6 +108,18 @@ venue|order_id|symbol|side|qty|price|ts_utc|source_path|raw_json(optional)
 ```
 
 `raw_json` is appended only when present (compact JSON with sorted keys). `qty` and `price` are serialized with deterministic float formatting.
+
+`lot_id` is a SHA256 hash of:
+
+```
+symbol|side|open_fill_id|open_ts_utc|open_qty|open_price|venue|joined_source_paths
+```
+
+`trade_id` is a SHA256 hash of:
+
+```
+symbol|direction|open_fill_id|close_fill_id|open_ts_utc|close_ts_utc|qty|open_price|close_price|venue
+```
 
 ## Supported Ledger Formats
 
