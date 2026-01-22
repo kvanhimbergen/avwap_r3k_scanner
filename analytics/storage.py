@@ -25,6 +25,8 @@ def serialize_reconstruction(result: ReconstructionResult) -> dict[str, Any]:
                 "fees": trade.fees,
                 "venue": trade.venue,
                 "notes": trade.notes,
+                "strategy_id": trade.strategy_id,
+                "sleeve_id": trade.sleeve_id,
             }
             for trade in result.trades
         ],
@@ -41,6 +43,8 @@ def serialize_reconstruction(result: ReconstructionResult) -> dict[str, Any]:
                 "remaining_qty": lot.remaining_qty,
                 "venue": lot.venue,
                 "source_paths": list(lot.source_paths),
+                "strategy_id": lot.strategy_id,
+                "sleeve_id": lot.sleeve_id,
             }
             for lot in result.open_lots
         ],

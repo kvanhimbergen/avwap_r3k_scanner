@@ -19,6 +19,7 @@ Equivalent commands:
 pytest -q tests/test_execution_v2_live_gate.py
 pytest -q tests/test_analytics_ledgers.py
 pytest -q tests/test_analytics_reconstruction.py tests/test_analytics_storage.py
+pytest -q tests/test_analytics_metrics.py tests/test_analytics_metrics_storage.py
 pytest -q -m "not requires_pandas and not requires_numpy"
 ```
 

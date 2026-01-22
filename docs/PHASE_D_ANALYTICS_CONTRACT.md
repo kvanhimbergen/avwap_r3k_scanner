@@ -71,6 +71,47 @@ Phase D1 reconstructs executed trades from canonical fills using deterministic m
 | `warnings` | `list[str]` | Deterministic warnings for unsupported scenarios. |
 | `source_metadata` | `dict[str, str]` | Metadata carried forward from ingestion. |
 
+## D2-Skeleton Aggregates
+
+Phase D2-Skeleton adds deterministic, read-only aggregates for validation and pipeline health. These aggregates are keyed by `date_ny` (America/New_York) and never include performance evaluation metrics or attribution.
+
+### DailyAggregate Schema
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `date_ny` | `str` | `YYYY-MM-DD` close date in America/New_York. |
+| `trade_count` | `int` | Number of trade segments closed on the date. |
+| `closed_qty` | `float` | Sum of trade quantities. |
+| `gross_notional_closed` | `float` | Sum of `abs(qty) * close_price` (missing prices contribute `0.0`). |
+| `realized_pnl` | `float \| None` | Sum of per-trade realized PnL when all trades have prices; otherwise `None`. |
+| `missing_price_trade_count` | `int` | Count of trades missing open or close prices. |
+| `fees_total` | `float` | Sum of trade fees (including pro-rata allocations). |
+| `symbols_traded` | `list[str]` | Unique, sorted symbols closed on the date. |
+| `warnings` | `list[str]` | Stable warnings (`missing_price_in_day`, `contains_short_trades`). |
+
+### CumulativeAggregate Schema
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `through_date_ny` | `str` | Inclusive end date (America/New_York). |
+| `trade_count` | `int` | Cumulative trade segments closed. |
+| `closed_qty` | `float` | Cumulative closed quantity. |
+| `gross_notional_closed` | `float` | Cumulative gross notional closed. |
+| `realized_pnl` | `float \| None` | Cumulative realized PnL when all prior days are known; otherwise `None`. |
+| `missing_price_trade_count` | `int` | Cumulative missing-price trade count. |
+| `fees_total` | `float` | Cumulative fees. |
+| `symbols_traded` | `list[str]` | Unique, sorted symbols across all dates. |
+
+### Explicit Non-goals
+
+- No win rate.
+- No expectancy.
+- No Sharpe/Sortino.
+- No drawdown curves.
+- No regime or attribution segmentation.
+
+These aggregates are for pipeline validation, not strategy evaluation.
+
 ## Deterministic Ordering
 
 Canonical fills are sorted by:

@@ -171,6 +171,8 @@ def _build_fills(
                 date_ny=date_ny_value,
                 source_path=source_path,
                 raw_json=raw_json,
+                strategy_id="default",
+                sleeve_id="default",
             )
         )
     return sort_fills(fills)

@@ -19,6 +19,8 @@ class Fill:
     date_ny: str
     source_path: str
     raw_json: Optional[str]
+    strategy_id: str = "default"
+    sleeve_id: str = "default"
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,8 @@ class Lot:
     remaining_qty: float
     venue: str
     source_paths: list[str]
+    strategy_id: str = "default"
+    sleeve_id: str = "default"
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,8 @@ class Trade:
     fees: float
     venue: str
     notes: Optional[str]
+    strategy_id: str = "default"
+    sleeve_id: str = "default"
 
 
 @dataclass(frozen=True)
@@ -68,3 +74,28 @@ class ReconstructionResult:
     open_lots: list[Lot]
     warnings: list[str]
     source_metadata: dict[str, str]
+
+
+@dataclass(frozen=True)
+class DailyAggregate:
+    date_ny: str
+    trade_count: int
+    closed_qty: float
+    gross_notional_closed: float
+    realized_pnl: Optional[float]
+    missing_price_trade_count: int
+    fees_total: float
+    symbols_traded: list[str]
+    warnings: list[str]
+
+
+@dataclass(frozen=True)
+class CumulativeAggregate:
+    through_date_ny: str
+    trade_count: int
+    closed_qty: float
+    gross_notional_closed: float
+    realized_pnl: Optional[float]
+    missing_price_trade_count: int
+    fees_total: float
+    symbols_traded: list[str]

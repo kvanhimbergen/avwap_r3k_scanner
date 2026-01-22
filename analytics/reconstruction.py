@@ -119,7 +119,7 @@ def reconstruct_trades(fills: list[Fill], *, policy: str = "FIFO") -> Reconstruc
     sorted_fills = sort_fills(fills)
     warnings: list[str] = []
     trades: list[Trade] = []
-    open_lots_by_symbol: dict[str, list[_LotState]] = {}
+    open_lots_by_key: dict[tuple[str, str, str], list[_LotState]] = {}
 
     for fill in sorted_fills:
         side = fill.side.lower()
@@ -140,6 +140,8 @@ def reconstruct_trades(fills: list[Fill], *, policy: str = "FIFO") -> Reconstruc
                 remaining_qty=fill.qty,
                 venue=fill.venue,
                 source_paths=source_paths,
+                strategy_id=fill.strategy_id,
+                sleeve_id=fill.sleeve_id,
             )
             lot_id = _build_lot_id(lot)
             open_lot = _LotState(
@@ -148,14 +150,16 @@ def reconstruct_trades(fills: list[Fill], *, policy: str = "FIFO") -> Reconstruc
                 lot_id=lot_id,
                 source_paths=source_paths,
             )
-            open_lots_by_symbol.setdefault(fill.symbol, []).append(open_lot)
+            key = (fill.strategy_id, fill.sleeve_id, fill.symbol)
+            open_lots_by_key.setdefault(key, []).append(open_lot)
             continue
 
         if side == "sell":
             if fill.qty <= 0:
                 warnings.append(f"sell qty <= 0 for fill {fill.fill_id}; skipped")
                 continue
-            lots = open_lots_by_symbol.get(fill.symbol, [])
+            key = (fill.strategy_id, fill.sleeve_id, fill.symbol)
+            lots = open_lots_by_key.get(key, [])
             if not lots:
                 warnings.append(f"sell with no open lots for {fill.symbol}: {fill.fill_id}")
                 continue
@@ -184,6 +188,8 @@ def reconstruct_trades(fills: list[Fill], *, policy: str = "FIFO") -> Reconstruc
                     fees=fees,
                     venue=open_fill.venue,
                     notes=notes,
+                    strategy_id=fill.strategy_id,
+                    sleeve_id=fill.sleeve_id,
                 )
                 trade_id = _build_trade_id(trade)
                 trades.append(
@@ -203,6 +209,8 @@ def reconstruct_trades(fills: list[Fill], *, policy: str = "FIFO") -> Reconstruc
                         fees=trade.fees,
                         venue=trade.venue,
                         notes=trade.notes,
+                        strategy_id=trade.strategy_id,
+                        sleeve_id=trade.sleeve_id,
                     )
                 )
                 lot_state.remaining_qty -= match_qty
@@ -218,7 +226,7 @@ def reconstruct_trades(fills: list[Fill], *, policy: str = "FIFO") -> Reconstruc
         warnings.append(f"unsupported side '{fill.side}' for fill {fill.fill_id}")
 
     open_lots: list[Lot] = []
-    for lots in open_lots_by_symbol.values():
+    for lots in open_lots_by_key.values():
         for lot_state in lots:
             open_fill = lot_state.open_fill
             open_lots.append(
@@ -234,6 +242,8 @@ def reconstruct_trades(fills: list[Fill], *, policy: str = "FIFO") -> Reconstruc
                     remaining_qty=lot_state.remaining_qty,
                     venue=open_fill.venue,
                     source_paths=lot_state.source_paths,
+                    strategy_id=open_fill.strategy_id,
+                    sleeve_id=open_fill.sleeve_id,
                 )
             )
 
