@@ -51,9 +51,15 @@ def _get_trading_client() -> TradingClient:
 def _market_open(trading_client: TradingClient) -> bool:
     try:
         clock = trading_client.get_clock()
+        _log(
+            f"Alpaca clock: is_open={clock.is_open}"
+            f"ts={clock.timestamp} next_open={clock.next_open} next_close={clock.next_close}"
+        )
         return bool(clock.is_open)
     except Exception as exc:
-        _log(f"WARNING: failed to fetch Alpaca clock ({exc}); assuming market closed")
+        _log(
+            f"WARNING: Alpaca clock unavailable ({type(exc).__name__}: {exc}); failing closed"
+        )
         return False
 
 
