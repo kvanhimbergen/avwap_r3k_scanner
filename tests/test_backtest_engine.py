@@ -1,8 +1,11 @@
 import hashlib
 from pathlib import Path
 
-import pandas as pd
 import pytest
+
+pd = pytest.importorskip("pandas")
+
+pytestmark = pytest.mark.requires_pandas
 
 from config import cfg
 import backtest_engine
