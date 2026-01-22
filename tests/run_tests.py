@@ -30,6 +30,8 @@ def main() -> int:
     env["PYTHONPATH"] = str(root)
 
     tests = [
+        root / "tests" / "test_analytics_determinism.py",
+        root / "tests" / "test_analytics_ledgers.py",
         root / "tests" / "test_backtest_engine.py",
         root / "tests" / "test_backtest_guardrails.py",
         root / "tests" / "test_backtest_observability.py",
