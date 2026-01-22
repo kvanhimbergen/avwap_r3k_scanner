@@ -1,11 +1,12 @@
 import sys
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 import pytest
 
-pytest.importorskip("pandas")
+np = pytest.importorskip("numpy")
+pd = pytest.importorskip("pandas")
+
+pytestmark = [pytest.mark.requires_numpy, pytest.mark.requires_pandas]
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
