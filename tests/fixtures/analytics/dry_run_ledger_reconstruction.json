@@ -1,0 +1,67 @@
+{
+  "entries": [
+    {
+      "symbol": "AAPL",
+      "ts": "2026-01-19T15:30:00+00:00",
+      "order_id": "o1",
+      "side": "buy",
+      "qty": 10,
+      "price": 100.0,
+      "fees": 1.0
+    },
+    {
+      "symbol": "AAPL",
+      "ts": "2026-01-19T16:00:00+00:00",
+      "order_id": "o2",
+      "side": "sell",
+      "qty": 4,
+      "price": 110.0,
+      "fees": 0.4
+    },
+    {
+      "symbol": "AAPL",
+      "ts": "2026-01-19T16:30:00+00:00",
+      "order_id": "o3",
+      "side": "buy",
+      "qty": 5,
+      "price": 105.0,
+      "fees": 0.5
+    },
+    {
+      "symbol": "AAPL",
+      "ts": "2026-01-20T15:30:00+00:00",
+      "order_id": "o4",
+      "side": "sell",
+      "qty": 8,
+      "price": 111.0,
+      "fees": 0.8
+    },
+    {
+      "symbol": "AAPL",
+      "ts": "2026-01-20T16:00:00+00:00",
+      "order_id": "o5",
+      "side": "sell",
+      "qty": 1,
+      "price": null,
+      "fees": 0.1
+    },
+    {
+      "symbol": "MSFT",
+      "ts": "2026-01-20T17:00:00+00:00",
+      "order_id": "o6",
+      "side": "buy",
+      "qty": 2,
+      "price": null,
+      "fees": 0.2
+    },
+    {
+      "symbol": "MSFT",
+      "ts": "2026-01-20T18:00:00+00:00",
+      "order_id": "o7",
+      "side": "sell",
+      "qty": 2,
+      "price": 50.0,
+      "fees": 0.2
+    }
+  ]
+}

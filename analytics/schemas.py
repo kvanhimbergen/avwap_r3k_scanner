@@ -26,3 +26,45 @@ class IngestResult:
     fills: list[Fill]
     warnings: list[str]
     source_metadata: dict[str, str]
+
+
+@dataclass(frozen=True)
+class Lot:
+    lot_id: str
+    symbol: str
+    side: str
+    open_fill_id: str
+    open_ts_utc: str
+    open_date_ny: str
+    open_qty: float
+    open_price: Optional[float]
+    remaining_qty: float
+    venue: str
+    source_paths: list[str]
+
+
+@dataclass(frozen=True)
+class Trade:
+    trade_id: str
+    symbol: str
+    direction: str
+    open_fill_id: str
+    close_fill_id: str
+    open_ts_utc: str
+    close_ts_utc: str
+    open_date_ny: str
+    close_date_ny: str
+    qty: float
+    open_price: Optional[float]
+    close_price: Optional[float]
+    fees: float
+    venue: str
+    notes: Optional[str]
+
+
+@dataclass(frozen=True)
+class ReconstructionResult:
+    trades: list[Trade]
+    open_lots: list[Lot]
+    warnings: list[str]
+    source_metadata: dict[str, str]
