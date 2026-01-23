@@ -289,6 +289,10 @@ def run_once(cfg) -> None:
         if cfg.execution_mode == "ALPACA_PAPER":
             date_ny = paper_sim.resolve_date_ny(datetime.now(timezone.utc))
             ledger_path = str(alpaca_paper.ledger_path(repo_root, date_ny))
+            _log(
+                f"ALPACA_PAPER ledger_path={ledger_path} "
+                f"(date_ny={date_ny})"
+            )
         market_is_open = _market_open(trading_client)
         maybe_send_heartbeat(
             dry_run=cfg.dry_run,
