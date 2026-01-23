@@ -18,7 +18,6 @@ class _DummyRequests(types.ModuleType):
 
 
 sys.modules.setdefault("requests", _DummyRequests("requests"))
-sys.modules.setdefault("pandas", types.ModuleType("pandas"))
 
 from execution_v2 import execution_main
 

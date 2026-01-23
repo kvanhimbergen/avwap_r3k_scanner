@@ -15,6 +15,9 @@ def test_pytest_collect_only_imports_requests() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
     env["AVWAP_SKIP_COLLECT_ONLY_CHECK"] = "1"
+    # Ensure determinism in the subprocess: plugin autoload can introduce
+    # environment-sensitive import side effects during collection.
+    env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "--collect-only"],
         cwd=repo_root,
