@@ -85,6 +85,7 @@ Copy code
   4. Run `sell_loop` to evaluate positions → trim intents / stop escalation.
   5. Execute due intents from DB (dry-run or live via Alpaca via bracket orders).
   6. Restart-safe with idempotency via `order_ledger`.
+  7. Persist one portfolio decision record per cycle in `ledger/PORTFOLIO_DECISIONS/`.
 - Supports CLI:
   - `--dry-run` (default)
   - `--once` (single cycle)
