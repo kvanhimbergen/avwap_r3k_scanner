@@ -13,9 +13,11 @@ This file is test-harness only. It must not alter production behavior.
 """
 from __future__ import annotations
 
+import importlib
 import importlib.abc
 import os
 import sys
+import traceback
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -49,8 +51,22 @@ def _log_requests_state(context: str) -> None:
 
 
 class _RequestsImportLogger(importlib.abc.MetaPathFinder):
+    def __init__(self) -> None:
+        self._seen = False
+
     def find_spec(self, fullname: str, path: object | None, target: object | None = None):
-        if fullname == "requests":
+        if fullname == "requests" and not self._seen:
+            self._seen = True
+            stack = "".join(traceback.format_stack(limit=10))
+            print(
+                "\n".join(
+                    [
+                        "[avwap-debug] first import requests",
+                        f"[avwap-debug] import_stack:\n{stack}",
+                    ]
+                ),
+                file=sys.stderr,
+            )
             _log_requests_state("before import requests")
         return None
 
@@ -60,9 +76,24 @@ if repo_root_str not in sys.path:
     insert_at = 1 if len(sys.path) > 1 else 0
     sys.path.insert(insert_at, repo_root_str)
 
+
+def _ensure_requests_session() -> None:
+    requests_mod = importlib.import_module("requests")
+    if hasattr(requests_mod, "Session"):
+        return
+    if DEBUG_IMPORTS:
+        _log_requests_state("requests missing Session; reloading")
+    sys.modules.pop("requests", None)
+    requests_mod = importlib.import_module("requests")
+    if not hasattr(requests_mod, "Session"):
+        raise ImportError("requests import did not provide Session after reload")
+
+
 if DEBUG_IMPORTS:
     sys.meta_path.insert(0, _RequestsImportLogger())
     _log_requests_state("pytest startup")
+
+_ensure_requests_session()
 
 
 def pytest_pycollect_makemodule(module_path, parent):  # type: ignore[override]

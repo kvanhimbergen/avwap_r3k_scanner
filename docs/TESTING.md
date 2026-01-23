@@ -56,4 +56,7 @@ The regression guard `tests/test_pytest_collect_only_regression.py` spawns a sub
 Root cause (macOS regression): the prior test harness forced the repo root to `sys.path[0]`,
 which can reorder import precedence during collection and allow a non-site-packages `requests`
 resolution to be imported before `yfinance` asks for `requests.Session`. The harness now only
+adds the repo root when missing, preserving existing `sys.path` ordering. As an extra guard,
+the test harness now forces a clean `requests` import early and validates that `Session` is
+present, reloading if necessary (tests only).
 adds the repo root when missing, preserving existing `sys.path` ordering.
