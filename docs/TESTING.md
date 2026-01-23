@@ -59,3 +59,4 @@ resolution to be imported before `yfinance` asks for `requests.Session`. The har
 adds the repo root when missing, preserving existing `sys.path` ordering. As an extra guard,
 the test harness now forces a clean `requests` import early and validates that `Session` is
 present, reloading if necessary (tests only).
+adds the repo root when missing, preserving existing `sys.path` ordering.
