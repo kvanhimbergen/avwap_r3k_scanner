@@ -36,3 +36,24 @@ Equivalent command:
 ```bash
 pytest -q
 ```
+
+## Pytest collection/import regression guard
+
+When diagnosing import-order issues (such as `ImportError: cannot import name 'Session' from 'requests'`
+during collection on macOS), enable deterministic diagnostics with:
+
+```bash
+AVWAP_DEBUG_IMPORTS=1 python -m pytest -q --collect-only
+```
+
+The diagnostics report `sys.executable`, the first entries of `sys.path`, the current `requests`
+module metadata, and the last collected test module to help pinpoint order-dependent contamination.
+Normal test runs remain clean because logging is gated by the environment variable.
+
+The regression guard `tests/test_pytest_collect_only_regression.py` spawns a subprocess to ensure
+`pytest --collect-only` succeeds and does not regress on import behavior.
+
+Root cause (macOS regression): the prior test harness forced the repo root to `sys.path[0]`,
+which can reorder import precedence during collection and allow a non-site-packages `requests`
+resolution to be imported before `yfinance` asks for `requests.Session`. The harness now only
+adds the repo root when missing, preserving existing `sys.path` ordering.
