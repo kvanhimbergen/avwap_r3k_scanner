@@ -48,3 +48,7 @@ state/
 # Runtime artifacts
 tradingview_watchlist.txt
 0001-Ignore-runtime-state-directory.patch
+
+# Local artifacts
+_local_backups/
+ledger/
