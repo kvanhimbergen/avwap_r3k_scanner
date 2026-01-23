@@ -8,14 +8,9 @@ import argparse
 import os
 import time
 from datetime import datetime, timezone
-
-from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import (
-    MarketOrderRequest,
-    GetOrdersRequest,
-    ClosePositionRequest,
-)
-from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
+from pathlib import Path
+from typing import TYPE_CHECKING
+from types import SimpleNamespace
 
 from alerts.slack import (
     slack_alert,
@@ -23,12 +18,16 @@ from alerts.slack import (
     maybe_send_heartbeat,
     maybe_send_daily_summary,
 )
-from datetime import timezone
 from execution_v2 import buy_loop, sell_loop
 from execution_v2 import live_gate
-from execution_v2.market_data import from_env as market_data_from_env
+from execution_v2 import alpaca_paper
+from execution_v2 import paper_sim
+from execution_v2 import clocks
 from execution_v2.orders import generate_idempotency_key
 from execution_v2.state_store import StateStore
+
+if TYPE_CHECKING:
+    from alpaca.trading.client import TradingClient
 
 
 def _now_et() -> str:
@@ -39,13 +38,48 @@ def _log(msg: str) -> None:
     print(f"[{_now_et()}] {msg}", flush=True)
 
 
+def _resolve_execution_mode() -> str:
+    env_mode = os.getenv("EXECUTION_MODE")
+    dry_run_env = os.getenv("DRY_RUN", "0") == "1"
+    valid_modes = {"DRY_RUN", "PAPER_SIM", "LIVE", "ALPACA_PAPER"}
+
+    if env_mode:
+        mode = env_mode.strip().upper()
+        if mode not in valid_modes:
+            fallback = "DRY_RUN" if dry_run_env else "LIVE"
+            _log(f"WARNING: unknown EXECUTION_MODE={env_mode}; defaulting to {fallback}")
+            return fallback
+        if mode != "DRY_RUN" and dry_run_env:
+            _log(f"EXECUTION_MODE={mode} but DRY_RUN=1; forcing DRY_RUN")
+            return "DRY_RUN"
+        return mode
+
+    return "DRY_RUN" if dry_run_env else "LIVE"
+
+
 def _get_trading_client() -> TradingClient:
+    from alpaca.trading.client import TradingClient
+
     api_key = os.getenv("APCA_API_KEY_ID") or ""
     api_secret = os.getenv("APCA_API_SECRET_KEY") or ""
     if not api_key or not api_secret:
         raise RuntimeError("Missing Alpaca API credentials in environment")
     paper = os.getenv("ALPACA_PAPER", "1") != "0"
     return TradingClient(api_key, api_secret, paper=paper)
+
+
+def _get_alpaca_paper_trading_client() -> TradingClient:
+    from alpaca.trading.client import TradingClient
+
+    api_key = os.getenv("ALPACA_API_KEY_PAPER") or ""
+    api_secret = os.getenv("ALPACA_API_SECRET_PAPER") or ""
+    base_url = os.getenv("ALPACA_BASE_URL_PAPER") or ""
+    if not api_key or not api_secret or not base_url:
+        raise RuntimeError(
+            "Missing Alpaca paper credentials in environment "
+            "(ALPACA_API_KEY_PAPER/ALPACA_API_SECRET_PAPER/ALPACA_BASE_URL_PAPER)"
+        )
+    return TradingClient(api_key, api_secret, paper=True, base_url=base_url)
 
 
 def _market_open(trading_client: TradingClient) -> bool:
@@ -75,6 +109,9 @@ def _has_open_order_or_position(trading_client: TradingClient, symbol: str) -> b
         pass
 
     try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+
         req = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[sym])
         orders = trading_client.get_orders(filter=req)
         return len(orders) > 0
@@ -117,6 +154,9 @@ def _submit_bracket_order(trading_client: TradingClient, intent, dry_run: bool) 
 
         return "dry-run"
 
+    from alpaca.trading.requests import MarketOrderRequest
+    from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
+
     order = MarketOrderRequest(
         symbol=intent.symbol,
         qty=intent.size_shares,
@@ -151,8 +191,18 @@ def run_once(cfg) -> None:
         entry_delay_max_sec=cfg.entry_delay_max_sec,
     )
     sell_cfg = sell_loop.SellLoopConfig(candidates_csv=cfg.candidates_csv)
-    trading_client = _get_trading_client()
-    md = market_data_from_env()
+    repo_root = Path(__file__).resolve().parents[1]
+    if cfg.execution_mode != "PAPER_SIM":
+        from execution_v2.market_data import from_env as market_data_from_env
+
+        if cfg.execution_mode == "ALPACA_PAPER":
+            trading_client = _get_alpaca_paper_trading_client()
+        else:
+            trading_client = _get_trading_client()
+        md = market_data_from_env()
+    else:
+        trading_client = None
+        md = None
     # Diagnostics: confirm which candidates CSV execution will use (observability only).
     try:
         import os as _os
@@ -165,56 +215,232 @@ def run_once(cfg) -> None:
     except Exception:
         pass
     
-    market_is_open = _market_open(trading_client)
-    maybe_send_heartbeat(dry_run=cfg.dry_run, market_open=market_is_open)
-    maybe_send_daily_summary(dry_run=cfg.dry_run, market_open=market_is_open)
+    if cfg.execution_mode == "PAPER_SIM":
+        clock_snapshot = clocks.now_snapshot()
+        market_is_open = clock_snapshot.market_open
+        maybe_send_heartbeat(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
+        maybe_send_daily_summary(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
+    else:
+        ledger_path = None
+        if cfg.execution_mode == "ALPACA_PAPER":
+            date_ny = paper_sim.resolve_date_ny(datetime.now(timezone.utc))
+            ledger_path = str(alpaca_paper.ledger_path(repo_root, date_ny))
+        market_is_open = _market_open(trading_client)
+        maybe_send_heartbeat(
+            dry_run=cfg.dry_run,
+            market_open=market_is_open,
+            execution_mode=cfg.execution_mode,
+        )
+        maybe_send_daily_summary(
+            dry_run=cfg.dry_run,
+            market_open=market_is_open,
+            execution_mode=cfg.execution_mode,
+            ledger_path=ledger_path,
+        )
 
     if (not market_is_open) and (not getattr(cfg, 'ignore_market_hours', False)):
         _log("Market closed; skipping cycle.")
         return
 
-    gate_result = live_gate.resolve_live_mode(cfg.dry_run)
-    allowlist = live_gate.parse_allowlist()
-    caps = live_gate.CapsConfig.from_env()
-    live_active = gate_result.live_enabled
-    live_reason = gate_result.reason
-    live_ledger = None
-    positions_count = None
+    if cfg.execution_mode == "PAPER_SIM":
+        account_equity = float(os.getenv("PAPER_SIM_EQUITY", "100000"))
+        if md is None:
+            class _NoMarketData:
+                def get_last_two_closed_10m(self, symbol: str) -> list:
+                    return []
 
-    if live_active:
-        live_ledger, ledger_reason = live_gate.load_live_ledger()
-        if live_ledger is None:
-            live_active = False
-            live_reason = f"ledger unavailable ({ledger_reason})"
-        else:
-            if live_ledger.was_reset:
-                _log("Live ledger reset for new NY day.")
-            try:
-                positions = trading_client.get_all_positions()
-                positions_count = len(positions)
-            except Exception as exc:
+            md = _NoMarketData()
+        created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
+        if created:
+            _log(f"Created {created} entry intents.")
+        _log("PAPER_SIM: skipping live gate checks and broker position lookups.")
+    elif cfg.execution_mode == "ALPACA_PAPER":
+        allowlist = live_gate.parse_allowlist()
+        caps = live_gate.CapsConfig.from_env()
+        kill_switch_active, kill_reason = live_gate.is_kill_switch_active()
+        live_gate.notify_kill_switch(kill_switch_active)
+        paper_active = not kill_switch_active
+        paper_reason = "alpaca_paper_enabled" if paper_active else f"kill switch active ({kill_reason})"
+        positions_count = None
+        try:
+            positions = trading_client.get_all_positions()
+            positions_count = len(positions)
+        except Exception as exc:
+            paper_active = False
+            paper_reason = f"positions unavailable ({type(exc).__name__})"
+        _log(f"Gate mode=ALPACA_PAPER status={'PASS' if paper_active else 'FAIL'} reason={paper_reason}")
+        _log(f"Gate {live_gate.allowlist_summary(allowlist)}")
+        _log(f"Gate {caps.summary()}")
+
+        account_equity = _get_account_equity(trading_client)
+        created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
+        if created:
+            _log(f"Created {created} entry intents.")
+        sell_loop.evaluate_positions(store, trading_client, sell_cfg)
+    else:
+        gate_result = live_gate.resolve_live_mode(cfg.dry_run)
+        allowlist = live_gate.parse_allowlist()
+        caps = live_gate.CapsConfig.from_env()
+        live_active = gate_result.live_enabled
+        live_reason = gate_result.reason
+        live_ledger = None
+        positions_count = None
+
+        if live_active:
+            live_ledger, ledger_reason = live_gate.load_live_ledger()
+            if live_ledger is None:
                 live_active = False
-                live_reason = f"positions unavailable ({type(exc).__name__})"
+                live_reason = f"ledger unavailable ({ledger_reason})"
+            else:
+                if live_ledger.was_reset:
+                    _log("Live ledger reset for new NY day.")
+                try:
+                    positions = trading_client.get_all_positions()
+                    positions_count = len(positions)
+                except Exception as exc:
+                    live_active = False
+                    live_reason = f"positions unavailable ({type(exc).__name__})"
 
-    live_gate.notify_kill_switch(gate_result.kill_switch_active)
-    live_gate.notify_live_status(live_active)
+        live_gate.notify_kill_switch(gate_result.kill_switch_active)
+        live_gate.notify_live_status(live_active)
 
-    mode = "LIVE" if live_active else "DRY_RUN"
-    status = "PASS" if live_active else "FAIL"
-    _log(f"Gate mode={mode} status={status} reason={live_reason}")
-    _log(f"Gate {live_gate.allowlist_summary(allowlist)}")
-    _log(f"Gate {caps.summary()}")
+        mode = "LIVE" if live_active else "DRY_RUN"
+        status = "PASS" if live_active else "FAIL"
+        _log(f"Gate mode={mode} status={status} reason={live_reason}")
+        _log(f"Gate {live_gate.allowlist_summary(allowlist)}")
+        _log(f"Gate {caps.summary()}")
 
-    account_equity = _get_account_equity(trading_client)
-    created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
-    if created:
-        _log(f"Created {created} entry intents.")
-    sell_loop.evaluate_positions(store, trading_client, sell_cfg)
+        account_equity = _get_account_equity(trading_client)
+        created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
+        if created:
+            _log(f"Created {created} entry intents.")
+        sell_loop.evaluate_positions(store, trading_client, sell_cfg)
 
     now_ts = time.time()
     intents = store.pop_due_entry_intents(now_ts)
     if not intents:
         intents = []
+
+    if cfg.execution_mode == "PAPER_SIM":
+        now_utc = datetime.now(timezone.utc)
+        date_ny = paper_sim.resolve_date_ny(now_utc)
+        fills = paper_sim.simulate_fills(
+            intents,
+            date_ny=date_ny,
+            now_utc=now_utc,
+            repo_root=repo_root,
+        )
+        skipped = max(0, len(intents) - len(fills))
+        ledger_rel = Path("ledger") / "PAPER_SIM" / f"{date_ny}.jsonl"
+        _log(
+            f"PAPER_SIM: wrote {len(fills)} fills to {ledger_rel} "
+            f"(skipped {skipped} duplicates)"
+        )
+        return
+
+    if cfg.execution_mode == "ALPACA_PAPER":
+        now_utc = datetime.now(timezone.utc)
+        date_ny = paper_sim.resolve_date_ny(now_utc)
+        ledger_path = alpaca_paper.ledger_path(repo_root, date_ny)
+        caps_ledger = alpaca_paper.load_caps_ledger(repo_root, date_ny)
+        submitted = 0
+        fills = 0
+
+        for intent in intents:
+            if not paper_active:
+                _log(f"ALPACA_PAPER disabled; skipping {intent.symbol} ({paper_reason})")
+                continue
+            if allowlist and intent.symbol.upper() not in allowlist:
+                _log(f"Gate ALPACA_PAPER allowlist would block {intent.symbol}")
+            if _has_open_order_or_position(trading_client, intent.symbol):
+                _log(f"SKIP {intent.symbol}: open order/position exists")
+                continue
+
+            key = generate_idempotency_key(intent.symbol, "buy", intent.size_shares, intent.ref_price)
+            if not store.record_order_once(key, intent.symbol, "buy", intent.size_shares):
+                _log(f"SKIP {intent.symbol}: idempotency key already used")
+                continue
+
+            allowed, cap_reason = live_gate.enforce_caps(
+                intent,
+                caps_ledger,
+                allowlist,
+                caps,
+                open_positions=positions_count,
+            )
+            status = "PASS" if allowed else "FAIL"
+            _log(f"Gate {status} {intent.symbol}: {cap_reason}")
+            if not allowed:
+                continue
+
+            try:
+                order_id = _submit_bracket_order(trading_client, intent, dry_run=False)
+                submitted += 1
+                _log(f"SUBMITTED {intent.symbol}: qty={intent.size_shares} order_id={order_id}")
+                candidate_notes = store.get_candidate_notes(intent.symbol) or "scan:n/a"
+                send_verbose_alert(
+                    "TRADE",
+                    f"SUBMITTED {intent.symbol}",
+                    (
+                        f"qty={intent.size_shares} ref={intent.ref_price} "
+                        f"pivot={intent.pivot_level} dist={intent.dist_pct:.2f}% "
+                        f"SL={intent.stop_loss} TP={intent.take_profit} "
+                        f"boh_at={_format_ts(intent.boh_confirmed_at)} reason={candidate_notes}"
+                    ),
+                    component="EXECUTION_V2",
+                    throttle_key=f"submit_{intent.symbol}",
+                    throttle_seconds=60,
+                )
+                order_info = None
+                if order_id:
+                    try:
+                        order_info = trading_client.get_order_by_id(order_id)
+                    except Exception as exc:
+                        _log(f"WARNING: failed to fetch Alpaca order {order_id}: {exc}")
+                if order_info is None:
+                    order_info = SimpleNamespace(id=order_id)
+                event = alpaca_paper.build_order_event(
+                    intent_id=key,
+                    symbol=intent.symbol,
+                    qty=intent.size_shares,
+                    ref_price=float(intent.ref_price),
+                    order=order_info,
+                    now_utc=now_utc,
+                )
+                written, skipped = alpaca_paper.append_events(ledger_path, [event])
+                if written:
+                    try:
+                        caps_ledger.add_entry(
+                            order_id or key,
+                            intent.symbol,
+                            float(intent.size_shares) * float(intent.ref_price),
+                            now_utc.isoformat(),
+                        )
+                    except Exception:
+                        pass
+                if event.get("filled_qty"):
+                    try:
+                        if float(event["filled_qty"]) > 0:
+                            fills += 1
+                    except Exception:
+                        pass
+                if skipped:
+                    _log(f"ALPACA_PAPER: skipped duplicate intent {intent.symbol}")
+            except Exception as exc:
+                _log(f"ERROR submitting {intent.symbol}: {exc}")
+                slack_alert(
+                    "ERROR",
+                    f"Execution error for {intent.symbol}",
+                    f"{type(exc).__name__}: {exc}",
+                    component="EXECUTION_V2",
+                    throttle_key=f"submit_error_{intent.symbol}",
+                    throttle_seconds=300,
+                )
+
+        _log(
+            f"ALPACA_PAPER: orders_submitted={submitted} fills_received={fills} ledger={ledger_path}"
+        )
+        return
 
     for intent in intents:
         effective_dry_run = not live_active
@@ -322,6 +548,8 @@ def run_once(cfg) -> None:
             if not live_active:
                 _log(f"DRY_RUN: would close {symbol} (reason={reason})")
                 continue
+            from alpaca.trading.requests import ClosePositionRequest
+
             close_opts = ClosePositionRequest(qty=str(total_qty))
             trading_client.close_position(symbol, close_options=close_opts)
             send_verbose_alert(
@@ -350,6 +578,9 @@ def run_once(cfg) -> None:
         if not live_active:
             _log(f"DRY_RUN: would trim {symbol} qty={qty} reason={reason}")
             continue
+
+        from alpaca.trading.requests import MarketOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
 
         order = MarketOrderRequest(
             symbol=symbol,
@@ -404,6 +635,11 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     cfg = _parse_args()
+    cfg.execution_mode = _resolve_execution_mode()
+    if cfg.execution_mode in {"LIVE", "ALPACA_PAPER"}:
+        cfg.dry_run = False
+    else:
+        cfg.dry_run = True
     db_dir = os.path.dirname(cfg.db_path)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
@@ -411,7 +647,7 @@ def main() -> None:
     slack_alert(
         "INFO",
         "Execution V2 started",
-        f"dry_run={cfg.dry_run} poll_seconds={cfg.poll_seconds}",
+        f"execution_mode={cfg.execution_mode} dry_run={cfg.dry_run} poll_seconds={cfg.poll_seconds}",
         component="EXECUTION_V2",
         throttle_key="execution_v2_start",
         throttle_seconds=300,

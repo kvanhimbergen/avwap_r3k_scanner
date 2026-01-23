@@ -2,6 +2,7 @@ import os
 import time
 import threading
 from datetime import datetime, time as dt_time
+from pathlib import Path
 from zoneinfo import ZoneInfo
 import json
 import requests
@@ -229,12 +230,16 @@ def maybe_send_heartbeat(
     dry_run: bool,
     market_open: bool,
     component: str = "EXECUTION_V2",
+    execution_mode: Optional[str] = None,
 ) -> None:
     minutes = int(os.getenv("SLACK_HEARTBEAT_MINUTES", "60"))
     if minutes <= 0:
         return
     status, detail = check_watchlist_freshness()
-    mode = "DRY_RUN" if dry_run else "LIVE"
+    if execution_mode:
+        mode = execution_mode
+    else:
+        mode = "DRY_RUN" if dry_run else "LIVE"
     market_status = "OPEN" if market_open else "CLOSED"
     freshness = "PASS" if status else "FAIL"
     message = (
@@ -271,6 +276,8 @@ def maybe_send_daily_summary(
     dry_run: bool,
     market_open: bool,
     component: str = "EXECUTION_V2",
+    execution_mode: Optional[str] = None,
+    ledger_path: Optional[str] = None,
 ) -> None:
     global _LAST_DAILY_SUMMARY_DATE
     global _LAST_MARKET_OPEN
@@ -292,13 +299,34 @@ def maybe_send_daily_summary(
     if not trigger:
         return
 
-    if dry_run:
-        ledger_path = os.getenv(
+    resolved_mode = execution_mode or ("DRY_RUN" if dry_run else "LIVE")
+    if resolved_mode == "DRY_RUN":
+        ledger_path = ledger_path or os.getenv(
             "DRY_RUN_LEDGER_PATH",
             "/root/avwap_r3k_scanner/state/dry_run_ledger.json",
         )
         message = build_dry_run_daily_summary(ledger_path, today)
         title = "Daily execution summary (DRY_RUN)"
+    elif resolved_mode == "ALPACA_PAPER":
+        from execution_v2 import alpaca_paper
+
+        path = ledger_path or os.path.join(
+            os.getenv("AVWAP_BASE_DIR", "/root/avwap_r3k_scanner"),
+            "ledger",
+            "ALPACA_PAPER",
+            f"{today}.jsonl",
+        )
+        summary = alpaca_paper.summarize_ledger(Path(path), today)
+        message = "\n".join(
+            [
+                f"Date (NY): {today}",
+                f"Execution mode: {resolved_mode}",
+                f"Orders submitted: {summary['orders']}",
+                f"Fills received: {summary['fills']}",
+                f"Ledger: {summary['ledger_path']}",
+            ]
+        )
+        title = "Daily execution summary (ALPACA_PAPER)"
     else:
         message = "Date (NY): {date}\nLive summary unavailable (no persistent live ledger found).".format(
             date=today
