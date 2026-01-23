@@ -20,6 +20,7 @@ APCA_API_BASE_URL=https://paper-api.alpaca.markets
 ```
 
 `APCA_API_BASE_URL` must point to the Alpaca paper endpoint (trailing slash optional).
+For alpaca-py 0.43.x, the TradingClient uses `url_override` (not `base_url`).
 
 If `EXECUTION_MODE` is unset, Execution V2 preserves the existing behavior:
 
