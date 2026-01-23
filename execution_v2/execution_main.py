@@ -38,6 +38,9 @@ def _log(msg: str) -> None:
     print(f"[{_now_et()}] {msg}", flush=True)
 
 
+PAPER_BASE_URL = "https://paper-api.alpaca.markets"
+
+
 def _resolve_execution_mode() -> str:
     env_mode = os.getenv("EXECUTION_MODE")
     dry_run_env = os.getenv("DRY_RUN", "0") == "1"
@@ -50,7 +53,10 @@ def _resolve_execution_mode() -> str:
             _log(f"WARNING: unknown EXECUTION_MODE={env_mode}; defaulting to {fallback}")
             return fallback
         if mode != "DRY_RUN" and dry_run_env:
-            _log(f"EXECUTION_MODE={mode} but DRY_RUN=1; forcing DRY_RUN")
+            _log(
+                f"EXECUTION_MODE={mode} but DRY_RUN=1; forcing DRY_RUN "
+                "(DRY_RUN overrides broker routing)"
+            )
             return "DRY_RUN"
         return mode
 
@@ -68,18 +74,57 @@ def _get_trading_client() -> TradingClient:
     return TradingClient(api_key, api_secret, paper=paper)
 
 
+def _normalize_base_url(value: str) -> str:
+    return value.strip().rstrip("/")
+
+
+def _warn_legacy_alpaca_paper_env() -> None:
+    legacy_vars = [
+        "ALPACA_API_KEY_PAPER",
+        "ALPACA_API_SECRET_PAPER",
+        "ALPACA_BASE_URL_PAPER",
+    ]
+    if any(os.getenv(name) for name in legacy_vars):
+        _log(
+            "WARNING: legacy ALPACA_*_PAPER variables detected; "
+            "ignoring them in favor of APCA_API_KEY_ID/APCA_API_SECRET_KEY/APCA_API_BASE_URL"
+        )
+
+
 def _get_alpaca_paper_trading_client() -> TradingClient:
     from alpaca.trading.client import TradingClient
 
-    api_key = os.getenv("ALPACA_API_KEY_PAPER") or ""
-    api_secret = os.getenv("ALPACA_API_SECRET_PAPER") or ""
-    base_url = os.getenv("ALPACA_BASE_URL_PAPER") or ""
-    if not api_key or not api_secret or not base_url:
+    _warn_legacy_alpaca_paper_env()
+    api_key = os.getenv("APCA_API_KEY_ID") or ""
+    api_secret = os.getenv("APCA_API_SECRET_KEY") or ""
+    base_url = os.getenv("APCA_API_BASE_URL") or ""
+    missing = [
+        name
+        for name, value in (
+            ("APCA_API_KEY_ID", api_key),
+            ("APCA_API_SECRET_KEY", api_secret),
+            ("APCA_API_BASE_URL", base_url),
+        )
+        if not value
+    ]
+    if missing:
         raise RuntimeError(
             "Missing Alpaca paper credentials in environment "
-            "(ALPACA_API_KEY_PAPER/ALPACA_API_SECRET_PAPER/ALPACA_BASE_URL_PAPER)"
+            f"({', '.join(missing)})"
         )
-    return TradingClient(api_key, api_secret, paper=True, base_url=base_url)
+    normalized = _normalize_base_url(base_url)
+    if normalized != PAPER_BASE_URL:
+        raise RuntimeError(
+            "APCA_API_BASE_URL must be "
+            f"{PAPER_BASE_URL} for ALPACA_PAPER (got {base_url})"
+        )
+    return TradingClient(api_key, api_secret, paper=True, base_url=normalized)
+
+
+def _select_trading_client(execution_mode: str) -> TradingClient:
+    if execution_mode == "ALPACA_PAPER":
+        return _get_alpaca_paper_trading_client()
+    return _get_trading_client()
 
 
 def _market_open(trading_client: TradingClient) -> bool:
@@ -195,10 +240,13 @@ def run_once(cfg) -> None:
     if cfg.execution_mode != "PAPER_SIM":
         from execution_v2.market_data import from_env as market_data_from_env
 
-        if cfg.execution_mode == "ALPACA_PAPER":
-            trading_client = _get_alpaca_paper_trading_client()
-        else:
-            trading_client = _get_trading_client()
+        try:
+            trading_client = _select_trading_client(cfg.execution_mode)
+        except RuntimeError as exc:
+            if cfg.execution_mode == "ALPACA_PAPER":
+                _log(f"ALPACA_PAPER disabled: {exc}")
+                return
+            raise
         md = market_data_from_env()
     else:
         trading_client = None

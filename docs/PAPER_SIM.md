@@ -14,10 +14,12 @@ For Alpaca paper trading:
 
 ```
 EXECUTION_MODE=ALPACA_PAPER
-ALPACA_API_KEY_PAPER=...
-ALPACA_API_SECRET_PAPER=...
-ALPACA_BASE_URL_PAPER=https://paper-api.alpaca.markets
+APCA_API_KEY_ID=...
+APCA_API_SECRET_KEY=...
+APCA_API_BASE_URL=https://paper-api.alpaca.markets
 ```
+
+`APCA_API_BASE_URL` must point to the Alpaca paper endpoint (trailing slash optional).
 
 If `EXECUTION_MODE` is unset, Execution V2 preserves the existing behavior:
 
@@ -32,13 +34,13 @@ Safety: when `DRY_RUN=1`, LIVE cannot be enabled accidentally even if `EXECUTION
 | --- | --- | --- | --- | --- |
 | DRY_RUN | No | Yes (logging only) | `/root/avwap_r3k_scanner/state/dry_run_ledger.json` | Safe no-order validation of scheduling/gates. |
 | PAPER_SIM | No | Yes (deterministic fills) | `ledger/PAPER_SIM/<YYYY-MM-DD>.jsonl` | Deterministic evaluation of fills/positions/PnL. |
-| ALPACA_PAPER | Yes (paper keys/base URL) | No | `ledger/ALPACA_PAPER/<YYYY-MM-DD>.jsonl` | Broker-integrated paper trading with real order status/fills. |
+| ALPACA_PAPER | Yes (APCA keys + paper base URL) | No | `ledger/ALPACA_PAPER/<YYYY-MM-DD>.jsonl` | Broker-integrated paper trading with real order status/fills. |
 | LIVE | Yes (live keys) | No | Live broker only (no persistent ledger) | Production execution. |
 
 ## When to use which mode
 
 - **PAPER_SIM** for deterministic, replayable evaluation without broker I/O.
-- **ALPACA_PAPER** when you want actual Alpaca paper orders/fills but still no live risk.
+- **ALPACA_PAPER** for broker-backed paper orders/fills (real Alpaca paper endpoints).
 - **LIVE** for real trading only after safety gates are satisfied.
 
 ## Ledger location
