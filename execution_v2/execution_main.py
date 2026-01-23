@@ -172,7 +172,6 @@ def _has_open_order_or_position(trading_client: TradingClient, symbol: str) -> b
 def _submit_bracket_order(trading_client: TradingClient, intent, dry_run: bool) -> str | None:
     if dry_run:
         import json
-        from datetime import datetime
         
         ledger_path = "/root/avwap_r3k_scanner/state/dry_run_ledger.json"
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -556,7 +555,6 @@ def run_once(cfg) -> None:
                 store.update_external_order_id(key, order_id)
                 if live_active and live_ledger is not None:
                     try:
-                        from datetime import datetime
 
                         notional = float(intent.size_shares) * float(intent.ref_price)
                         live_ledger.add_entry(
