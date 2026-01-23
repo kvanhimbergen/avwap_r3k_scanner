@@ -16,6 +16,7 @@ import pandas as pd
 from execution_v2.boh import boh_confirmed_option2
 from execution_v2.config_types import EntryIntent
 from execution_v2.sizing import SizingConfig, compute_size_shares
+from execution_v2 import exits
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,7 @@ def evaluate_and_create_entry_intents(store, md, cfg: BuyLoopConfig, account_equ
     Evaluate scan candidates and create entry intents for BOH-confirmed names.
     """
     now_ts = time()
+    exit_cfg = exits.ExitConfig.from_env()
     candidates = ingest_watchlist_as_candidates(store, cfg)
     active_symbols = set(store.list_active_candidates(now_ts))
 
@@ -165,6 +167,18 @@ def evaluate_and_create_entry_intents(store, md, cfg: BuyLoopConfig, account_equ
         if size <= 0:
             continue
 
+        daily_bars = md.get_daily_bars(cand.symbol)
+        entry_day = exits.entry_day_from_ts(now_ts)
+        stop_price = exits.compute_stop_price(
+            daily_bars,
+            entry_day=entry_day,
+            buffer_dollars=exit_cfg.stop_buffer_dollars,
+        )
+        if stop_price is None:
+            continue
+        if not exits.validate_risk(cand.price, stop_price, exit_cfg.max_risk_per_share):
+            continue
+
         delay = random.uniform(cfg.entry_delay_min_sec, cfg.entry_delay_max_sec)
         intent = EntryIntent(
             symbol=cand.symbol,
@@ -172,7 +186,7 @@ def evaluate_and_create_entry_intents(store, md, cfg: BuyLoopConfig, account_equ
             boh_confirmed_at=boh.confirm_bar_ts or now_ts,
             scheduled_entry_at=now_ts + delay,
             size_shares=size,
-            stop_loss=cand.stop_loss,
+            stop_loss=stop_price,
             take_profit=cand.target_r2,
             ref_price=bars[-1].close,
             dist_pct=cand.dist_pct,

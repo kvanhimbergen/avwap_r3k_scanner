@@ -1,321 +1,623 @@
 """
-Execution V2 – Exit and Stop Management
+Execution V2 – Exit Management (system-managed R1/R2 + protective stop)
 
-Provides structural stop calculations and stop order reconciliation utilities.
+Responsibilities:
+- Compute DAILY swing-low stop anchors (L=5)
+- Build per-position exit state and persist to JSON
+- Manage protective stop + R1/R2 exits via polling loop
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
-import importlib.util
-from typing import Callable, Optional
+import json
+import os
+from dataclasses import dataclass, replace
+from datetime import datetime, time, timezone
+from pathlib import Path
+from typing import Optional
 
-if importlib.util.find_spec("alpaca.common.exceptions") is not None:
-    from alpaca.common.exceptions import APIError
-else:
-    class APIError(Exception):
-        code = None
+from execution_v2.clocks import ET
+from execution_v2.pivots import DailyBar
+
+
+STOP_SUBMIT_AFTER = time(9, 35)
+
+
+@dataclass(frozen=True)
+class ExitConfig:
+    stop_buffer_dollars: float
+    r1_mult: float
+    r2_mult: float
+    r1_trim_pct: float
+    max_risk_per_share: float
+
+    @staticmethod
+    def from_env() -> "ExitConfig":
+        return ExitConfig(
+            stop_buffer_dollars=float(os.getenv("STOP_BUFFER_DOLLARS", "0.10")),
+            r1_mult=float(os.getenv("R1_MULT", "1.0")),
+            r2_mult=float(os.getenv("R2_MULT", "2.0")),
+            r1_trim_pct=float(os.getenv("R1_TRIM_PCT", "0.5")),
+            max_risk_per_share=float(os.getenv("MAX_RISK_PER_SHARE_DOLLARS", "3.00")),
+        )
 
 
 @dataclass
 class ExitPositionState:
     symbol: str
-    qty: int
-    stop_price: Optional[float] = None
-    stop_order_id: Optional[str] = None
-    stop_basis: Optional[str] = None
-    last_stop_update_ts: Optional[float] = None
+    entry_time: float
+    entry_price: float
+    entry_qty: int
+    stop_price: float
+    stop_order_id: Optional[str]
+    r_value: float
+    r1_price: float
+    r2_price: float
+    r1_qty: int
+    r2_qty: int
+    stage: str
+    qty_remaining: int
 
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "entry_time": self.entry_time,
+            "entry_price": self.entry_price,
+            "entry_qty": self.entry_qty,
+            "stop_price": self.stop_price,
+            "stop_order_id": self.stop_order_id,
+            "r_value": self.r_value,
+            "r1_price": self.r1_price,
+            "r2_price": self.r2_price,
+            "r1_qty": self.r1_qty,
+            "r2_qty": self.r2_qty,
+            "stage": self.stage,
+            "qty_remaining": self.qty_remaining,
+        }
 
-def _get_value(bar, key: str, default: float | None = None) -> float | None:
-    if isinstance(bar, dict):
-        return bar.get(key, default)
-    return getattr(bar, key, default)
-
-
-def _find_swing_lows(bars: list, *, low_key: str = "low") -> list[tuple[int, float]]:
-    """
-    A swing low index i satisfies low[i] < low[i-1] and low[i] < low[i+1].
-    Return list of (i, low_value) in chronological order.
-    """
-    swing_lows: list[tuple[int, float]] = []
-    for i in range(1, len(bars) - 1):
-        low_prev = _get_value(bars[i - 1], low_key)
-        low_curr = _get_value(bars[i], low_key)
-        low_next = _get_value(bars[i + 1], low_key)
-        if low_prev is None or low_curr is None or low_next is None:
-            continue
-        if low_curr < low_prev and low_curr < low_next:
-            swing_lows.append((i, float(low_curr)))
-    return swing_lows
-
-
-def compute_intraday_higher_low_stop(
-    bars: list,
-    *,
-    stop_buffer_dollars: float,
-    min_bars: int = 6,
-) -> Optional[float]:
-    """
-    Determine most recent CONFIRMED higher low:
-    - need at least min_bars total
-    - compute swing lows
-    - choose the most recent swing low whose low is higher than the previous swing low (a higher-low step)
-    - stop = round(higher_low - stop_buffer_dollars, 2)
-    Return None if no such structure.
-    """
-    if len(bars) < min_bars:
-        return None
-
-    swing_lows = _find_swing_lows(bars)
-    if len(swing_lows) < 2:
-        return None
-
-    higher_low = None
-    for i in range(1, len(swing_lows)):
-        prev_low = swing_lows[i - 1][1]
-        curr_low = swing_lows[i][1]
-        if curr_low > prev_low:
-            higher_low = curr_low
-
-    if higher_low is None:
-        return None
-
-    return round(float(higher_low) - float(stop_buffer_dollars), 2)
-
-
-def compute_daily_swing_low_stop(
-    bars: list,
-    *,
-    stop_buffer_dollars: float,
-) -> Optional[float]:
-    swing_lows = _find_swing_lows(bars)
-    if not swing_lows:
-        return None
-    return round(float(swing_lows[-1][1]) - float(stop_buffer_dollars), 2)
-
-
-def resolve_structural_stop(
-    intraday_bars: list,
-    daily_bars: list,
-    *,
-    stop_buffer_dollars: float,
-    min_intraday_bars: int = 6,
-) -> tuple[Optional[float], Optional[str]]:
-    intraday_stop = compute_intraday_higher_low_stop(
-        intraday_bars,
-        stop_buffer_dollars=stop_buffer_dollars,
-        min_bars=min_intraday_bars,
-    )
-    if intraday_stop is not None:
-        return intraday_stop, "intraday_hl"
-
-    daily_stop = compute_daily_swing_low_stop(
-        daily_bars,
-        stop_buffer_dollars=stop_buffer_dollars,
-    )
-    if daily_stop is not None:
-        return daily_stop, "daily_swing_low"
-
-    return None, None
-
-
-def apply_trailing_stop(
-    existing_stop: Optional[float],
-    candidate_stop: Optional[float],
-) -> Optional[float]:
-    if candidate_stop is None:
-        return existing_stop
-    if existing_stop is None:
-        return candidate_stop
-    return max(existing_stop, candidate_stop)
-
-
-def _order_attr(order, name: str, default=None):
-    if isinstance(order, dict):
-        return order.get(name, default)
-    return getattr(order, name, default)
-
-
-def _order_status(order) -> str:
-    return str(_order_attr(order, "status", "") or "").lower()
-
-
-def _order_side(order) -> str:
-    return str(_order_attr(order, "side", "") or "").lower()
-
-
-def _order_type(order) -> str:
-    return str(_order_attr(order, "order_type", _order_attr(order, "type", "")) or "").lower()
-
-
-def _order_qty(order) -> int:
-    raw = _order_attr(order, "qty", 0)
-    try:
-        return int(float(raw))
-    except Exception:
-        return 0
-
-
-def _order_stop_price(order) -> Optional[float]:
-    raw = _order_attr(order, "stop_price", None)
-    if raw is None:
-        return None
-    try:
-        return float(raw)
-    except Exception:
-        return None
-
-
-def _is_open_status(status: str) -> bool:
-    return status in {"open", "accepted", "new"}
-
-
-def _matching_stop_order(order, desired_qty: int, desired_stop: float) -> bool:
-    if _order_side(order) != "sell":
-        return False
-    if not _is_open_status(_order_status(order)):
-        return False
-    if _order_type(order) not in {"stop", "stop_limit"}:
-        return False
-    if _order_qty(order) != int(desired_qty):
-        return False
-    stop_price = _order_stop_price(order)
-    if stop_price is None:
-        return False
-    return round(stop_price, 2) == round(float(desired_stop), 2)
-
-
-def _api_error_is_insufficient_qty(exc: APIError) -> bool:
-    code = getattr(exc, "code", None) or getattr(exc, "error_code", None)
-    if code is not None:
-        try:
-            if int(code) == 40310000:
-                return True
-        except Exception:
-            pass
-    return "insufficient qty available" in str(exc).lower()
-
-
-def _submit_stop_order(trading_client, symbol: str, qty: int, stop_price: float):
-    from alpaca.trading.enums import OrderSide, TimeInForce
-    from alpaca.trading.requests import StopLossRequest, MarketOrderRequest
-
-    return trading_client.submit_order(
-        MarketOrderRequest(
-            symbol=symbol,
-            qty=qty,
-            side=OrderSide.SELL,
-            time_in_force=TimeInForce.DAY,
-            order_class=None,
-            stop_loss=StopLossRequest(stop_price=round(float(stop_price), 2)),
+    @staticmethod
+    def from_dict(data: dict) -> "ExitPositionState":
+        return ExitPositionState(
+            symbol=str(data.get("symbol", "")),
+            entry_time=float(data.get("entry_time", 0.0)),
+            entry_price=float(data.get("entry_price", 0.0)),
+            entry_qty=int(data.get("entry_qty", 0)),
+            stop_price=float(data.get("stop_price", 0.0)),
+            stop_order_id=data.get("stop_order_id"),
+            r_value=float(data.get("r_value", 0.0)),
+            r1_price=float(data.get("r1_price", 0.0)),
+            r2_price=float(data.get("r2_price", 0.0)),
+            r1_qty=int(data.get("r1_qty", 0)),
+            r2_qty=int(data.get("r2_qty", 0)),
+            stage=str(data.get("stage", "OPEN")),
+            qty_remaining=int(data.get("qty_remaining", 0)),
         )
+
+
+class PositionStateStore:
+    def __init__(self, base_dir: Path) -> None:
+        self.base_dir = base_dir
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+
+    def _path(self, symbol: str) -> Path:
+        return self.base_dir / f"{symbol.upper()}.json"
+
+    def load(self, symbol: str) -> Optional[ExitPositionState]:
+        path = self._path(symbol)
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            return None
+        return ExitPositionState.from_dict(data)
+
+    def save(self, state: ExitPositionState) -> None:
+        path = self._path(state.symbol)
+        path.write_text(json.dumps(state.to_dict(), sort_keys=True, indent=2))
+
+    def delete(self, symbol: str) -> None:
+        path = self._path(symbol)
+        if path.exists():
+            path.unlink(missing_ok=True)
+
+
+def resolve_state_dir(repo_root: Path) -> Path:
+    return repo_root / "state" / "positions"
+
+
+def resolve_event_ledger(repo_root: Path) -> Path:
+    return repo_root / "state" / "positions" / "events.jsonl"
+
+
+def append_event(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {"ts_utc": datetime.now(timezone.utc).isoformat(), **payload}
+    with path.open("a") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def entry_day_from_ts(ts: float) -> datetime.date:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(ET).date()
+
+
+def prior_swing_low(
+    bars: list[DailyBar],
+    entry_day,
+    pivot_len: int = 5,
+) -> Optional[float]:
+    if pivot_len <= 0:
+        raise ValueError("pivot_len must be positive")
+    if len(bars) < (pivot_len * 2 + 1):
+        return None
+
+    eligible: list[DailyBar] = []
+    for bar in bars:
+        bar_day = entry_day_from_ts(bar.ts)
+        if bar_day < entry_day:
+            eligible.append(bar)
+
+    if len(eligible) < (pivot_len * 2 + 1):
+        return None
+
+    for idx in range(len(eligible) - pivot_len - 1, pivot_len - 1, -1):
+        candidate = eligible[idx].low
+        left = eligible[idx - pivot_len:idx]
+        right = eligible[idx + 1: idx + 1 + pivot_len]
+        if len(left) < pivot_len or len(right) < pivot_len:
+            continue
+        if all(candidate < bar.low for bar in left) and all(candidate < bar.low for bar in right):
+            return candidate
+    return None
+
+
+def compute_stop_price(
+    bars: list[DailyBar],
+    entry_day,
+    buffer_dollars: float,
+) -> Optional[float]:
+    pivot = prior_swing_low(bars, entry_day=entry_day, pivot_len=5)
+    if pivot is None:
+        return None
+    stop_price = float(pivot) - float(buffer_dollars)
+    if stop_price <= 0:
+        return None
+    return round(stop_price, 2)
+
+
+def compute_exit_levels(
+    *,
+    entry_price: float,
+    entry_qty: int,
+    stop_price: float,
+    cfg: ExitConfig,
+) -> Optional[ExitPositionState]:
+    if entry_price <= 0 or stop_price <= 0 or entry_qty <= 0:
+        return None
+    r_value = entry_price - stop_price
+    if r_value <= 0:
+        return None
+
+    r1_price = entry_price + cfg.r1_mult * r_value
+    r2_price = entry_price + cfg.r2_mult * r_value
+    r1_qty = int(entry_qty * cfg.r1_trim_pct)
+    if r1_qty < 1:
+        r1_qty = 1
+    if r1_qty > entry_qty:
+        r1_qty = entry_qty
+    r2_qty = entry_qty - r1_qty
+
+    return ExitPositionState(
+        symbol="",
+        entry_time=0.0,
+        entry_price=entry_price,
+        entry_qty=entry_qty,
+        stop_price=stop_price,
+        stop_order_id=None,
+        r_value=round(r_value, 4),
+        r1_price=round(r1_price, 2),
+        r2_price=round(r2_price, 2),
+        r1_qty=r1_qty,
+        r2_qty=r2_qty,
+        stage="OPEN",
+        qty_remaining=entry_qty,
     )
+
+
+def validate_risk(entry_price: float, stop_price: float, max_risk: float) -> bool:
+    if entry_price <= 0 or stop_price <= 0 or max_risk <= 0:
+        return False
+    risk = entry_price - stop_price
+    return 0 < risk <= max_risk
+
+
+def apply_r1_transition(state: ExitPositionState, last_price: float) -> ExitPositionState:
+    if state.stage != "OPEN":
+        return state
+    if last_price < state.r1_price:
+        return state
+
+    new_qty = max(state.qty_remaining - state.r1_qty, 0)
+    new_stop = max(state.stop_price, state.entry_price)
+    new_stage = "R1_TAKEN" if new_qty > 0 else "CLOSED"
+    return replace(state, qty_remaining=new_qty, stop_price=new_stop, stage=new_stage)
+
+
+def should_submit_stop(now_et: datetime) -> bool:
+    return now_et.time() >= STOP_SUBMIT_AFTER
+
+
+def _safe_float(value) -> Optional[float]:
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _safe_int(value) -> Optional[int]:
+    try:
+        return int(float(value))
+    except Exception:
+        return None
+
+
+def _is_stop_order(order) -> bool:
+    order_type = str(getattr(order, "order_type", getattr(order, "type", ""))).lower()
+    if order_type in {"stop", "stop_limit"}:
+        return True
+    return False
+
+
+def _load_open_orders(trading_client, symbol: str) -> list:
+    from alpaca.trading.requests import GetOrdersRequest
+    from alpaca.trading.enums import QueryOrderStatus
+
+    req = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol])
+    return list(trading_client.get_orders(filter=req))
+
+
+def _submit_stop_order(trading_client, symbol: str, qty: int, stop_price: float) -> Optional[str]:
+    from alpaca.trading.requests import StopOrderRequest
+    from alpaca.trading.enums import OrderSide, TimeInForce
+    order = StopOrderRequest(
+        symbol=symbol,
+        qty=qty,
+        side=OrderSide.SELL,
+        time_in_force=TimeInForce.DAY,
+        stop_price=round(float(stop_price), 2),
+    )
+    response = trading_client.submit_order(order)
+    return getattr(response, "id", None)
 
 
 def reconcile_stop_order(
     *,
     trading_client,
+    symbol: str,
+    qty: int,
+    stop_price: float,
+    now_et: datetime,
+    dry_run: bool,
+    log,
+    event_path: Path,
     state: ExitPositionState,
-    desired_qty: int,
-    desired_stop: float,
-    log: Callable[[str], None] | None = None,
-    append_event: Callable[[dict], None] | None = None,
 ) -> ExitPositionState:
-    log = log or (lambda msg: None)
-    append_event = append_event or (lambda event: None)
+    if qty <= 0 or stop_price <= 0:
+        return state
+    if not should_submit_stop(now_et):
+        return state
 
-    open_orders = list(trading_client.get_orders())
-    sell_orders = [o for o in open_orders if _order_side(o) == "sell" and _is_open_status(_order_status(o))]
+    open_orders = _load_open_orders(trading_client, symbol)
+    stop_orders = [o for o in open_orders if _is_stop_order(o)]
 
-    for order in sell_orders:
-        if _matching_stop_order(order, desired_qty, desired_stop):
-            state.stop_order_id = str(_order_attr(order, "id", "")) or state.stop_order_id
-            return state
+    desired_stop = round(float(stop_price), 2)
+    desired_qty = int(qty)
 
-    mismatched_stops = [
-        o
-        for o in sell_orders
-        if _order_type(o) in {"stop", "stop_limit"}
-        and not _matching_stop_order(o, desired_qty, desired_stop)
-    ]
-    for order in mismatched_stops:
-        order_id = _order_attr(order, "id", None)
-        if order_id is None:
+    matching = None
+    had_existing = bool(stop_orders)
+    for order in stop_orders:
+        order_qty = _safe_int(getattr(order, "qty", getattr(order, "quantity", None)))
+        order_stop = _safe_float(getattr(order, "stop_price", None))
+        if order_qty == desired_qty and order_stop is not None and round(order_stop, 2) == desired_stop:
+            matching = order
+        else:
+            if not dry_run:
+                try:
+                    trading_client.cancel_order_by_id(order.id)
+                except Exception:
+                    pass
+
+    if matching is not None:
+        return replace(state, stop_order_id=getattr(matching, "id", None))
+
+    action = "STOP_REPLACE" if had_existing else "STOP_SUBMIT"
+
+    if dry_run:
+        log(f"{action} {symbol}: qty={desired_qty} stop={desired_stop} (dry_run)")
+        append_event(
+            event_path,
+            {
+                "event": action,
+                "symbol": symbol,
+                "qty": desired_qty,
+                "stop_price": desired_stop,
+                "order_id": None,
+                "dry_run": True,
+            },
+        )
+        return replace(state, stop_order_id=None)
+
+    order_id = _submit_stop_order(trading_client, symbol, desired_qty, desired_stop)
+    log(f"{action} {symbol}: qty={desired_qty} stop={desired_stop} order_id={order_id}")
+    append_event(
+        event_path,
+        {
+            "event": action,
+            "symbol": symbol,
+            "qty": desired_qty,
+            "stop_price": desired_stop,
+            "order_id": order_id,
+            "dry_run": False,
+        },
+    )
+    return replace(state, stop_order_id=order_id)
+
+
+def cancel_stop_order(
+    *,
+    trading_client,
+    symbol: str,
+    dry_run: bool,
+    log,
+    event_path: Path,
+) -> None:
+    open_orders = _load_open_orders(trading_client, symbol)
+    for order in open_orders:
+        if not _is_stop_order(order):
+            continue
+        if dry_run:
+            log(f"STOP_CANCEL {symbol}: order_id={getattr(order, 'id', None)} (dry_run)")
+            append_event(
+                event_path,
+                {
+                    "event": "STOP_CANCEL",
+                    "symbol": symbol,
+                    "order_id": getattr(order, "id", None),
+                    "dry_run": True,
+                },
+            )
             continue
         try:
-            trading_client.cancel_order_by_id(order_id)
+            trading_client.cancel_order_by_id(order.id)
+            append_event(
+                event_path,
+                {
+                    "event": "STOP_CANCEL",
+                    "symbol": symbol,
+                    "order_id": getattr(order, "id", None),
+                    "dry_run": False,
+                },
+            )
         except Exception:
             continue
 
-    if mismatched_stops:
-        open_orders = list(trading_client.get_orders())
-        sell_orders = [o for o in open_orders if _order_side(o) == "sell" and _is_open_status(_order_status(o))]
 
-    for order in sell_orders:
-        if _matching_stop_order(order, desired_qty, desired_stop):
-            state.stop_order_id = str(_order_attr(order, "id", "")) or state.stop_order_id
-            return state
+def submit_market_sell(trading_client, symbol: str, qty: int) -> Optional[str]:
+    from alpaca.trading.requests import MarketOrderRequest
+    from alpaca.trading.enums import OrderSide, TimeInForce
+    order = MarketOrderRequest(
+        symbol=symbol,
+        qty=qty,
+        side=OrderSide.SELL,
+        time_in_force=TimeInForce.DAY,
+    )
+    response = trading_client.submit_order(order)
+    return getattr(response, "id", None)
 
-    holding_orders = [
-        o for o in sell_orders
-        if _order_qty(o) >= int(desired_qty)
-    ]
-    if holding_orders:
-        related = [
-            {
-                "id": str(_order_attr(o, "id", "")),
-                "side": _order_side(o),
-                "type": _order_type(o),
-                "qty": _order_qty(o),
-            }
-            for o in holding_orders
-        ]
-        log(
-            f"STOP_SKIP_HELD {state.symbol}: existing sell order holds qty; not submitting new stop"
-        )
-        append_event(
-            {
-                "event": "STOP_SKIP_HELD",
-                "symbol": state.symbol,
-                "related_orders": related,
-            }
-        )
-        for order in holding_orders:
-            if _order_type(order) in {"stop", "stop_limit"}:
-                state.stop_order_id = str(_order_attr(order, "id", "")) or state.stop_order_id
-                break
-        return state
 
-    try:
-        order = _submit_stop_order(trading_client, state.symbol, desired_qty, desired_stop)
-    except APIError as exc:
-        if _api_error_is_insufficient_qty(exc):
-            related_orders = [
-                {
-                    "id": str(_order_attr(o, "id", "")),
-                    "side": _order_side(o),
-                    "type": _order_type(o),
-                    "qty": _order_qty(o),
-                }
-                for o in sell_orders
-            ]
-            append_event(
-                {
-                    "event": "STOP_SUBMIT_BLOCKED",
-                    "symbol": state.symbol,
-                    "reason": str(exc),
-                    "related_orders": related_orders,
-                }
+def manage_positions(
+    *,
+    trading_client,
+    md,
+    cfg: ExitConfig,
+    repo_root: Path,
+    dry_run: bool,
+    log,
+) -> None:
+    positions = trading_client.get_all_positions()
+    now_utc = datetime.now(timezone.utc)
+    now_et = now_utc.astimezone(ET)
+    state_store = PositionStateStore(resolve_state_dir(repo_root))
+    event_path = resolve_event_ledger(repo_root)
+
+    for pos in positions:
+        symbol = str(pos.symbol).upper()
+        qty = _safe_int(getattr(pos, "qty", None))
+        if qty is None or qty <= 0:
+            continue
+        current_price = _safe_float(getattr(pos, "current_price", None))
+        if current_price is None:
+            current_price = _safe_float(getattr(pos, "market_value", None))
+        if current_price is None:
+            continue
+
+        state = state_store.load(symbol)
+        if state is None:
+            entry_price = _safe_float(getattr(pos, "avg_entry_price", None))
+            if entry_price is None:
+                log(f"WARNING: missing entry price for {symbol}; skipping state creation")
+                continue
+            bars = md.get_daily_bars(symbol)
+            entry_day = now_et.date()
+            stop_price = compute_stop_price(bars, entry_day, cfg.stop_buffer_dollars)
+            if stop_price is None:
+                log(f"ERROR: no pivot low found for {symbol}; cannot create state")
+                continue
+            if (entry_price - stop_price) > cfg.max_risk_per_share:
+                log(f"ERROR: risk per share too large for {symbol}; cannot create state")
+                continue
+            template = compute_exit_levels(
+                entry_price=entry_price,
+                entry_qty=qty,
+                stop_price=stop_price,
+                cfg=cfg,
             )
-            log(f"STOP_SUBMIT_BLOCKED {state.symbol}: {exc}")
-            return state
-        raise
+            if template is None:
+                log(f"ERROR: invalid exit levels for {symbol}; cannot create state")
+                continue
+            state = replace(
+                template,
+                symbol=symbol,
+                entry_time=now_utc.timestamp(),
+                entry_qty=qty,
+                qty_remaining=qty,
+            )
+            log(
+                f"ENTER_PLANNED {symbol}: entry={state.entry_price} stop={state.stop_price} "
+                f"R={state.r_value} r1={state.r1_price} r2={state.r2_price}"
+            )
+            append_event(
+                event_path,
+                {
+                    "event": "ENTER_PLANNED",
+                    "symbol": symbol,
+                    "entry": state.entry_price,
+                    "stop": state.stop_price,
+                    "r_value": state.r_value,
+                    "r1": state.r1_price,
+                    "r2": state.r2_price,
+                },
+            )
+            log(
+                f"POSITION_STATE {symbol}: stage={state.stage} qty_remaining={state.qty_remaining}"
+            )
+            append_event(
+                event_path,
+                {
+                    "event": "POSITION_STATE",
+                    "symbol": symbol,
+                    "stage": state.stage,
+                    "qty_remaining": state.qty_remaining,
+                },
+            )
 
-    order_id = _order_attr(order, "id", None)
-    if order_id:
-        state.stop_order_id = str(order_id)
-    state.stop_price = desired_stop
-    state.last_stop_update_ts = datetime.utcnow().timestamp()
-    return state
+        state = replace(state, qty_remaining=qty, entry_qty=max(state.entry_qty, qty))
+
+        if state.stage != "CLOSED":
+            state = reconcile_stop_order(
+                trading_client=trading_client,
+                symbol=symbol,
+                qty=state.qty_remaining,
+                stop_price=state.stop_price,
+                now_et=now_et,
+                dry_run=dry_run,
+                log=log,
+                event_path=event_path,
+                state=state,
+            )
+
+        if state.stage in {"OPEN", "R1_TAKEN"} and current_price >= state.r2_price:
+            log(f"R2_HIT {symbol}: price={current_price} target={state.r2_price}")
+            append_event(
+                event_path,
+                {
+                    "event": "R2_HIT",
+                    "symbol": symbol,
+                    "price": current_price,
+                    "target": state.r2_price,
+                },
+            )
+            if state.qty_remaining > 0:
+                if dry_run:
+                    log(f"R2_SELL_SUBMIT {symbol}: qty={state.qty_remaining} (dry_run)")
+                    append_event(
+                        event_path,
+                        {
+                            "event": "R2_SELL_SUBMIT",
+                            "symbol": symbol,
+                            "qty": state.qty_remaining,
+                            "order_id": None,
+                            "dry_run": True,
+                        },
+                    )
+                else:
+                    order_id = submit_market_sell(trading_client, symbol, state.qty_remaining)
+                    log(
+                        f"R2_SELL_SUBMIT {symbol}: qty={state.qty_remaining} order_id={order_id}"
+                    )
+                    append_event(
+                        event_path,
+                        {
+                            "event": "R2_SELL_SUBMIT",
+                            "symbol": symbol,
+                            "qty": state.qty_remaining,
+                            "order_id": order_id,
+                            "dry_run": False,
+                        },
+                    )
+                cancel_stop_order(
+                    trading_client=trading_client,
+                    symbol=symbol,
+                    dry_run=dry_run,
+                    log=log,
+                    event_path=event_path,
+                )
+                state = replace(state, stage="CLOSED", qty_remaining=0)
+                state_store.save(state)
+            continue
+
+        if state.stage == "OPEN" and current_price >= state.r1_price:
+            log(f"R1_HIT {symbol}: price={current_price} target={state.r1_price}")
+            append_event(
+                event_path,
+                {
+                    "event": "R1_HIT",
+                    "symbol": symbol,
+                    "price": current_price,
+                    "target": state.r1_price,
+                },
+            )
+            r1_qty = min(state.r1_qty, state.qty_remaining)
+            if r1_qty > 0:
+                if dry_run:
+                    log(f"R1_SELL_SUBMIT {symbol}: qty={r1_qty} (dry_run)")
+                    append_event(
+                        event_path,
+                        {
+                            "event": "R1_SELL_SUBMIT",
+                            "symbol": symbol,
+                            "qty": r1_qty,
+                            "order_id": None,
+                            "dry_run": True,
+                        },
+                    )
+                else:
+                    order_id = submit_market_sell(trading_client, symbol, r1_qty)
+                    log(f"R1_SELL_SUBMIT {symbol}: qty={r1_qty} order_id={order_id}")
+                    append_event(
+                        event_path,
+                        {
+                            "event": "R1_SELL_SUBMIT",
+                            "symbol": symbol,
+                            "qty": r1_qty,
+                            "order_id": order_id,
+                            "dry_run": False,
+                        },
+                    )
+                state = apply_r1_transition(state, current_price)
+                if state.stage != "CLOSED":
+                    state = reconcile_stop_order(
+                        trading_client=trading_client,
+                        symbol=symbol,
+                        qty=state.qty_remaining,
+                        stop_price=state.stop_price,
+                        now_et=now_et,
+                        dry_run=dry_run,
+                        log=log,
+                        event_path=event_path,
+                        state=state,
+                    )
+            state_store.save(state)
+            continue
+
+        state_store.save(state)
