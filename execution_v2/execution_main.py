@@ -92,9 +92,10 @@ def _warn_legacy_alpaca_paper_env() -> None:
 
 
 def _get_alpaca_paper_trading_client() -> TradingClient:
-    from alpaca.trading.client import TradingClient
-
     _warn_legacy_alpaca_paper_env()
+    if os.getenv("DRY_RUN", "0") == "1":
+        _log("DRY_RUN=1; skipping ALPACA_PAPER client construction.")
+        raise RuntimeError("DRY_RUN=1 set; ALPACA_PAPER disabled")
     api_key = os.getenv("APCA_API_KEY_ID") or ""
     api_secret = os.getenv("APCA_API_SECRET_KEY") or ""
     base_url = os.getenv("APCA_API_BASE_URL") or ""
@@ -108,17 +109,21 @@ def _get_alpaca_paper_trading_client() -> TradingClient:
         if not value
     ]
     if missing:
+        _log(f"ALPACA_PAPER config missing: {', '.join(missing)}")
         raise RuntimeError(
             "Missing Alpaca paper credentials in environment "
             f"({', '.join(missing)})"
         )
     normalized = _normalize_base_url(base_url)
     if normalized != PAPER_BASE_URL:
+        _log(f"ALPACA_PAPER base URL invalid: {base_url}")
         raise RuntimeError(
             "APCA_API_BASE_URL must be "
             f"{PAPER_BASE_URL} for ALPACA_PAPER (got {base_url})"
         )
-    return TradingClient(api_key, api_secret, paper=True, base_url=normalized)
+    from alpaca.trading.client import TradingClient
+
+    return TradingClient(api_key, api_secret, paper=True, url_override=normalized)
 
 
 def _select_trading_client(execution_mode: str) -> TradingClient:
@@ -237,6 +242,10 @@ def run_once(cfg) -> None:
     )
     sell_cfg = sell_loop.SellLoopConfig(candidates_csv=cfg.candidates_csv)
     repo_root = Path(__file__).resolve().parents[1]
+    if os.getenv("DRY_RUN", "0") == "1":
+        _log(f"DRY_RUN=1 active; execution_mode={cfg.execution_mode}")
+    else:
+        _log(f"Execution mode={cfg.execution_mode}")
     if cfg.execution_mode != "PAPER_SIM":
         from execution_v2.market_data import from_env as market_data_from_env
 
@@ -245,6 +254,14 @@ def run_once(cfg) -> None:
         except RuntimeError as exc:
             if cfg.execution_mode == "ALPACA_PAPER":
                 _log(f"ALPACA_PAPER disabled: {exc}")
+                return
+            raise
+        except Exception as exc:
+            if cfg.execution_mode == "ALPACA_PAPER":
+                _log(
+                    "ALPACA_PAPER disabled: unexpected "
+                    f"{type(exc).__name__}: {exc}"
+                )
                 return
             raise
         md = market_data_from_env()
