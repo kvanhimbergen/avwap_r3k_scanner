@@ -99,3 +99,69 @@ class CumulativeAggregate:
     missing_price_trade_count: int
     fees_total: float
     symbols_traded: list[str]
+
+
+@dataclass(frozen=True)
+class ExitEvent:
+    event_id: str
+    schema_version: int
+    event_type: str
+    symbol: str
+    position_id: Optional[str]
+    trade_id: Optional[str]
+    entry_id: Optional[str]
+    qty: Optional[float]
+    price: Optional[float]
+    stop_price: Optional[float]
+    stop_basis: Optional[str]
+    stop_action: Optional[str]
+    reason: Optional[str]
+    entry_price: Optional[float]
+    entry_ts_utc: Optional[str]
+    entry_ts_ny: Optional[str]
+    entry_date_ny: Optional[str]
+    exit_ts_utc: Optional[str]
+    exit_ts_ny: Optional[str]
+    exit_date_ny: Optional[str]
+    ts_utc: str
+    ts_ny: str
+    date_ny: str
+    source: str
+    strategy_id: str
+    sleeve_id: str
+    metadata: dict
+
+
+@dataclass(frozen=True)
+class ExitIngestResult:
+    events: list[ExitEvent]
+    warnings: list[str]
+    source_metadata: dict[str, str]
+
+
+@dataclass(frozen=True)
+class ExitTrade:
+    trade_id: str
+    position_id: Optional[str]
+    symbol: str
+    direction: str
+    entry_ts_utc: str
+    exit_ts_utc: str
+    entry_date_ny: str
+    exit_date_ny: str
+    qty: float
+    entry_price: Optional[float]
+    exit_price: Optional[float]
+    stop_price: Optional[float]
+    stop_basis: Optional[str]
+    reason: Optional[str]
+    source: str
+    strategy_id: str
+    sleeve_id: str
+
+
+@dataclass(frozen=True)
+class ExitReconstructionResult:
+    trades: list[ExitTrade]
+    warnings: list[str]
+    source_metadata: dict[str, str]

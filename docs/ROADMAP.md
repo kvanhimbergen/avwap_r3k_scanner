@@ -88,9 +88,9 @@
 - [x] Canonical schemas for entries and fills
 - [x] Deterministic ledger parsing
 - [x] Stable hash-based IDs (entries)
-- [ ] Canonical exit event schema
-- [ ] Position / trade ID linkage
-- [ ] Exit telemetry ingestion
+- [x] Canonical exit event schema
+- [x] Position / trade ID linkage
+- [x] Exit telemetry ingestion
 
 ---
 
@@ -99,11 +99,11 @@
 **Status:** ⏭️ NEXT
 
 ### Tasks
-- [ ] Structured exit events
-- [ ] MAE / MFE computation
-- [ ] Stop efficiency metrics
-- [ ] Broker-independent exit simulation
-- [ ] Trade reconstruction from real exits
+- [x] Structured exit events
+- [x] MAE / MFE computation
+- [x] Stop efficiency metrics
+- [x] Broker-independent exit simulation
+- [x] Trade reconstruction from real exits
 
 ---
 
