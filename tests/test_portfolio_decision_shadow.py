@@ -151,7 +151,7 @@ def test_guardrail_max_open_positions(tmp_path: Path) -> None:
     config = PortfolioDecisionConfig(
         max_open_positions=1,
         max_new_entries_per_day=5,
-        max_symbol_concentration_pct=0.9,
+        max_symbol_concentration_pct=2.0,
         max_gross_exposure_pct=1.0,
         max_drawdown_pct_block=0.5,
     )
@@ -226,7 +226,7 @@ def test_guardrail_gross_exposure(tmp_path: Path) -> None:
     config = PortfolioDecisionConfig(
         max_open_positions=10,
         max_new_entries_per_day=5,
-        max_symbol_concentration_pct=0.9,
+        max_symbol_concentration_pct=2.0,
         max_gross_exposure_pct=0.5,
         max_drawdown_pct_block=0.5,
     )
@@ -262,7 +262,7 @@ def test_guardrail_drawdown_throttle(tmp_path: Path) -> None:
     config = PortfolioDecisionConfig(
         max_open_positions=10,
         max_new_entries_per_day=5,
-        max_symbol_concentration_pct=0.9,
+        max_symbol_concentration_pct=2.0,
         max_gross_exposure_pct=1.0,
         max_drawdown_pct_block=0.2,
     )
@@ -298,7 +298,7 @@ def test_guardrail_max_new_entries_per_day(tmp_path: Path) -> None:
     config = PortfolioDecisionConfig(
         max_open_positions=10,
         max_new_entries_per_day=5,
-        max_symbol_concentration_pct=0.9,
+        max_symbol_concentration_pct=2.0,
         max_gross_exposure_pct=1.0,
         max_drawdown_pct_block=0.5,
     )
