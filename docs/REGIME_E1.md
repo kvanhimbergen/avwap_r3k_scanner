@@ -21,6 +21,8 @@ Symbols used:
 - `SPY` for volatility, drawdown, and trend.
 - `IWM` for breadth fallback (ratio vs `SPY`) when a broad symbol universe is unavailable.
 
+Cache refresh includes a small, fixed benchmark ETF set (e.g., SPY/IWM/IWV/QQQ and a few asset-class anchors) to ensure regime labeling inputs are present. Benchmarks are cache-only and are **not** scanned as trade candidates.
+
 ## Feature Definitions (Deterministic)
 All features are computed using data **on or before** `ny_date`.
 
