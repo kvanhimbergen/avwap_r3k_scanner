@@ -139,22 +139,22 @@
 **Objective:** Decide *how much* to trade each signal and *how to size the portfolio*.
 
 ### Tasks
-- [ ] Define canonical **Portfolio Snapshot** schema
+- [x] Define canonical **Portfolio Snapshot** schema
   - capital
   - gross exposure
   - net exposure
   - open positions
-- [ ] Compute realized PnL (net of fees)
-- [ ] Compute unrealized PnL
-- [ ] Compute drawdown (peak-to-trough)
-- [ ] Compute rolling volatility of returns
-- [ ] Per-symbol contribution analysis
-- [ ] Deterministic daily portfolio snapshot writer
-- [ ] Capital-aware position sizing function
-- [ ] Allocation guardrails (concentration, correlation placeholder)
-- [ ] Deterministic serialization + ordering
-- [ ] Unit tests for all portfolio metrics
-- [ ] No changes to signal generation (measurement only)
+- [x] Compute realized PnL (net of fees)
+- [x] Compute unrealized PnL
+- [x] Compute drawdown (peak-to-trough)
+- [x] Compute rolling volatility of returns
+- [x] Per-symbol contribution analysis
+- [x] Deterministic daily portfolio snapshot writer
+- [x] Capital-aware position sizing function
+- [x] Allocation guardrails (concentration, correlation placeholder)
+- [x] Deterministic serialization + ordering
+- [x] Unit tests for all portfolio metrics
+- [x] No changes to signal generation (measurement only)
 
 **Exit Criteria**
 - Daily portfolio snapshot written deterministically
