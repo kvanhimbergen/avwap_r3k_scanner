@@ -324,20 +324,20 @@ or portfolio decisions.
 
 ## Phase E1 — Regime Detection (Measurement Only)
 
-**Status:** ⏭️ NOT STARTED
+**Status:** ✅ COMPLETE
 
 **Objective:**  
 Detect and classify market regimes using offline data, producing **descriptive**
 regime signals without impacting risk, portfolio decisions, or execution.
 
 ### Tasks
-- [ ] Define regime taxonomy (e.g., risk-on, risk-off, neutral, stressed)
-- [ ] Select allowable regime inputs (volatility, breadth, drawdown, trend)
-- [ ] Implement deterministic regime classifiers (no ML, no adaptation)
-- [ ] Persist regime outputs as append-only analytics artifacts
-- [ ] Historical regime labeling for backtests
-- [ ] Offline validation against historical periods
-- [ ] Unit tests for regime classification determinism
+- [x] Define regime taxonomy (e.g., risk-on, risk-off, neutral, stressed)
+- [x] Select allowable regime inputs (volatility, breadth, drawdown, trend)
+- [x] Implement deterministic regime classifiers (no ML, no adaptation)
+- [x] Persist regime outputs as append-only analytics artifacts
+- [x] Historical regime labeling for backtests
+- [x] Offline validation against historical periods
+- [x] Unit tests for regime classification determinism
 
 **Constraints**
 - Measurement-only (no execution or portfolio effects)
