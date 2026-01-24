@@ -19,3 +19,4 @@ ledger/<book_id>/<YYYY-MM-DD>.jsonl
 - Ledger path: `ledger/SCHWAB_401K_MANUAL/<YYYY-MM-DD>.jsonl`
 - Idempotency: tickets are keyed by deterministic `intent_id`; re-runs skip `MANUAL_TICKET_SENT` intents found in the ledger.
 - CLI smoke runner: see `docs/SCHWAB_MANUAL.md` for safe usage (`SLACK_POST_ENABLED=1` required).
+- Read-only snapshots + reconciliation: see `docs/SCHWAB_READONLY.md` (fixture-backed; no execution wiring).

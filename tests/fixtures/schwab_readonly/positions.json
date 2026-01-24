@@ -1,0 +1,14 @@
+[
+  {
+    "symbol": "AAPL",
+    "qty": 10,
+    "cost_basis": "1500.00",
+    "market_value": "1700.00"
+  },
+  {
+    "symbol": "MSFT",
+    "qty": 5,
+    "cost_basis": "1000.50",
+    "market_value": "1100.75"
+  }
+]
