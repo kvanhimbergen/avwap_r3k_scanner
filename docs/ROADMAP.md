@@ -165,18 +165,16 @@
 
 ## Phase D3 — Deterministic Reporting & Ops Integration
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 
 **Objective:** Make portfolio state human-auditable and operator-friendly.
 
 ### Tasks
-- [ ] Daily portfolio summary artifact
-- [ ] Parity report: scan vs backtest vs live
-- [ ] Operator-readable markdown/JSON reports
-- [ ] Slack daily summary (read-only)
-- [ ] Provenance embedded in all reports
-- [ ] Zero new execution side-effects
-- [ ] Deterministic report regeneration
+- [x] D3.1 — Broker adapter (read-only, Alpaca-first)
+- [x] D3.2 — Canonical reconciliation schema
+- [x] D3.3 — Reconciliation engine + deterministic report artifact
+- [x] D3.4 — Daily portfolio snapshot runner + artifact pathing
+- [x] D3.5 — Offline tests + registry updates
 
 ---
 

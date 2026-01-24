@@ -37,6 +37,8 @@ def main() -> int:
         root / "tests" / "test_analytics_reconstruction.py",
         root / "tests" / "test_analytics_storage.py",
         root / "tests" / "test_portfolio_snapshot.py",
+        root / "tests" / "test_portfolio_daily_snapshot.py",
+        root / "tests" / "test_reconciliation.py",
         root / "tests" / "test_exit_event_determinism.py",
         root / "tests" / "test_exit_event_schema.py",
         root / "tests" / "test_exit_mae_mfe.py",

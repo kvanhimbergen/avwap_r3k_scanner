@@ -274,6 +274,7 @@ def build_portfolio_snapshot(
     price_map: Optional[dict[str, float]] = None,
     ledger_paths: Optional[list[str]] = None,
     input_hashes: Optional[dict[str, str]] = None,
+    extra_reason_codes: Optional[list[str]] = None,
     volatility_window: int = DEFAULT_VOLATILITY_WINDOW,
 ) -> PortfolioSnapshot:
     reason_codes: list[str] = []
@@ -313,10 +314,11 @@ def build_portfolio_snapshot(
         set(realized_reason_codes + unrealized_reason_codes + position_reason_codes)
     )
 
+    combined_reason_codes = sorted(set(reason_codes + (extra_reason_codes or [])))
     provenance = {
         "ledger_paths": sorted(set(ledger_paths or [])),
         "input_hashes": dict(sorted((input_hashes or {}).items())),
-        "reason_codes": sorted(set(reason_codes)),
+        "reason_codes": combined_reason_codes,
     }
 
     return PortfolioSnapshot(

@@ -1,0 +1,16 @@
+[
+  {
+    "symbol": "AAPL",
+    "qty": 10,
+    "avg_entry_price": 100.0,
+    "market_value": 1010.0,
+    "last_price": 101.0
+  },
+  {
+    "symbol": "MSFT",
+    "qty": 5,
+    "avg_entry_price": 200.0,
+    "market_value": 1010.0,
+    "last_price": 202.0
+  }
+]

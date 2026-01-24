@@ -188,3 +188,45 @@ class PortfolioSnapshot:
     pnl: dict[str, Optional[float] | list[str]]
     metrics: dict[str, object]
     provenance: dict[str, object]
+
+
+@dataclass(frozen=True)
+class BrokerPosition:
+    symbol: str
+    qty: float
+    avg_entry_price: Optional[float]
+    market_value: Optional[float]
+    last_price: Optional[float]
+
+
+@dataclass(frozen=True)
+class BrokerOrder:
+    order_id: str
+    symbol: str
+    side: str
+    qty: float
+    filled_qty: Optional[float]
+    status: Optional[str]
+    submitted_at: Optional[str]
+
+
+@dataclass(frozen=True)
+class ReconciliationDelta:
+    delta_type: str
+    symbol: str
+    field: str
+    expected: Optional[object]
+    observed: Optional[object]
+    severity: str
+    reason_code: str
+
+
+@dataclass(frozen=True)
+class ReconciliationReport:
+    schema_version: int
+    as_of_date_ny: str
+    run_id: str
+    source_paths: list[str]
+    counts: dict[str, int]
+    deltas: list[ReconciliationDelta]
+    reason_codes: list[str]
