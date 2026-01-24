@@ -6,9 +6,9 @@ from pathlib import Path
 from execution_v2 import portfolio_decision_enforce
 
 
-def _write_decision_batch(base_dir: Path, date_ny: str, decisions: list[dict]) -> Path:
+def _write_decision_batch(base_dir: Path, date_ny: str, decisions: list[dict], payload_date_ny: str | None = None) -> Path:
     payload = {
-        "date": date_ny,
+        "date": (payload_date_ny or date_ny),
         "generated_at": f"{date_ny}T00:00:00+00:00",
         "decisions": decisions,
     }
@@ -53,7 +53,7 @@ def test_missing_decision_file_blocks(tmp_path) -> None:
 
 def test_date_mismatch_blocks(tmp_path) -> None:
     date_ny = "2024-01-02"
-    _write_decision_batch(tmp_path, "2024-01-01", [_decision("2024-01-01", "AAPL")])
+    _write_decision_batch(tmp_path, date_ny, [_decision("2024-01-01", "AAPL")], payload_date_ny="2024-01-01")
     context = portfolio_decision_enforce.load_decision_context(date_ny, base_dir=str(tmp_path))
     result = portfolio_decision_enforce.evaluate_action("entry", "AAPL", context)
     assert result.decision == "BLOCK"
