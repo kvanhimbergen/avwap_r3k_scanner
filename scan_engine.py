@@ -72,6 +72,19 @@ CANDIDATE_COLUMNS = [
     "Setup_Structure_State",
 ]
 
+BENCHMARK_TICKERS = (
+    "SPY",
+    "IWM",
+    "IWV",
+    "QQQ",
+    "TLT",
+    "IEF",
+    "HYG",
+    "LQD",
+    "GLD",
+    "UUP",
+)
+
 
 def _cfg():
     return _ACTIVE_CFG
@@ -565,6 +578,7 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
     hist_path = Path("cache") / "ohlcv_history.parquet"
     history = cs.read_parquet(str(hist_path))
     batch_size = 200
+    benchmark_tickers = [t for t in BENCHMARK_TICKERS if t not in set(filtered)]
 
     # First-run / missing-cache backfill: must exceed 80 bars
     if history is None or history.empty:
@@ -587,6 +601,20 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
             # Do not silently swallow; at least count it
             PBT_DIAG["history_refresh_errors"] += 1
             continue
+
+    if benchmark_tickers:
+        try:
+            req = StockBarsRequest(
+                symbol_or_symbols=benchmark_tickers,
+                timeframe=TimeFrame.Day,
+                start=hist_start,
+            )
+            raw_new = data_client.get_stock_bars(req).df
+            if raw_new is not None and not raw_new.empty:
+                newdata = standardize_alpaca_to_yf(raw_new)
+                history = cs.upsert_history(history, newdata)
+        except Exception:
+            PBT_DIAG["benchmark_refresh_errors"] += 1
 
     ## Persist AFTER refresh
     os.makedirs(hist_path.parent, exist_ok=True)
