@@ -64,6 +64,14 @@ Records are written to:
 ledger/REGIME_E1/{ny_date}.jsonl
 ```
 
+### Date Resolution
+If the requested `ny_date` falls on a weekend/holiday **or** there is no SPY bar for that date in the local history,
+the runner resolves to the most recent available SPY trading date and computes features as-of that date. The ledger
+file name remains the *requested* `ny_date` to preserve operator intent, while the record includes:
+- `requested_ny_date` (original request)
+- `resolved_ny_date` (actual trading date used)
+- `reason_codes` includes `resolved_to_last_trading_day` when resolution occurs
+
 Two record types:
 - `REGIME_E1_SIGNAL` (successful classification)
 - `REGIME_E1_SKIPPED` (missing inputs)
@@ -79,12 +87,12 @@ Each record includes:
 
 ### Example (signal)
 ```json
-{"as_of_utc":"2024-12-31T16:00:00+00:00","confidence":0.8,"inputs_snapshot":{"breadth":{"method":"iwm_spy_ratio"},"drawdown_closes":[...],"last_date":"2024-12-31","ny_date":"2024-12-31","spy_close":123.45,"trend_ma_long":120.1,"trend_ma_short":122.3,"vol_returns":[...]},"ny_date":"2024-12-31","provenance":{"module":"analytics.regime_e1_runner"},"reason_codes":["vol_calm","drawdown_shallow","trend_positive","breadth_strong"],"record_type":"REGIME_E1_SIGNAL","regime_id":"...","regime_label":"RISK_ON","schema_version":1,"signals":{"breadth":{"lookback":50,"method":"iwm_spy_ratio","value":1.0},"drawdown":{"lookback":63,"value":-0.02},"trend":{"lookback_long":200,"lookback_short":50,"ma_long":120.1,"ma_short":122.3,"value":0.018},"volatility":{"lookback":20,"value":0.12}}}
+{"as_of_utc":"2024-12-31T16:00:00+00:00","confidence":0.8,"inputs_snapshot":{"breadth":{"method":"iwm_spy_ratio"},"drawdown_closes":[...],"last_date":"2024-12-31","ny_date":"2024-12-31","spy_close":123.45,"trend_ma_long":120.1,"trend_ma_short":122.3,"vol_returns":[...]},"ny_date":"2024-12-31","provenance":{"module":"analytics.regime_e1_runner"},"reason_codes":["vol_calm","drawdown_shallow","trend_positive","breadth_strong"],"record_type":"REGIME_E1_SIGNAL","regime_id":"...","regime_label":"RISK_ON","requested_ny_date":"2024-12-31","resolved_ny_date":"2024-12-31","schema_version":1,"signals":{"breadth":{"lookback":50,"method":"iwm_spy_ratio","value":1.0},"drawdown":{"lookback":63,"value":-0.02},"trend":{"lookback_long":200,"lookback_short":50,"ma_long":120.1,"ma_short":122.3,"value":0.018},"volatility":{"lookback":20,"value":0.12}}}
 ```
 
 ### Example (skipped)
 ```json
-{"as_of_utc":"2024-12-31T16:00:00+00:00","inputs_snapshot":{"history_path":"cache/ohlcv_history.parquet","ny_date":"2024-12-31"},"ny_date":"2024-12-31","provenance":{"module":"analytics.regime_e1_runner"},"reason_codes":["missing_history_path"],"record_type":"REGIME_E1_SKIPPED","regime_id":"...","schema_version":1}
+{"as_of_utc":"2024-12-31T16:00:00+00:00","inputs_snapshot":{"history_path":"cache/ohlcv_history.parquet","ny_date":"2024-12-31"},"ny_date":"2024-12-31","provenance":{"module":"analytics.regime_e1_runner"},"reason_codes":["missing_history_path"],"record_type":"REGIME_E1_SKIPPED","regime_id":"...","requested_ny_date":"2024-12-31","resolved_ny_date":"2024-12-31","schema_version":1}
 ```
 
 ## How to Run
