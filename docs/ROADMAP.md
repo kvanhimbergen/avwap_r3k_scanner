@@ -199,21 +199,21 @@
 - [x] Fail-closed handling for missing candidates and portfolio snapshots
 - [x] Offline fixture-based tests + registry updates
 
-## Phase 2B — Enforcement (NOT STARTED)
+## Phase 2B — Enforcement (COMPLETE)
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 
 **Objective:** Enforce Phase 2A ALLOW/BLOCK decisions for new entries (exits never blocked), behind an explicit feature flag, with fail-closed behavior and offline deterministic tests.
 
 ### Tasks
-- [ ] Add feature flag `PORTFOLIO_DECISION_ENFORCE=1` (default OFF)
-- [ ] Add decision reader + schema validation for `analytics/artifacts/portfolio_decisions/YYYY-MM-DD.json`
-- [ ] Enforce ALLOW/BLOCK for **new entries only** in the execution layer (no alpha changes)
-- [ ] Fail-closed: missing/invalid/mismatched-date decision artifact → BLOCK new entries with explicit reason codes
-- [ ] Deterministic enforcement telemetry artifact (append-only JSONL) with provenance + reason codes
-- [ ] Slack operator alert summarizing blocked entries when enforcement is enabled
-- [ ] Offline fixture-based tests for all enforcement paths; register in `tests/run_tests.py`
-- [ ] Runbook update: how to enable/disable, expected fail-closed behavior, artifact locations
+- [x] Add feature flag `PORTFOLIO_DECISION_ENFORCE=1` (default OFF)
+- [x] Add decision reader + schema validation for `analytics/artifacts/portfolio_decisions/YYYY-MM-DD.json`
+- [x] Enforce ALLOW/BLOCK for **new entries only** in the execution layer (no alpha changes)
+- [x] Fail-closed: missing/invalid/mismatched-date decision artifact → BLOCK new entries with explicit reason codes
+- [x] Deterministic enforcement telemetry artifact (append-only JSONL) with provenance + reason codes
+- [x] Slack operator alert summarizing blocked entries when enforcement is enabled
+- [x] Offline fixture-based tests for all enforcement paths; register in `tests/run_tests.py`
+- [x] Runbook update: how to enable/disable, expected fail-closed behavior, artifact locations
 
 **Exit Criteria**
 - Enforcement is reversible (flagged), deterministic, and fail-closed

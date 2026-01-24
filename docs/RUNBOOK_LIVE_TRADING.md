@@ -18,6 +18,7 @@
 - **Caps + allowlist:** Even when LIVE is enabled, orders are blocked if they exceed daily caps (orders/positions/notional) or are not on the allowlist (if configured).
 - **Kill switch:** Setting `KILL_SWITCH=1` or creating the `KILL_SWITCH` file **immediately disables LIVE** and forces DRY_RUN behavior.
 - **Phase C constraints (optional):** When `PHASE_C=1`, LIVE also requires a one-day NY date permit and a single-symbol allowlist (see §4.6).
+- **Portfolio decision enforcement (optional):** When enabled, **new entries only** are blocked/allowed by the Phase 2A portfolio decisions. Exits are never blocked, and missing/invalid decision files **fail-closed** (see §4.7).
 
 ## 3) Preconditions / Pre-LIVE Checklist
 **Must be true before enabling LIVE:**
@@ -137,6 +138,42 @@ ALLOWLIST_SYMBOLS=SYMBOL         # must contain exactly one symbol
 - [ ] Verify logs show Phase C PASS reason line.
 - [ ] After close: re-enable `DRY_RUN=1` (or remove `LIVE_TRADING=1`).
 - [ ] Reconcile live ledger and broker fills before next session.
+
+### 4.7 Portfolio Decision Enforcement (Phase 2B)
+
+Portfolio decision enforcement blocks **new entries only** using the daily Phase 2A decision artifact.
+It is **OFF by default** and **fail-closed** when enabled.
+
+**Enable (explicit opt-in):**
+```bash
+PORTFOLIO_DECISION_ENFORCE=1
+```
+
+**Disable / rollback:**
+```bash
+PORTFOLIO_DECISION_ENFORCE=0
+```
+Removing the env var entirely also disables enforcement.
+
+**Fail-closed behavior (when enabled):**
+- Missing or invalid decision file → **BLOCK** new entries
+- Date mismatch → **BLOCK** new entries
+- Missing symbol in batch → **BLOCK** new entry for that symbol
+
+**Artifacts:**
+- Decisions (Phase 2A): `analytics/artifacts/portfolio_decisions/YYYY-MM-DD.json`
+- Enforcement telemetry (Phase 2B): `analytics/artifacts/portfolio_decisions/enforcement/YYYY-MM-DD.jsonl`
+
+**Slack alert:** When enforcement is enabled and ≥1 entry is blocked, a single alert is sent:
+```
+Portfolio decision enforcement blocked entries
+enforcement=1 date_ny=YYYY-MM-DD blocked=[SYM1, SYM2] reasons=[...]
+```
+
+**Operator verification:**
+- Confirm decision file exists for today’s NY date.
+- Confirm enforcement telemetry JSONL is written when blocks occur.
+- To rollback quickly, set `PORTFOLIO_DECISION_ENFORCE=0` and restart the service.
 
 ## 5) Verification Checklist (prove LIVE is enabled)
 

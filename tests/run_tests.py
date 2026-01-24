@@ -50,6 +50,7 @@ def main() -> int:
         root / "tests" / "test_ci_docs_trust.py",
         root / "tests" / "test_portfolio_decision_contract.py",
         root / "tests" / "test_portfolio_decision_shadow.py",
+        root / "tests" / "test_portfolio_decision_enforcement.py",
         root / "tests" / "test_pytest_collect_only_regression.py",
         root / "tests" / "test_determinism.py",
         root / "tests" / "test_execution_v2_live_gate.py",

@@ -26,6 +26,7 @@ from execution_v2 import alpaca_paper
 from execution_v2 import paper_sim
 from execution_v2 import clocks
 from execution_v2 import portfolio_decisions
+from execution_v2 import portfolio_decision_enforce
 from execution_v2.orders import generate_idempotency_key
 from execution_v2.state_store import StateStore
 
@@ -314,6 +315,25 @@ def _init_decision_record(cfg, candidates_snapshot: dict, now_utc: datetime) -> 
     return record
 
 
+def _finalize_portfolio_enforcement(
+    *,
+    records: list[dict],
+    date_ny: str,
+    context: portfolio_decision_enforce.DecisionContext | None,
+) -> None:
+    if not context:
+        return
+    enforcement_path = portfolio_decision_enforce.resolve_enforcement_artifact_path(date_ny)
+    portfolio_decision_enforce.write_enforcement_records(records, enforcement_path)
+    blocked_symbols, reason_codes = portfolio_decision_enforce.summarize_blocked_records(records)
+    portfolio_decision_enforce.send_blocked_alert(
+        date_ny=date_ny,
+        blocked_symbols=blocked_symbols,
+        reason_codes=reason_codes,
+        slack_sender=slack_alert,
+    )
+
+
 def run_once(cfg) -> None:
     decision_ts_utc = datetime.now(timezone.utc)
     candidates_snapshot = _snapshot_candidates_csv(cfg.candidates_csv)
@@ -542,6 +562,10 @@ def run_once(cfg) -> None:
             )
         decision_record["intents"]["intents"] = intent_projection
         decision_record["intents"]["intent_count"] = len(intent_projection)
+        enforcement_context = None
+        enforcement_records: list[dict] = []
+        if portfolio_decision_enforce.enforcement_enabled():
+            enforcement_context = portfolio_decision_enforce.load_decision_context(decision_record["ny_date"])
         if cfg.execution_mode != "PAPER_SIM":
             decision_record["inputs"]["constraints_snapshot"]["allowlist_symbols"] = (
                 sorted(allowlist) if allowlist else None
@@ -603,6 +627,39 @@ def run_once(cfg) -> None:
                         {"symbol": intent.symbol, "reason": paper_reason}
                     )
                     continue
+                if enforcement_context:
+                    enforcement_result = portfolio_decision_enforce.evaluate_action(
+                        "entry", intent.symbol, enforcement_context
+                    )
+                    enforcement_records.append(
+                        portfolio_decision_enforce.build_enforcement_record(
+                            date_ny=enforcement_context.date_ny,
+                            symbol=enforcement_result.symbol,
+                            decision=enforcement_result.decision,
+                            enforced=enforcement_result.enforced,
+                            reason_codes=enforcement_result.reason_codes,
+                            decision_id=enforcement_result.decision_id,
+                            decision_artifact_path=enforcement_context.artifact_path,
+                            decision_batch_generated_at=(
+                                enforcement_context.batch.generated_at
+                                if enforcement_context.batch
+                                else None
+                            ),
+                        )
+                    )
+                    if enforcement_result.decision == "BLOCK":
+                        reason_codes = ",".join(enforcement_result.reason_codes)
+                        _log(
+                            "Gate PORTFOLIO_DECISION FAIL "
+                            f"{intent.symbol}: {reason_codes}"
+                        )
+                        decision_record["actions"]["skipped"].append(
+                            {
+                                "symbol": intent.symbol,
+                                "reason": f"portfolio_decision_block:{reason_codes}",
+                            }
+                        )
+                        continue
                 if allowlist and intent.symbol.upper() not in allowlist:
                     _log(f"Gate ALPACA_PAPER allowlist would block {intent.symbol}")
                 if _has_open_order_or_position(trading_client, intent.symbol):
@@ -723,6 +780,11 @@ def run_once(cfg) -> None:
             _log(
                 f"ALPACA_PAPER: orders_submitted={submitted} fills_received={fills} ledger={ledger_path}"
             )
+            _finalize_portfolio_enforcement(
+                records=enforcement_records,
+                date_ny=decision_record["ny_date"],
+                context=enforcement_context,
+            )
             return
 
         for intent in intents:
@@ -730,6 +792,39 @@ def run_once(cfg) -> None:
             if effective_dry_run and allowlist and intent.symbol.upper() not in allowlist:
                 _log(f"Gate DRY_RUN allowlist would block {intent.symbol}")
 
+            if enforcement_context:
+                enforcement_result = portfolio_decision_enforce.evaluate_action(
+                    "entry", intent.symbol, enforcement_context
+                )
+                enforcement_records.append(
+                    portfolio_decision_enforce.build_enforcement_record(
+                        date_ny=enforcement_context.date_ny,
+                        symbol=enforcement_result.symbol,
+                        decision=enforcement_result.decision,
+                        enforced=enforcement_result.enforced,
+                        reason_codes=enforcement_result.reason_codes,
+                        decision_id=enforcement_result.decision_id,
+                        decision_artifact_path=enforcement_context.artifact_path,
+                        decision_batch_generated_at=(
+                            enforcement_context.batch.generated_at
+                            if enforcement_context.batch
+                            else None
+                        ),
+                    )
+                )
+                if enforcement_result.decision == "BLOCK":
+                    reason_codes = ",".join(enforcement_result.reason_codes)
+                    _log(
+                        "Gate PORTFOLIO_DECISION FAIL "
+                        f"{intent.symbol}: {reason_codes}"
+                    )
+                    decision_record["actions"]["skipped"].append(
+                        {
+                            "symbol": intent.symbol,
+                            "reason": f"portfolio_decision_block:{reason_codes}",
+                        }
+                    )
+                    continue
             if _has_open_order_or_position(trading_client, intent.symbol):
                 _log(f"SKIP {intent.symbol}: open order/position exists")
                 decision_record["actions"]["skipped"].append(
@@ -831,6 +926,11 @@ def run_once(cfg) -> None:
                     throttle_seconds=300,
                 )
 
+        _finalize_portfolio_enforcement(
+            records=enforcement_records,
+            date_ny=decision_record["ny_date"],
+            context=enforcement_context,
+        )
         trim_intents = store.pop_trim_intents()
         if not trim_intents:
             return
