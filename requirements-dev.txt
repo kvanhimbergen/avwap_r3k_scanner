@@ -1,0 +1,4 @@
+-r requirements.txt
+alpaca-py==0.43.2
+
+pytest==7.4.4

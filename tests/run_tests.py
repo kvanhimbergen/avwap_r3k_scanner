@@ -20,7 +20,7 @@ def _pytest_available() -> bool:
 def main() -> int:
     if not _pytest_available():
         print("FAIL: pytest is not installed.")
-        print("Install it with: pip install -r requirements.txt")
+        print("Install it with: pip install -r requirements-dev.txt")
         print("Or: pip install pytest")
         return 1
 

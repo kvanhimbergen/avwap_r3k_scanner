@@ -56,7 +56,7 @@ Keep this commit hash handy — it should later match the droplet.
 source venv/bin/activate
 
 2.2 Install/update dependencies (safe to re-run)
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 3. Run local safety checks (MANDATORY)
 3.1 Run minimal test harness
@@ -130,7 +130,7 @@ Confirm this matches the MacBook commit hash.
 source venv/bin/activate
 
 7.2 Install/update dependencies
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 8. Verify universe snapshot presence (CRITICAL)
 8.1 Confirm snapshot exists
