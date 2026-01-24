@@ -35,6 +35,7 @@ def main() -> int:
         root / "tests" / "test_analytics_metrics.py",
         root / "tests" / "test_analytics_metrics_storage.py",
         root / "tests" / "test_analytics_reconstruction.py",
+        root / "tests" / "test_book_router.py",
         root / "tests" / "test_analytics_storage.py",
         root / "tests" / "test_portfolio_snapshot.py",
         root / "tests" / "test_portfolio_daily_snapshot.py",
