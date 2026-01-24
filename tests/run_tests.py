@@ -75,6 +75,8 @@ def main() -> int:
         root / "tests" / "test_schwab_readonly_reconciliation.py",
         root / "tests" / "test_schwab_readonly_schemas.py",
         root / "tests" / "test_schwab_readonly_storage.py",
+        root / "tests" / "test_regime_e1_classifier.py",
+        root / "tests" / "test_regime_e1_no_execution_imports.py",
         root / "tests" / "test_universe.py",
         root / "tests" / "test_setup_context_contract.py",
     ]
