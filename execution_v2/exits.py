@@ -114,7 +114,7 @@ class PositionStateStore:
 
     def save(self, state: ExitPositionState) -> None:
         path = self._path(state.symbol)
-        path.write_text(json.dumps(state.to_dict(), sort_keys=True, indent=2))
+        path.write_text(json.dumps(state.to_dict(), sort_keys=True, indent=2, default=str))
 
     def delete(self, symbol: str) -> None:
         path = self._path(symbol)
@@ -134,7 +134,7 @@ def append_event(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {"ts_utc": datetime.now(timezone.utc).isoformat(), **payload}
     with path.open("a") as handle:
-        handle.write(json.dumps(record, sort_keys=True) + "\n")
+        handle.write(json.dumps(record, sort_keys=True, default=str) + "\n")
 
 
 def entry_day_from_ts(ts: float) -> datetime.date:
@@ -262,10 +262,16 @@ def _safe_int(value) -> Optional[int]:
 
 
 def _is_stop_order(order) -> bool:
-    order_type = str(getattr(order, "order_type", getattr(order, "type", ""))).lower()
-    if order_type in {"stop", "stop_limit"}:
-        return True
-    return False
+    t = getattr(order, "order_type", None)
+    if t is None:
+        t = getattr(order, "type", None)
+    # alpaca-py may return enums like OrderType.STOP; normalize safely
+    if hasattr(t, "value"):
+        t = t.value
+    s = str(t).lower()
+    if "." in s:
+        s = s.split(".")[-1]
+    return s in {"stop", "stop_limit"}
 
 
 def _load_open_orders(trading_client, symbol: str) -> list:
@@ -316,8 +322,10 @@ def reconcile_stop_order(
     matching = None
     had_existing = bool(stop_orders)
     for order in stop_orders:
-        order_qty = _safe_int(getattr(order, "qty", getattr(order, "quantity", None)))
-        order_stop = _safe_float(getattr(order, "stop_price", None))
+        raw_qty = getattr(order, "qty", getattr(order, "quantity", None));
+        order_qty = int(float(raw_qty)) if raw_qty is not None else None
+        raw_stop = getattr(order, "stop_price", None);
+        order_stop = float(raw_stop) if raw_stop is not None else None
         if order_qty == desired_qty and order_stop is not None and round(order_stop, 2) == desired_stop:
             matching = order
         else:
@@ -453,9 +461,8 @@ def manage_positions(
             if stop_price is None:
                 log(f"ERROR: no pivot low found for {symbol}; cannot create state")
                 continue
-            if (entry_price - stop_price) > cfg.max_risk_per_share:
-                log(f"ERROR: risk per share too large for {symbol}; cannot create state")
-                continue
+
+            # STRUCTURAL STOPS ONLY: do not veto by dollar risk per share
             template = compute_exit_levels(
                 entry_price=entry_price,
                 entry_qty=qty,
