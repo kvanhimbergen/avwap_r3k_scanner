@@ -290,7 +290,7 @@ Close the loop for manual execution by ingesting Slack replies and recording con
 ---
 ## Phase M1-D — Schwab Read-Only Account Snapshot & Reconciliation
 
-**Status:** ⏭️ NOT STARTED
+**Status:** ✅ COMPLETE
 
 **Objective:**  
 Ingest Schwab PCRA broker-truth data in **read-only** mode and reconcile it against
@@ -298,15 +298,15 @@ manual trade intents (M1-B) and confirmations (M1-C), without impacting executio
 or portfolio decisions.
 
 ### Tasks
-- [ ] Define canonical read-only broker snapshot schemas (balances, positions, orders)
-- [ ] Implement fixture-backed Schwab read-only adapter (no live calls)
-- [ ] OAuth scaffolding (env-only, feature-flagged, no execution wiring)
-- [ ] Deterministic account snapshot writer (append-only)
-- [ ] Reconciliation engine: intents vs confirmations vs broker truth
-- [ ] Drift detection (partial fills, missing executions, qty mismatches)
-- [ ] Snapshot + reconciliation analytics integration (measurement-only)
-- [ ] Offline deterministic unit tests (fixtures only)
-- [ ] Operator documentation for read-only ingestion
+- [x] Define canonical read-only broker snapshot schemas (balances, positions, orders)
+- [x] Implement fixture-backed Schwab read-only adapter (no live calls)
+- [x] OAuth scaffolding (env-only, feature-flagged, no execution wiring)
+- [x] Deterministic account snapshot writer (append-only)
+- [x] Reconciliation engine: intents vs confirmations vs broker truth
+- [x] Drift detection (partial fills, missing executions, qty mismatches)
+- [x] Snapshot + reconciliation analytics integration (measurement-only)
+- [x] Offline deterministic unit tests (fixtures only)
+- [x] Operator documentation for read-only ingestion
 
 **Constraints**
 - Read-only only (no order placement, no execution side effects)
