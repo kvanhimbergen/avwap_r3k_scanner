@@ -67,6 +67,7 @@ def main() -> int:
         root / "tests" / "test_scan_engine_schema.py",
         root / "tests" / "test_slack_notifications.py",
         root / "tests" / "test_sweep_runner.py",
+        root / "tests" / "test_schwab_manual_adapter.py",
         root / "tests" / "test_universe.py",
         root / "tests" / "test_setup_context_contract.py",
     ]

@@ -22,5 +22,5 @@ def test_schwab_selection_does_not_import_alpaca(monkeypatch) -> None:
 
     monkeypatch.setattr(builtins, "__import__", guarded_import)
 
-    with pytest.raises(NotImplementedError):
-        book_router.select_trading_client(book_ids.SCHWAB_401K_MANUAL)
+    adapter = book_router.select_trading_client(book_ids.SCHWAB_401K_MANUAL)
+    assert adapter.book_id == book_ids.SCHWAB_401K_MANUAL
