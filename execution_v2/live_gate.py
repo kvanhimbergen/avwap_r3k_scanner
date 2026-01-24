@@ -7,8 +7,11 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Tuple
 from zoneinfo import ZoneInfo
+
+from execution_v2 import book_ids
 
 _NY_TZ = ZoneInfo("America/New_York")
 _LAST_LIVE_ENABLED: Optional[bool] = None
@@ -28,6 +31,15 @@ def _state_dir(override: Optional[str] = None) -> str:
     return base
 
 
+def _repo_root(override: Optional[str] = None) -> Path:
+    if override:
+        return Path(override)
+    base = os.getenv("AVWAP_BASE_DIR", "").strip()
+    if base:
+        return Path(base)
+    return Path(__file__).resolve().parents[1]
+
+
 def _today_ny_str() -> str:
     from datetime import datetime
 
@@ -42,8 +54,10 @@ def _confirm_token_path(state_dir: Optional[str] = None) -> str:
     return os.path.join(_state_dir(state_dir), "live_confirm_token.txt")
 
 
-def _ledger_path(state_dir: Optional[str] = None) -> str:
-    return os.path.join(_state_dir(state_dir), "live_orders_today.json")
+def _ledger_path(repo_root: Optional[Path] = None, date_ny: Optional[str] = None) -> str:
+    resolved_root = repo_root or _repo_root()
+    resolved_date = date_ny or _today_ny_str()
+    return str(book_ids.ledger_path(resolved_root, book_ids.ALPACA_LIVE, resolved_date))
 
 
 def is_kill_switch_active(state_dir: Optional[str] = None) -> Tuple[bool, str]:
@@ -265,7 +279,11 @@ class LiveLedger:
             raise LiveLedgerError("ledger missing")
         try:
             with open(path, "r") as f:
-                data = json.load(f)
+                try:
+                    data = json.load(f)
+                except json.JSONDecodeError:
+                    f.seek(0)
+                    return cls._load_jsonl(path, today_ny, f)
         except Exception as exc:
             raise LiveLedgerError(f"ledger unreadable ({type(exc).__name__})") from exc
         if not isinstance(data, dict):
@@ -275,6 +293,32 @@ class LiveLedger:
         if not isinstance(entries, list):
             raise LiveLedgerError("ledger invalid entries")
         if date_ny != today_ny:
+            return cls(path, today_ny, [], was_reset=True)
+        return cls(path, today_ny, entries, was_reset=False)
+
+    @classmethod
+    def _load_jsonl(cls, path: str, today_ny: str, handle) -> "LiveLedger":
+        entries: list[dict] = []
+        saw_date = False
+        saw_today = False
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise LiveLedgerError(f"ledger unreadable ({type(exc).__name__})") from exc
+            if not isinstance(data, dict):
+                raise LiveLedgerError("ledger invalid entries")
+            entry_date = data.get("date_ny")
+            if entry_date:
+                saw_date = True
+                if entry_date != today_ny:
+                    continue
+                saw_today = True
+            entries.append(data)
+        if saw_date and not saw_today:
             return cls(path, today_ny, [], was_reset=True)
         return cls(path, today_ny, entries, was_reset=False)
 
@@ -313,19 +357,28 @@ class LiveLedger:
                 "symbol": symbol.upper(),
                 "notional": float(notional),
                 "timestamp": ts,
+                "date_ny": self.date_ny,
+                "book_id": book_ids.ALPACA_LIVE,
             }
         )
 
     def save(self) -> None:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        payload = {"date_ny": self.date_ny, "entries": self.entries}
         with open(self.path, "w") as f:
-            json.dump(payload, f)
+            for entry in self.entries:
+                payload = dict(entry)
+                payload.setdefault("date_ny", self.date_ny)
+                payload.setdefault("book_id", book_ids.ALPACA_LIVE)
+                f.write(json.dumps(payload, sort_keys=True) + "\n")
 
 
-def load_live_ledger(state_dir: Optional[str] = None) -> Tuple[Optional[LiveLedger], str]:
+def live_ledger_path(repo_root: Path, date_ny: str) -> Path:
+    return book_ids.ledger_path(repo_root, book_ids.ALPACA_LIVE, date_ny)
+
+
+def load_live_ledger(repo_root: Optional[Path] = None) -> Tuple[Optional[LiveLedger], str]:
     today_ny = _today_ny_str()
-    path = _ledger_path(state_dir)
+    path = _ledger_path(repo_root, today_ny)
     try:
         ledger = LiveLedger.load(path, today_ny)
     except LiveLedgerError as exc:

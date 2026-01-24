@@ -36,6 +36,28 @@ def _load_json(path: str) -> Any:
         raise LedgerParseError(f"ledger unreadable ({type(exc).__name__}): {path}") from exc
 
 
+def _load_jsonl_entries(path: str) -> list[dict[str, Any]]:
+    if not os.path.exists(path):
+        raise LedgerParseError(f"ledger missing: {path}")
+    entries: list[dict[str, Any]] = []
+    try:
+        with open(path, "r") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise LedgerParseError(f"ledger unreadable ({type(exc).__name__}): {path}") from exc
+                if not isinstance(data, dict):
+                    raise LedgerParseError(f"ledger invalid entries: {path}")
+                entries.append(data)
+    except OSError as exc:
+        raise LedgerParseError(f"ledger unreadable ({type(exc).__name__}): {path}") from exc
+    return entries
+
+
 def _normalize_entries(data: Any, *, source_path: str) -> tuple[list[dict[str, Any]], dict[str, str]]:
     metadata: dict[str, str] = {}
     if isinstance(data, list):
@@ -188,8 +210,14 @@ def parse_dry_run_ledger(path: str) -> IngestResult:
 
 
 def parse_live_ledger(path: str) -> IngestResult:
-    data = _load_json(path)
-    entries, metadata = _normalize_entries(data, source_path=path)
+    try:
+        data = _load_json(path)
+        entries, metadata = _normalize_entries(data, source_path=path)
+    except LedgerParseError as exc:
+        if "JSONDecodeError" not in str(exc):
+            raise
+        entries = _load_jsonl_entries(path)
+        metadata = {}
     warnings: list[str] = []
     fills = _build_fills(entries, venue="LIVE", source_path=path, warnings=warnings)
     metadata["ledger_type"] = "live"

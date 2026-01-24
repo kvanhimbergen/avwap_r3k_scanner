@@ -23,6 +23,8 @@ from alerts.slack import (
 from execution_v2 import buy_loop, exits
 from execution_v2 import live_gate
 from execution_v2 import alpaca_paper
+from execution_v2 import book_ids
+from execution_v2 import book_router
 from execution_v2 import paper_sim
 from execution_v2 import clocks
 from execution_v2 import portfolio_decisions
@@ -359,8 +361,12 @@ def run_once(cfg) -> None:
         if cfg.execution_mode != "PAPER_SIM":
             from execution_v2.market_data import from_env as market_data_from_env
 
+            book_id = book_ids.resolve_book_id(cfg.execution_mode)
             try:
-                trading_client = _select_trading_client(cfg.execution_mode)
+                if book_id:
+                    trading_client = book_router.select_trading_client(book_id)
+                else:
+                    trading_client = _select_trading_client(cfg.execution_mode)
             except RuntimeError as exc:
                 if cfg.execution_mode == "ALPACA_PAPER":
                     _log(f"ALPACA_PAPER disabled: {exc}")
@@ -497,7 +503,7 @@ def run_once(cfg) -> None:
             positions_count = None
 
             if live_active:
-                live_ledger, ledger_reason = live_gate.load_live_ledger()
+                live_ledger, ledger_reason = live_gate.load_live_ledger(repo_root)
                 if live_ledger is None:
                     live_active = False
                     live_reason = f"ledger unavailable ({ledger_reason})"

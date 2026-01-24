@@ -10,14 +10,15 @@ from pathlib import Path
 from typing import Iterable
 
 from execution_v2.clocks import ET
+from execution_v2 import book_ids
 from execution_v2 import live_gate
 
 
-LEDGER_DIR = Path("ledger") / "ALPACA_PAPER"
+LEDGER_DIR = Path("ledger") / book_ids.ALPACA_PAPER
 
 
 def ledger_path(repo_root: Path, date_ny: str) -> Path:
-    return repo_root / LEDGER_DIR / f"{date_ny}.jsonl"
+    return book_ids.ledger_path(repo_root, book_ids.ALPACA_PAPER, date_ny)
 
 
 def _load_existing_intent_ids(path: Path) -> set[str]:
@@ -100,6 +101,7 @@ def build_order_event(
         "ts_utc": now_utc.astimezone(timezone.utc).isoformat(),
         "date_ny": now_utc.astimezone(ET).date().isoformat(),
         "execution_mode": "ALPACA_PAPER",
+        "book_id": book_ids.ALPACA_PAPER,
         "event_type": "ORDER_STATUS",
         "intent_id": intent_id,
         "alpaca_order_id": order_id,

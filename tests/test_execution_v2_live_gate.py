@@ -164,7 +164,8 @@ def test_phase_c_disabled_keeps_live_behavior(monkeypatch, tmp_path) -> None:
 def test_allowlist_blocks_symbol_in_live(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("AVWAP_STATE_DIR", str(tmp_path))
     today = datetime.now(tz=timezone.utc).date().isoformat()
-    ledger = live_gate.LiveLedger.initialize(str(tmp_path / "live_orders_today.json"), today)
+    ledger_path = live_gate.live_ledger_path(tmp_path, today)
+    ledger = live_gate.LiveLedger.initialize(str(ledger_path), today)
     ledger.save()
     caps = live_gate.CapsConfig(
         max_orders_per_day=5,
@@ -187,7 +188,8 @@ def test_allowlist_blocks_symbol_in_live(monkeypatch, tmp_path) -> None:
 def test_caps_block_orders_and_notional(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("AVWAP_STATE_DIR", str(tmp_path))
     today = datetime.now(tz=timezone.utc).date().isoformat()
-    ledger = live_gate.LiveLedger.initialize(str(tmp_path / "live_orders_today.json"), today)
+    ledger_path = live_gate.live_ledger_path(tmp_path, today)
+    ledger = live_gate.LiveLedger.initialize(str(ledger_path), today)
     ledger.add_entry("order-1", "AAPL", 1000.0, datetime.now(tz=timezone.utc).isoformat())
     ledger.save()
     caps = live_gate.CapsConfig(
@@ -211,7 +213,8 @@ def test_caps_block_orders_and_notional(monkeypatch, tmp_path) -> None:
 def test_caps_block_positions(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("AVWAP_STATE_DIR", str(tmp_path))
     today = datetime.now(tz=timezone.utc).date().isoformat()
-    ledger = live_gate.LiveLedger.initialize(str(tmp_path / "live_orders_today.json"), today)
+    ledger_path = live_gate.live_ledger_path(tmp_path, today)
+    ledger = live_gate.LiveLedger.initialize(str(ledger_path), today)
     ledger.save()
     caps = live_gate.CapsConfig(
         max_orders_per_day=5,

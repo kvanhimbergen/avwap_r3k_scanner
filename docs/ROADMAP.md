@@ -223,6 +223,22 @@
 
 ---
 
+## Phase M1-A — Book Plumbing & Ledger Routing (NO behavior change)
+
+**Status:** ✅ COMPLETE
+
+**Objective:** Introduce `book_id` plumbing and book-scoped ledger routing without altering existing Alpaca behavior.
+
+### Tasks
+- [x] Define explicit `book_id` constants (ALPACA_PAPER, ALPACA_LIVE, SCHWAB_401K_MANUAL)
+- [x] Add `book_id` to Alpaca ledger records (append-only JSONL)
+- [x] Route Alpaca ledgers to `ledger/<book_id>/<YYYY-MM-DD>.jsonl`
+- [x] Adapter selection keyed by `book_id` with Schwab placeholder
+- [x] Routing invariant test for Schwab (no Alpaca imports)
+- [x] Documentation for `book_id` and ledger paths
+
+---
+
 ## Phase E — Regime Layer (Risk Modulation Only)
 
 **Status:** ❌ DEFERRED
