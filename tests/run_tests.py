@@ -30,7 +30,6 @@ def main() -> int:
     env["PYTHONPATH"] = str(root)
 
     tests = [
-        root / "tests" / "test_exit_state_machine.py",
         root / "tests" / "test_analytics_determinism.py",
         root / "tests" / "test_analytics_ledgers.py",
         root / "tests" / "test_analytics_metrics.py",
@@ -46,11 +45,12 @@ def main() -> int:
         root / "tests" / "test_pytest_collect_only_regression.py",
         root / "tests" / "test_determinism.py",
         root / "tests" / "test_execution_v2_live_gate.py",
+        root / "tests" / "test_intraday_higher_low_stop.py",
+        root / "tests" / "test_stop_reconcile_guardrails.py",
         root / "tests" / "test_alpaca_paper_invariants.py",
         root / "tests" / "test_paper_sim_idempotency.py",
         root / "tests" / "test_paper_sim_pricing.py",
         root / "tests" / "test_paper_sim_routing_invariant.py",
-        root / "tests" / "test_pivot_swing_low.py",
         root / "tests" / "test_no_lookahead.py",
         root / "tests" / "test_parity_scan_backtest.py",
         root / "tests" / "test_provenance.py",
