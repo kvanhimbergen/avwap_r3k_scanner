@@ -7,9 +7,19 @@ Provides structural stop calculations and stop order reconciliation utilities.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import importlib.util
 from typing import Callable, Optional
+from zoneinfo import ZoneInfo
+
+from execution_v2.exit_events import (
+    ExitEventContext,
+    append_exit_event,
+    build_exit_event,
+    build_exit_event_from_legacy,
+)
+
+NY_TZ = ZoneInfo("America/New_York")
 
 if importlib.util.find_spec("alpaca.common.exceptions") is not None:
     from alpaca.common.exceptions import APIError
@@ -26,6 +36,80 @@ class ExitPositionState:
     stop_order_id: Optional[str] = None
     stop_basis: Optional[str] = None
     last_stop_update_ts: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class ExitConfig:
+    stop_buffer_dollars: float = 0.10
+    max_risk_per_share: float = 3.00
+    min_intraday_bars: int = 6
+    intraday_minutes: int = 5
+    intraday_lookback_days: int = 3
+    daily_lookback_days: int = 320
+    telemetry_source: str = "execution_v2"
+
+    @classmethod
+    def from_env(cls) -> "ExitConfig":
+        import os
+
+        return cls(
+            stop_buffer_dollars=float(os.getenv("STOP_BUFFER_DOLLARS", "0.10")),
+            max_risk_per_share=float(os.getenv("MAX_RISK_PER_SHARE_DOLLARS", "3.00")),
+            min_intraday_bars=int(os.getenv("EXIT_MIN_INTRADAY_BARS", "6")),
+            intraday_minutes=int(os.getenv("EXIT_INTRADAY_MINUTES", "5")),
+            intraday_lookback_days=int(os.getenv("EXIT_INTRADAY_LOOKBACK_DAYS", "3")),
+            daily_lookback_days=int(os.getenv("EXIT_DAILY_LOOKBACK_DAYS", "320")),
+            telemetry_source=os.getenv("EXIT_TELEMETRY_SOURCE", "execution_v2"),
+        )
+
+
+def entry_day_from_ts(ts: float) -> str:
+    return datetime.fromtimestamp(float(ts), tz=timezone.utc).astimezone(NY_TZ).date().isoformat()
+
+
+def _bar_date_ny(bar) -> Optional[str]:
+    ts_value = _get_value(bar, "ts")
+    if ts_value is None:
+        return None
+    if isinstance(ts_value, datetime):
+        ts = ts_value
+    else:
+        try:
+            ts = datetime.fromtimestamp(float(ts_value), tz=timezone.utc)
+        except Exception:
+            return None
+    return ts.astimezone(NY_TZ).date().isoformat()
+
+
+def compute_stop_price(
+    daily_bars: list,
+    *,
+    entry_day: str,
+    buffer_dollars: float,
+) -> Optional[float]:
+    if not daily_bars:
+        return None
+    eligible = []
+    for bar in daily_bars:
+        bar_date = _bar_date_ny(bar)
+        if bar_date is None or bar_date > entry_day:
+            continue
+        eligible.append(bar)
+    if not eligible:
+        eligible = daily_bars
+    return compute_daily_swing_low_stop(eligible, stop_buffer_dollars=buffer_dollars)
+
+
+def validate_risk(entry_price: float, stop_price: float, max_risk_per_share: float) -> bool:
+    try:
+        entry = float(entry_price)
+        stop = float(stop_price)
+    except Exception:
+        return False
+    risk = entry - stop
+    if risk <= 0:
+        return False
+    return risk <= float(max_risk_per_share)
 
 
 def _get_value(bar, key: str, default: float | None = None) -> float | None:
@@ -319,3 +403,136 @@ def reconcile_stop_order(
     state.stop_price = desired_stop
     state.last_stop_update_ts = datetime.utcnow().timestamp()
     return state
+
+
+def _read_existing_stop(trading_client, symbol: str) -> Optional[float]:
+    try:
+        orders = trading_client.get_orders()
+    except Exception:
+        return None
+    for order in orders:
+        if _order_side(order) != "sell":
+            continue
+        if not _is_open_status(_order_status(order)):
+            continue
+        if _order_type(order) not in {"stop", "stop_limit"}:
+            continue
+        if str(_order_attr(order, "symbol", "")).upper() != symbol.upper():
+            continue
+        return _order_stop_price(order)
+    return None
+
+
+def manage_positions(
+    *,
+    trading_client,
+    md,
+    cfg: ExitConfig,
+    repo_root,
+    dry_run: bool,
+    log: Callable[[str], None] | None = None,
+) -> None:
+    log = log or (lambda msg: None)
+    try:
+        positions = list(trading_client.get_all_positions())
+    except Exception as exc:
+        log(f"EXIT: positions unavailable ({type(exc).__name__}: {exc})")
+        return
+
+    for pos in positions:
+        symbol = str(getattr(pos, "symbol", "")).upper()
+        if not symbol:
+            continue
+
+        try:
+            qty = int(float(getattr(pos, "qty", 0)))
+        except Exception:
+            continue
+        if qty <= 0:
+            continue
+
+        try:
+            avg_entry = float(getattr(pos, "avg_entry_price", 0))
+        except Exception:
+            avg_entry = None
+
+        intraday_bars = md.get_intraday_bars(
+            symbol,
+            minutes=cfg.intraday_minutes,
+            lookback_days=cfg.intraday_lookback_days,
+        )
+        daily_bars = md.get_daily_bars(symbol, lookback_days=cfg.daily_lookback_days)
+        candidate_stop, stop_basis = resolve_structural_stop(
+            intraday_bars,
+            daily_bars,
+            stop_buffer_dollars=cfg.stop_buffer_dollars,
+            min_intraday_bars=cfg.min_intraday_bars,
+        )
+
+        existing_stop = _read_existing_stop(trading_client, symbol)
+        desired_stop = apply_trailing_stop(existing_stop, candidate_stop)
+        if desired_stop is None:
+            continue
+
+        context = ExitEventContext(
+            symbol=symbol,
+            qty=float(qty),
+            entry_price=avg_entry,
+        )
+
+        def _safe_append(event: dict) -> None:
+            try:
+                append_exit_event(repo_root, event)
+            except Exception as exc:
+                log(f"EXIT: telemetry append failed ({type(exc).__name__}: {exc})")
+
+        if existing_stop is None:
+            event = build_exit_event(
+                event_type="STOP_RESOLVED",
+                symbol=symbol,
+                qty=float(qty),
+                stop_price=desired_stop,
+                stop_basis=stop_basis,
+                stop_action="initial",
+                entry_price=avg_entry,
+                source=cfg.telemetry_source,
+            )
+            _safe_append(event)
+        elif desired_stop > float(existing_stop):
+            event = build_exit_event(
+                event_type="STOP_RATCHET",
+                symbol=symbol,
+                qty=float(qty),
+                stop_price=desired_stop,
+                stop_basis=stop_basis,
+                stop_action="ratchet",
+                entry_price=avg_entry,
+                source=cfg.telemetry_source,
+            )
+            _safe_append(event)
+
+        if dry_run:
+            log(f"DRY_RUN: would reconcile stop {symbol} qty={qty} stop={desired_stop}")
+            continue
+
+        def _append_legacy(event: dict) -> None:
+            wrapped = build_exit_event_from_legacy(
+                event,
+                symbol=symbol,
+                source=cfg.telemetry_source,
+                context=context,
+            )
+            _safe_append(wrapped)
+
+        state = ExitPositionState(symbol=symbol, qty=qty, stop_price=existing_stop)
+        try:
+            reconcile_stop_order(
+                trading_client=trading_client,
+                state=state,
+                desired_qty=qty,
+                desired_stop=desired_stop,
+                log=log,
+                append_event=_append_legacy,
+            )
+        except Exception as exc:
+            log(f"EXIT: reconcile failed for {symbol} ({type(exc).__name__}: {exc})")
