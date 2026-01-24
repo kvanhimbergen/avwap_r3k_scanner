@@ -288,19 +288,97 @@ Close the loop for manual execution by ingesting Slack replies and recording con
 - Tests pass
 
 ---
+## Phase M1-D — Schwab Read-Only Account Snapshot & Reconciliation
 
-## Phase E — Regime Layer (Risk Modulation Only)
+**Status:** ⏭️ NOT STARTED
 
-**Status:** ❌ DEFERRED
+**Objective:**  
+Ingest Schwab PCRA broker-truth data in **read-only** mode and reconcile it against
+manual trade intents (M1-B) and confirmations (M1-C), without impacting execution
+or portfolio decisions.
 
-**Objective:** Adjust risk, not signals, based on market regime.
+### Tasks
+- [ ] Define canonical read-only broker snapshot schemas (balances, positions, orders)
+- [ ] Implement fixture-backed Schwab read-only adapter (no live calls)
+- [ ] OAuth scaffolding (env-only, feature-flagged, no execution wiring)
+- [ ] Deterministic account snapshot writer (append-only)
+- [ ] Reconciliation engine: intents vs confirmations vs broker truth
+- [ ] Drift detection (partial fills, missing executions, qty mismatches)
+- [ ] Snapshot + reconciliation analytics integration (measurement-only)
+- [ ] Offline deterministic unit tests (fixtures only)
+- [ ] Operator documentation for read-only ingestion
 
-### Tasks (Future)
-- [ ] Volatility regime classifier
-- [ ] Risk-on / risk-off multiplier
-- [ ] Drawdown-aware throttling
-- [ ] Feature-flagged activation
-- [ ] Offline validation only
+**Constraints**
+- Read-only only (no order placement, no execution side effects)
+- Default OFF behind feature flag
+- No imports into `execution_v2`
+- No network calls in unit tests
+- Append-only storage only
+
+**Exit Criteria**
+- Broker snapshots are ingested deterministically
+- Reconciliation outputs are auditable and append-only
+- Alpaca and execution paths remain unchanged
+- All tests pass offline on Mac and droplet
+
+
+## Phase E1 — Regime Detection (Measurement Only)
+
+**Status:** ⏭️ NOT STARTED
+
+**Objective:**  
+Detect and classify market regimes using offline data, producing **descriptive**
+regime signals without impacting risk, portfolio decisions, or execution.
+
+### Tasks
+- [ ] Define regime taxonomy (e.g., risk-on, risk-off, neutral, stressed)
+- [ ] Select allowable regime inputs (volatility, breadth, drawdown, trend)
+- [ ] Implement deterministic regime classifiers (no ML, no adaptation)
+- [ ] Persist regime outputs as append-only analytics artifacts
+- [ ] Historical regime labeling for backtests
+- [ ] Offline validation against historical periods
+- [ ] Unit tests for regime classification determinism
+
+**Constraints**
+- Measurement-only (no execution or portfolio effects)
+- Deterministic inputs and outputs
+- Offline data only
+- Append-only storage
+
+**Exit Criteria**
+- Regime labels are reproducible across runs
+- No downstream system behavior is modified
+- Offline tests validate stability and correctness
+
+
+## Phase E2 — Regime-Based Risk Modulation (No Signal Changes)
+
+**Status:** ⏭️ NOT STARTED
+
+**Objective:**  
+Modulate **risk parameters only** based on detected regimes, without altering
+signals, symbol selection, or exit logic.
+
+### Tasks
+- [ ] Define allowable risk controls (sizing multipliers, exposure caps, throttles)
+- [ ] Map regimes to risk multipliers deterministically
+- [ ] Integrate regime outputs with portfolio decision layer
+- [ ] Enforce feature-flagged activation (default OFF)
+- [ ] Drawdown-aware interaction with existing portfolio guardrails
+- [ ] Offline portfolio simulations with and without modulation
+- [ ] Deterministic tests proving signals remain unchanged
+
+**Constraints**
+- Signals and entries remain unchanged
+- Exits are never blocked or modified
+- Feature-flagged and reversible
+- Offline validation only
+
+**Exit Criteria**
+- Risk modulation applies only when explicitly enabled
+- Portfolio decisions remain deterministic
+- Backtests demonstrate controlled risk impact
+- All tests pass with feature flag ON and OFF
 
 ---
 
