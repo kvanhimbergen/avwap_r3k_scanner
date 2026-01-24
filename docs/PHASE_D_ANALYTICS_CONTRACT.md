@@ -179,16 +179,9 @@ Optional entry fields:
 - `order_id` (synthetic id will be used if missing).
 - `side`, `qty`, `price`, `fees`.
 
-### Live ledger (`state/live_orders_today.json`)
+### Live ledger (`ledger/ALPACA_LIVE/<YYYY-MM-DD>.jsonl`)
 
-Expected shape:
-
-```
-{
-  "date_ny": "YYYY-MM-DD",
-  "entries": [ ... ]
-}
-```
+Expected shape: JSONL with one entry per line.
 
 Required entry fields:
 - `symbol`

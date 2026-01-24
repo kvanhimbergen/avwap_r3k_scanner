@@ -89,7 +89,7 @@ systemctl restart execution.service
 ### 4.4 Live ledger requirement
 The live ledger must exist at:
 ```
-${STATE_DIR}/live_orders_today.json
+${AVWAP_BASE_DIR:-/root/avwap_r3k_scanner}/ledger/ALPACA_LIVE/<YYYY-MM-DD>.jsonl
 ```
 **Behavior:** If the ledger is missing or unreadable, LIVE is **blocked for that cycle** and the system remains in DRY_RUN. This is fail-closed.
 
@@ -291,6 +291,7 @@ systemctl restart execution.service
 - `LIVE_CONFIRM_TOKEN` → **required** and must match file.
 - `KILL_SWITCH=1` → disables LIVE immediately.
 - `AVWAP_STATE_DIR` → overrides state dir (default: `/root/avwap_r3k_scanner/state`).
+- `AVWAP_BASE_DIR` → overrides repo root (default: `/root/avwap_r3k_scanner`).
 - `ALLOWLIST_SYMBOLS` → comma-separated; empty allows all.
 - `PHASE_C=1` → enables Phase C constraints (one-day permit + single-symbol allowlist).
 - `LIVE_ENABLE_DATE_NY` → required when `PHASE_C=1`; must match today's NY date (YYYY-MM-DD).
@@ -303,7 +304,7 @@ systemctl restart execution.service
 - State dir: `/root/avwap_r3k_scanner/state` (override via `AVWAP_STATE_DIR`)
 - Kill switch file: `${STATE_DIR}/KILL_SWITCH`
 - Confirm token file: `${STATE_DIR}/live_confirm_token.txt`
-- Live ledger: `${STATE_DIR}/live_orders_today.json`
+- Live ledger: `${AVWAP_BASE_DIR:-/root/avwap_r3k_scanner}/ledger/ALPACA_LIVE/<YYYY-MM-DD>.jsonl`
 
 ### Safe inspection commands
 - `systemctl status execution.service`
@@ -312,4 +313,4 @@ systemctl restart execution.service
 - `journalctl -u execution.service -n 200 --no-pager`
 - `journalctl -u execution.service --since "today" --no-pager`
 - `cat ${STATE_DIR}/live_confirm_token.txt`
-- `cat ${STATE_DIR}/live_orders_today.json`
+- `cat ${AVWAP_BASE_DIR:-/root/avwap_r3k_scanner}/ledger/ALPACA_LIVE/<YYYY-MM-DD>.jsonl`
