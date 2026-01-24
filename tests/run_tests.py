@@ -76,12 +76,15 @@ def main() -> int:
         root / "tests" / "test_schwab_readonly_schemas.py",
         root / "tests" / "test_schwab_readonly_storage.py",
         root / "tests" / "test_regime_e1_classifier.py",
+        root / "tests" / "test_regime_e1_date_resolution.py",
         root / "tests" / "test_regime_e1_features.py",
         root / "tests" / "test_regime_e1_no_execution_imports.py",
+        root / "tests" / "test_regime_policy.py",
         root / "tests" / "test_scan_engine_benchmark_refresh.py",
         root / "tests" / "test_execution_v2_no_analytics_imports.py",
         root / "tests" / "test_universe.py",
         root / "tests" / "test_setup_context_contract.py",
+        root / "tests" / "test_portfolio_throttle_writer.py",
     ]
 
     any_fail = False

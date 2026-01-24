@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from analytics.regime_e1_classifier import classify_regime
+from analytics.regime_date_resolution import resolve_regime_ny_date
 from analytics.regime_e1_features import compute_regime_features
 from analytics.regime_e1_schemas import RECORD_TYPE_SIGNAL, RECORD_TYPE_SKIPPED
 from analytics.regime_e1_storage import build_record, write_record
@@ -32,6 +33,8 @@ def run_regime_e1(*, repo_root: Path, ny_date: str, as_of_utc: str, history_path
                 "ny_date": ny_date,
                 "history_path": str(history_path),
             },
+            "requested_ny_date": ny_date,
+            "resolved_ny_date": ny_date,
             "provenance": {"module": "analytics.regime_e1_runner"},
         }
         record = build_record(
@@ -47,11 +50,15 @@ def run_regime_e1(*, repo_root: Path, ny_date: str, as_of_utc: str, history_path
             "result": asdict(result),
         }
 
-    feature_result = compute_regime_features(history, ny_date)
+    resolved_ny_date, resolution_reasons, _ = resolve_regime_ny_date(history, ny_date)
+    feature_result = compute_regime_features(history, resolved_ny_date)
     if not feature_result.ok or feature_result.feature_set is None:
+        reason_codes = resolution_reasons + feature_result.reason_codes
         payload = {
-            "reason_codes": feature_result.reason_codes,
+            "reason_codes": reason_codes,
             "inputs_snapshot": feature_result.inputs_snapshot,
+            "requested_ny_date": ny_date,
+            "resolved_ny_date": resolved_ny_date,
             "provenance": {"module": "analytics.regime_e1_runner"},
         }
         record = build_record(
@@ -68,12 +75,15 @@ def run_regime_e1(*, repo_root: Path, ny_date: str, as_of_utc: str, history_path
         }
 
     classification = classify_regime(feature_result.feature_set)
+    reason_codes = resolution_reasons + classification.reason_codes
     payload = {
         "regime_label": classification.regime_label,
         "confidence": classification.confidence,
         "signals": classification.signals,
         "inputs_snapshot": classification.inputs_snapshot,
-        "reason_codes": classification.reason_codes,
+        "reason_codes": reason_codes,
+        "requested_ny_date": ny_date,
+        "resolved_ny_date": resolved_ny_date,
         "provenance": {"module": "analytics.regime_e1_runner"},
     }
     record = build_record(
