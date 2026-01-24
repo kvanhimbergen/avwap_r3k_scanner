@@ -241,20 +241,20 @@
 
 ### Phase M1-B — Schwab Manual Slack Ticket Adapter (Outbound Only)
 
-**Status:** ⏭️ NOT STARTED
+**Status:** ✅ COMPLETE
 
 **Objective:**  
 Allow the Schwab 401(k) book to emit **human-executable trade tickets** via Slack,
 with deterministic idempotency and append-only intent tracking.
 
 **Tasks**
-- [ ] Implement Slack Ticket execution adapter for `SCHWAB_401K_MANUAL`
-- [ ] Deterministic `intent_id` function (hash-based)
-- [ ] Idempotency: prevent duplicate Slack posts per as-of date
-- [ ] Append-only ledger entries for SENT intents (with Slack metadata)
-- [ ] Adapter selection wiring (Schwab → Slack, Alpaca unchanged)
-- [ ] Guarded CLI smoke runner (env-protected Slack posting)
-- [ ] Offline deterministic tests (mock Slack)
+- [x] Implement Slack Ticket execution adapter for `SCHWAB_401K_MANUAL`
+- [x] Deterministic `intent_id` function (hash-based)
+- [x] Idempotency: prevent duplicate Slack posts per as-of date
+- [x] Append-only ledger entries for SENT intents (with Slack metadata)
+- [x] Adapter selection wiring (Schwab → Slack, Alpaca unchanged)
+- [x] Guarded CLI smoke runner (env-protected Slack posting)
+- [x] Offline deterministic tests (mock Slack)
 
 **Exit Criteria**
 - Slack tickets post deterministically

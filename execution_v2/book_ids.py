@@ -16,6 +16,8 @@ def resolve_book_id(execution_mode: str) -> Optional[str]:
         return ALPACA_PAPER
     if mode == "LIVE":
         return ALPACA_LIVE
+    if mode == SCHWAB_401K_MANUAL:
+        return SCHWAB_401K_MANUAL
     return None
 
 

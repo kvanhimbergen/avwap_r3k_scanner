@@ -50,7 +50,7 @@ PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 def _resolve_execution_mode() -> str:
     env_mode = os.getenv("EXECUTION_MODE")
     dry_run_env = os.getenv("DRY_RUN", "0") == "1"
-    valid_modes = {"DRY_RUN", "PAPER_SIM", "LIVE", "ALPACA_PAPER"}
+    valid_modes = {"DRY_RUN", "PAPER_SIM", "LIVE", "ALPACA_PAPER", "SCHWAB_401K_MANUAL"}
 
     if env_mode:
         mode = env_mode.strip().upper()
@@ -359,28 +359,32 @@ def run_once(cfg) -> None:
         else:
             _log(f"Execution mode={cfg.execution_mode}")
         if cfg.execution_mode != "PAPER_SIM":
-            from execution_v2.market_data import from_env as market_data_from_env
-
             book_id = book_ids.resolve_book_id(cfg.execution_mode)
-            try:
-                if book_id:
-                    trading_client = book_router.select_trading_client(book_id)
-                else:
-                    trading_client = _select_trading_client(cfg.execution_mode)
-            except RuntimeError as exc:
-                if cfg.execution_mode == "ALPACA_PAPER":
-                    _log(f"ALPACA_PAPER disabled: {exc}")
-                    return
-                raise
-            except Exception as exc:
-                if cfg.execution_mode == "ALPACA_PAPER":
-                    _log(
-                        "ALPACA_PAPER disabled: unexpected "
-                        f"{type(exc).__name__}: {exc}"
-                    )
-                    return
-                raise
-            md = market_data_from_env()
+            if book_id == book_ids.SCHWAB_401K_MANUAL:
+                trading_client = book_router.select_trading_client(book_id)
+                md = None
+            else:
+                from execution_v2.market_data import from_env as market_data_from_env
+
+                try:
+                    if book_id:
+                        trading_client = book_router.select_trading_client(book_id)
+                    else:
+                        trading_client = _select_trading_client(cfg.execution_mode)
+                except RuntimeError as exc:
+                    if cfg.execution_mode == "ALPACA_PAPER":
+                        _log(f"ALPACA_PAPER disabled: {exc}")
+                        return
+                    raise
+                except Exception as exc:
+                    if cfg.execution_mode == "ALPACA_PAPER":
+                        _log(
+                            "ALPACA_PAPER disabled: unexpected "
+                            f"{type(exc).__name__}: {exc}"
+                        )
+                        return
+                    raise
+                md = market_data_from_env()
         else:
             trading_client = None
             md = None
@@ -400,6 +404,21 @@ def run_once(cfg) -> None:
             decision_record["gates"]["market"]["clock_source"] = "clock_snapshot"
             maybe_send_heartbeat(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
             maybe_send_daily_summary(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
+        elif cfg.execution_mode == "SCHWAB_401K_MANUAL":
+            clock_snapshot = clocks.now_snapshot()
+            market_is_open = clock_snapshot.market_open
+            decision_record["gates"]["market"]["is_open"] = market_is_open
+            decision_record["gates"]["market"]["clock_source"] = "clock_snapshot"
+            maybe_send_heartbeat(
+                dry_run=cfg.dry_run,
+                market_open=market_is_open,
+                execution_mode=cfg.execution_mode,
+            )
+            maybe_send_daily_summary(
+                dry_run=cfg.dry_run,
+                market_open=market_is_open,
+                execution_mode=cfg.execution_mode,
+            )
         else:
             ledger_path = None
             if cfg.execution_mode == "ALPACA_PAPER":
@@ -448,6 +467,25 @@ def run_once(cfg) -> None:
             if created:
                 _log(f"Created {created} entry intents.")
             _log("PAPER_SIM: skipping live gate checks and broker position lookups.")
+        elif cfg.execution_mode == "SCHWAB_401K_MANUAL":
+            allowlist = live_gate.parse_allowlist()
+            caps = live_gate.CapsConfig.from_env()
+            decision_record["gates"]["live_gate_applied"] = False
+            decision_record["inputs"]["account"]["source"] = "manual"
+            if md is None:
+                class _NoMarketData:
+                    def get_last_two_closed_10m(self, symbol: str) -> list:
+                        return []
+
+                    def get_daily_bars(self, symbol: str) -> list:
+                        return []
+
+                md = _NoMarketData()
+            account_equity = float(os.getenv("MANUAL_ACCOUNT_EQUITY", "0") or 0.0)
+            decision_record["inputs"]["account"]["equity"] = account_equity
+            created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
+            if created:
+                _log(f"Created {created} entry intents.")
         elif cfg.execution_mode == "ALPACA_PAPER":
             decision_record["gates"]["live_gate_applied"] = True
             allowlist = live_gate.parse_allowlist()
@@ -614,6 +652,37 @@ def run_once(cfg) -> None:
             _log(
                 f"PAPER_SIM: wrote {len(fills)} fills to {ledger_rel} "
                 f"(skipped {skipped} duplicates)"
+            )
+            return
+
+        if cfg.execution_mode == "SCHWAB_401K_MANUAL":
+            from execution_v2.schwab_manual_adapter import send_manual_tickets
+
+            now_utc = datetime.now(timezone.utc)
+            date_ny = paper_sim.resolve_date_ny(now_utc)
+            result = send_manual_tickets(
+                intents,
+                ny_date=date_ny,
+                repo_root=repo_root,
+                now_utc=now_utc,
+            )
+            for intent_id in result.intent_ids:
+                decision_record["actions"]["submitted_orders"].append(
+                    {
+                        "symbol": None,
+                        "side": "buy",
+                        "qty": None,
+                        "order_type": "manual_ticket",
+                        "client_order_id": intent_id,
+                        "broker_order_id": None,
+                        "status": "submitted" if result.posting_enabled else "skipped",
+                    }
+                )
+            if result.ledger_path:
+                ledgers_written.append(str(Path(result.ledger_path).resolve()))
+            _log(
+                f"SCHWAB_401K_MANUAL: tickets_sent={result.sent} "
+                f"skipped={result.skipped} ledger={result.ledger_path or 'disabled'}"
             )
             return
 
