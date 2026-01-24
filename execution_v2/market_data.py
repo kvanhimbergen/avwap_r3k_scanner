@@ -98,6 +98,41 @@ class MarketData:
             )
         return out
 
+    def get_intraday_bars(
+        self,
+        symbol: str,
+        minutes: int = 5,
+        lookback_days: int = 3,
+    ) -> list[dict]:
+        """
+        Return intraday bars ordered oldest->newest using Alpaca StockBarsRequest.
+        Avoid pandas in the public surface by returning simple dicts.
+        """
+        start = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        req = StockBarsRequest(
+            symbol_or_symbols=symbol,
+            timeframe=TimeFrame(minutes, TimeFrameUnit.Minute),
+            start=start,
+        )
+        bars = self.client.get_stock_bars(req).df
+        if bars is None or bars.empty:
+            return []
+
+        df = bars.reset_index()
+        out: list[dict] = []
+        for _, r in df.iterrows():
+            ts = r["timestamp"].to_pydatetime().replace(tzinfo=timezone.utc)
+            out.append(
+                {
+                    "ts": ts,
+                    "open": float(r["open"]),
+                    "high": float(r["high"]),
+                    "low": float(r["low"]),
+                    "close": float(r["close"]),
+                }
+            )
+        return out
+
 
 def from_env() -> MarketData:
     """
