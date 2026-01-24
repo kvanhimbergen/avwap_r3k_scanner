@@ -117,16 +117,15 @@ def _compute_trend(closes: pd.Series, reasons: list[str]) -> tuple[float | None,
 
 
 def _breadth_fraction(df: pd.DataFrame, ny_date: str) -> tuple[float | None, dict[str, Any], str | None]:
-    symbols = sorted(df["symbol"].unique().tolist())
     breadth_symbols: list[str] = []
     above_count = 0
-    for symbol in symbols:
-        history = _symbol_history(df, symbol)
-        history = _filter_as_of(history, ny_date)
+    df_sorted = df.sort_values(["symbol", "date"])
+    for symbol, history in df_sorted.groupby("symbol", sort=True):
         if len(history) < BREADTH_LOOKBACK:
             continue
         closes = history["close"]
-        ma = _series_tail(closes, BREADTH_LOOKBACK).mean()
+        window = closes.iloc[-BREADTH_LOOKBACK:]
+        ma = window.mean()
         last_close = closes.iloc[-1]
         breadth_symbols.append(symbol)
         if last_close >= ma:
