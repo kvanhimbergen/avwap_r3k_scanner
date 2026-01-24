@@ -266,27 +266,26 @@ with deterministic idempotency and append-only intent tracking.
 
 ### Phase M1-C — Slack Reply Ingestion & Confirmation Ledger
 
-**Status:** ⏭️ NOT STARTED
+**Status:** ✅ COMPLETE
 
 **Objective:**  
 Close the loop for manual execution by ingesting Slack replies and recording confirmations
 (EXECUTED / PARTIAL / SKIPPED / ERROR) in the Schwab ledger.
 
 **Tasks**
-- [ ] Minimal Slack Events receiver (signature verification + URL challenge)
-- [ ] Scope enforcement: channel + threaded replies only
-- [ ] Robust parser for confirmation lines
-- [ ] Append-only confirmation records (no mutation)
-- [ ] Graceful handling of unmatched intent IDs
-- [ ] Event dedupe for Slack retries
-- [ ] Unit tests for parser + handler
-- [ ] Operator documentation for running the service
+- [x] Minimal Slack Events receiver (signature verification + URL challenge)
+- [x] Scope enforcement: channel + threaded replies only
+- [x] Robust parser for confirmation lines
+- [x] Append-only confirmation records (no mutation)
+- [x] Graceful handling of unmatched intent IDs
+- [x] Event dedupe for Slack retries
+- [x] Unit tests for parser + handler
+- [x] Operator documentation for running the service
 
 **Exit Criteria**
 - Slack replies update Schwab ledger deterministically
 - Confirmations are auditable and append-only
 - Tests pass
-theirs
 
 ---
 
