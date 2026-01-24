@@ -165,3 +165,26 @@ class ExitReconstructionResult:
     trades: list[ExitTrade]
     warnings: list[str]
     source_metadata: dict[str, str]
+
+
+@dataclass(frozen=True)
+class PortfolioPosition:
+    symbol: str
+    qty: float
+    avg_price: Optional[float]
+    mark_price: Optional[float]
+    notional: float
+
+
+@dataclass(frozen=True)
+class PortfolioSnapshot:
+    schema_version: int
+    date_ny: str
+    run_id: str
+    capital: dict[str, Optional[float]]
+    gross_exposure: float
+    net_exposure: float
+    positions: list[PortfolioPosition]
+    pnl: dict[str, Optional[float] | list[str]]
+    metrics: dict[str, object]
+    provenance: dict[str, object]
