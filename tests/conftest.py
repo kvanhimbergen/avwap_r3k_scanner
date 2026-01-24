@@ -93,7 +93,17 @@ if DEBUG_IMPORTS:
     sys.meta_path.insert(0, _RequestsImportLogger())
     _log_requests_state("pytest startup")
 
-_ensure_requests_session()
+
+try:
+    _ensure_requests_session()
+except ModuleNotFoundError as e:
+    # In sandboxed/CI environments, `requests` may not be installed.
+    # conftest must not hard-require it for unrelated offline tests.
+    if str(e).startswith("No module named 'requests'"):
+        if DEBUG_IMPORTS:
+            print("[avwap-debug] requests not installed; skipping requests session validation", file=sys.stderr)
+    else:
+        raise
 
 
 def pytest_pycollect_makemodule(module_path, parent):  # type: ignore[override]
