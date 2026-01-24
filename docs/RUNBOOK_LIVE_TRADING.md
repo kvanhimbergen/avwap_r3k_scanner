@@ -184,6 +184,22 @@ In that case, gate lines will **not** appear in logs until the market is open.
 - **Live ledger** records each LIVE order with timestamp, symbol, and notional.
 - **DRY_RUN** orders are not placed live but still log `SUBMITTED` with `order_id=dry-run`.
 
+## 8) Exit Model (System-Managed R1/R2)
+Execution V2 now manages exits internally (no broker brackets/OCO):
+- Entry submits only a BUY order.
+- Protective stop is submitted after 09:35 ET (first 5-minute bar close) and kept in sync with remaining qty.
+- R1 is a partial trim; stop moves to breakeven after R1 is taken.
+- R2 exits the remaining position and cancels the stop.
+
+**Exit-related environment variables (defaults):**
+```bash
+STOP_BUFFER_DOLLARS=0.10
+R1_MULT=1.0
+R2_MULT=2.0
+R1_TRIM_PCT=0.5
+MAX_RISK_PER_SHARE_DOLLARS=3.00
+```
+
 ## 7) Emergency Procedures (No thinking required)
 ### Immediate disable via env kill switch
 ```bash

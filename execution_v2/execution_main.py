@@ -20,7 +20,7 @@ from alerts.slack import (
     maybe_send_heartbeat,
     maybe_send_daily_summary,
 )
-from execution_v2 import buy_loop, sell_loop
+from execution_v2 import buy_loop, exits
 from execution_v2 import live_gate
 from execution_v2 import alpaca_paper
 from execution_v2 import paper_sim
@@ -172,7 +172,7 @@ def _has_open_order_or_position(trading_client: TradingClient, symbol: str) -> b
         return True
 
 
-def _submit_bracket_order(trading_client: TradingClient, intent, dry_run: bool) -> str | None:
+def _submit_market_entry(trading_client: TradingClient, intent, dry_run: bool) -> str | None:
     if dry_run:
         import json
         
@@ -190,7 +190,7 @@ def _submit_bracket_order(trading_client: TradingClient, intent, dry_run: bool) 
             _log(f"DRY_RUN: already submitted today -> {intent.symbol}; skipping")
             return "dry-run-skipped"
 
-        _log(f"DRY_RUN: would submit {intent.symbol} qty={intent.size_shares} SL={intent.stop_loss} TP={intent.take_profit}")
+        _log(f"DRY_RUN: would submit {intent.symbol} qty={intent.size_shares}")
 
         ledger[key] = {
             "symbol": intent.symbol,
@@ -207,16 +207,13 @@ def _submit_bracket_order(trading_client: TradingClient, intent, dry_run: bool) 
         return "dry-run"
 
     from alpaca.trading.requests import MarketOrderRequest
-    from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
+    from alpaca.trading.enums import OrderSide, TimeInForce
 
     order = MarketOrderRequest(
         symbol=intent.symbol,
         qty=intent.size_shares,
         side=OrderSide.BUY,
         time_in_force=TimeInForce.DAY,
-        order_class=OrderClass.BRACKET,
-        take_profit={"limit_price": round(float(intent.take_profit), 2)},
-        stop_loss={"stop_price": round(float(intent.stop_loss), 2)},
     )
     response = trading_client.submit_order(order)
     return getattr(response, "id", None)
@@ -334,7 +331,6 @@ def run_once(cfg) -> None:
             entry_delay_min_sec=cfg.entry_delay_min_sec,
             entry_delay_max_sec=cfg.entry_delay_max_sec,
         )
-        sell_cfg = sell_loop.SellLoopConfig(candidates_csv=cfg.candidates_csv)
         repo_root = Path(__file__).resolve().parents[1]
         if os.getenv("DRY_RUN", "0") == "1":
             _log(f"DRY_RUN=1 active; execution_mode={cfg.execution_mode}")
@@ -418,6 +414,9 @@ def run_once(cfg) -> None:
                     def get_last_two_closed_10m(self, symbol: str) -> list:
                         return []
 
+                    def get_daily_bars(self, symbol: str) -> list:
+                        return []
+
                 md = _NoMarketData()
             created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
             if created:
@@ -459,7 +458,14 @@ def run_once(cfg) -> None:
             created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
             if created:
                 _log(f"Created {created} entry intents.")
-            sell_loop.evaluate_positions(store, trading_client, sell_cfg)
+            exits.manage_positions(
+                trading_client=trading_client,
+                md=md,
+                cfg=exits.ExitConfig.from_env(),
+                repo_root=repo_root,
+                dry_run=cfg.dry_run,
+                log=_log,
+            )
         else:
             decision_record["gates"]["live_gate_applied"] = True
             gate_result = live_gate.resolve_live_mode(cfg.dry_run)
@@ -511,7 +517,14 @@ def run_once(cfg) -> None:
             created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
             if created:
                 _log(f"Created {created} entry intents.")
-            sell_loop.evaluate_positions(store, trading_client, sell_cfg)
+            exits.manage_positions(
+                trading_client=trading_client,
+                md=md,
+                cfg=exits.ExitConfig.from_env(),
+                repo_root=repo_root,
+                dry_run=cfg.dry_run,
+                log=_log,
+            )
 
         now_ts = time.time()
         intents = store.pop_due_entry_intents(now_ts)
@@ -623,7 +636,7 @@ def run_once(cfg) -> None:
                     continue
 
                 try:
-                    order_id = _submit_bracket_order(trading_client, intent, dry_run=False)
+                    order_id = _submit_market_entry(trading_client, intent, dry_run=False)
                     submitted += 1
                     _log(f"SUBMITTED {intent.symbol}: qty={intent.size_shares} order_id={order_id}")
                     decision_record["actions"]["submitted_orders"].append(
@@ -631,7 +644,7 @@ def run_once(cfg) -> None:
                             "symbol": intent.symbol,
                             "side": "buy",
                             "qty": intent.size_shares,
-                            "order_type": "bracket",
+                            "order_type": "market",
                             "client_order_id": key,
                             "broker_order_id": order_id,
                             "status": "submitted",
@@ -750,7 +763,7 @@ def run_once(cfg) -> None:
                     continue
 
             try:
-                order_id = _submit_bracket_order(trading_client, intent, effective_dry_run)
+                order_id = _submit_market_entry(trading_client, intent, effective_dry_run)
                 _log(f"SUBMITTED {intent.symbol}: qty={intent.size_shares} order_id={order_id}")
                 if order_id == "dry-run-skipped":
                     decision_record["actions"]["skipped"].append(
@@ -762,7 +775,7 @@ def run_once(cfg) -> None:
                             "symbol": intent.symbol,
                             "side": "buy",
                             "qty": intent.size_shares,
-                            "order_type": "bracket",
+                            "order_type": "market",
                             "client_order_id": key,
                             "broker_order_id": order_id,
                             "status": "submitted",
@@ -777,7 +790,7 @@ def run_once(cfg) -> None:
                     (
                         f"qty={intent.size_shares} ref={intent.ref_price} "
                         f"pivot={intent.pivot_level} dist={intent.dist_pct:.2f}% "
-                        f"SL={intent.stop_loss} TP={intent.take_profit} "
+                        "SL=managed TP=managed "
                         f"boh_at={_format_ts(intent.boh_confirmed_at)} reason={candidate_notes}"
                     ),
                     component="EXECUTION_V2",
