@@ -226,6 +226,8 @@ def build_positions(
         elif entry["price_missing"]:
             reason_codes.append("position_open_price_missing")
         mark_price = price_map.get(symbol)
+        if mark_price is None:
+            reason_codes.append("position_mark_price_missing")
         notional_price = mark_price if mark_price is not None else avg_price
         if notional_price is None:
             reason_codes.append("position_price_missing")

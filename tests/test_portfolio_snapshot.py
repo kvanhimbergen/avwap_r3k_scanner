@@ -127,7 +127,7 @@ def test_drawdown_and_volatility_deterministic() -> None:
 def test_unrealized_pnl_missing_mark_price() -> None:
     open_lots = [_make_open_lot("AAA", qty=2, open_price=100.0)]
     positions, reason_codes = build_positions(open_lots)
-    assert "position_price_missing" in reason_codes
+    assert "position_mark_price_missing" in reason_codes
 
     unrealized_pnl, unrealized_reason = compute_unrealized_pnl(positions)
     assert unrealized_pnl is None
