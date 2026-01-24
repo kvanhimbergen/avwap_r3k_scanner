@@ -178,6 +178,40 @@
 
 ---
 
+## Phase 2 — Portfolio Decision Layer
+
+> Phase 2 computes deterministic portfolio decisions from Phase D artifacts.
+> Shadow mode only in Phase 2A: no execution impact.
+
+---
+
+## Phase 2A — Shadow Decisions
+
+**Status:** ✅ COMPLETE
+
+**Objective:** Emit deterministic, auditable ALLOW/BLOCK portfolio decisions without execution changes.
+
+### Tasks
+- [x] Canonical PortfolioDecision + PortfolioDecisionBatch schemas
+- [x] Deterministic decision engine (ALLOW/BLOCK only)
+- [x] Guardrails: max open positions, max new entries/day, symbol concentration, gross exposure, drawdown throttle
+- [x] Deterministic artifact writer (analytics/artifacts/portfolio_decisions/YYYY-MM-DD.json)
+- [x] Fail-closed handling for missing candidates and portfolio snapshots
+- [x] Offline fixture-based tests + registry updates
+
+## Phase 2B — Enforcement (NOT STARTED)
+
+**Status:** ❌ NOT STARTED
+
+**Objective:** Apply portfolio decisions to execution sizing and gating.
+
+### Tasks (Future)
+- [ ] Enforce ALLOW/BLOCK decisions at execution layer
+- [ ] Sizing adjustments based on portfolio decision output
+- [ ] Live safety checks and operator alerts
+
+---
+
 ## Phase E — Regime Layer (Risk Modulation Only)
 
 **Status:** ❌ DEFERRED

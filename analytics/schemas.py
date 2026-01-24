@@ -200,6 +200,23 @@ class BrokerPosition:
 
 
 @dataclass(frozen=True)
+class PortfolioDecision:
+    decision_id: str
+    date: str
+    symbol: str
+    decision: str
+    reason_codes: list[str]
+    inputs_used: list[str]
+
+
+@dataclass(frozen=True)
+class PortfolioDecisionBatch:
+    date: str
+    generated_at: str
+    decisions: list[PortfolioDecision]
+
+
+@dataclass(frozen=True)
 class BrokerOrder:
     order_id: str
     symbol: str
