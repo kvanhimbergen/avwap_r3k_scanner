@@ -203,12 +203,23 @@
 
 **Status:** ❌ NOT STARTED
 
-**Objective:** Apply portfolio decisions to execution sizing and gating.
+**Objective:** Enforce Phase 2A ALLOW/BLOCK decisions for new entries (exits never blocked), behind an explicit feature flag, with fail-closed behavior and offline deterministic tests.
 
-### Tasks (Future)
-- [ ] Enforce ALLOW/BLOCK decisions at execution layer
-- [ ] Sizing adjustments based on portfolio decision output
-- [ ] Live safety checks and operator alerts
+### Tasks
+- [ ] Add feature flag `PORTFOLIO_DECISION_ENFORCE=1` (default OFF)
+- [ ] Add decision reader + schema validation for `analytics/artifacts/portfolio_decisions/YYYY-MM-DD.json`
+- [ ] Enforce ALLOW/BLOCK for **new entries only** in the execution layer (no alpha changes)
+- [ ] Fail-closed: missing/invalid/mismatched-date decision artifact → BLOCK new entries with explicit reason codes
+- [ ] Deterministic enforcement telemetry artifact (append-only JSONL) with provenance + reason codes
+- [ ] Slack operator alert summarizing blocked entries when enforcement is enabled
+- [ ] Offline fixture-based tests for all enforcement paths; register in `tests/run_tests.py`
+- [ ] Runbook update: how to enable/disable, expected fail-closed behavior, artifact locations
+
+**Exit Criteria**
+- Enforcement is reversible (flagged), deterministic, and fail-closed
+- Exits remain unaffected
+- All tests pass on Mac + droplet
+
 
 ---
 
