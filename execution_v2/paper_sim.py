@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Iterable
 
 from execution_v2.clocks import ET
+from utils.atomic_write import atomic_write_text
 
 
 LEDGER_DIR = Path("ledger") / "PAPER_SIM"
@@ -149,6 +150,18 @@ def _load_existing_intent_ids(ledger_path: Path) -> set[str]:
     return existing_ids
 
 
+def _read_jsonl_lines(ledger_path: Path) -> list[str]:
+    if not ledger_path.exists():
+        return []
+    try:
+        existing = ledger_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    if not existing:
+        return []
+    return [line for line in existing.splitlines() if line]
+
+
 def _resolve_price(intent, repo_root: Path, date_ny: str) -> tuple[float, str]:
     intent_price = _intent_entry_price(intent)
     if intent_price is not None:
@@ -218,9 +231,10 @@ def simulate_fills(
         existing_ids.add(intent_id)
 
     if fills:
-        with ledger_path.open("a") as handle:
-            for fill in fills:
-                handle.write(json.dumps(fill, sort_keys=True) + "\n")
+        lines = _read_jsonl_lines(ledger_path)
+        lines.extend([json.dumps(fill, sort_keys=True) for fill in fills])
+        data = "\n".join(lines) + "\n"
+        atomic_write_text(ledger_path, data)
 
     return fills
 

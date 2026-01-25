@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+from utils.atomic_write import atomic_write_text
+
 NY_TZ = ZoneInfo("America/New_York")
 SCHEMA_VERSION = 1
 LEDGER_DIR = Path("ledger") / "EXIT_EVENTS"
@@ -272,6 +274,15 @@ def append_exit_event(repo_root: Path, event: dict[str, Any]) -> Path:
     ledger_dir.mkdir(parents=True, exist_ok=True)
     ledger_path = ledger_dir / f"{date_ny}.jsonl"
     payload = serialize_exit_event(event)
-    with ledger_path.open("a") as handle:
-        handle.write(payload + "\n")
+    lines: list[str] = []
+    if ledger_path.exists():
+        try:
+            existing = ledger_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            existing = ""
+        if existing:
+            lines.extend([line for line in existing.splitlines() if line])
+    lines.append(payload)
+    data = "\n".join(lines) + "\n"
+    atomic_write_text(ledger_path, data)
     return ledger_path

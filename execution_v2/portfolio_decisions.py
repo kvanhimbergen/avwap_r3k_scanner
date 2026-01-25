@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from execution_v2.clocks import ET
+from utils.atomic_write import atomic_write_text
 
 
 LEDGER_DIR = Path("ledger") / "PORTFOLIO_DECISIONS"
@@ -55,9 +56,17 @@ def dumps_portfolio_decision(record: dict[str, Any]) -> str:
 def write_portfolio_decision(record: dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = dumps_portfolio_decision(record)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(payload)
-        handle.write("\n")
+    lines: list[str] = []
+    if path.exists():
+        try:
+            existing = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            existing = ""
+        if existing:
+            lines.extend([line for line in existing.splitlines() if line])
+    lines.append(payload)
+    data = "\n".join(lines) + "\n"
+    atomic_write_text(path, data)
 
 
 def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
