@@ -246,7 +246,17 @@ Immediately **after that code block**, add a clarification paragraph.
 
 
 One-Command Morning Health Check
-avwap-check
+Use the offline, deterministic preflight validator:
+
+```bash
+python -m tools.avwap_check --mode all
+```
+
+Notes:
+- Offline-only: no network calls and no order placement.
+- Exit codes: `0=PASS`, `1=FAIL`, `2=WARN` (unless `--strict`, which turns WARN into FAIL).
+- WARN means safe to proceed but review output; FAIL means address issues before running.
+- This is a preflight validator, not a trading safety guarantee.
 
 What “good” looks like
 
