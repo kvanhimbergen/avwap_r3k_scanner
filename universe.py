@@ -331,7 +331,11 @@ def _passes_liquidity_gate(
     return True
 
 
-def apply_universe_rules(df: pd.DataFrame, rules: Dict[str, Any]) -> pd.DataFrame:
+def apply_universe_rules(
+    df: pd.DataFrame,
+    rules: Dict[str, Any],
+    allow_network: Optional[bool] = None,
+) -> pd.DataFrame:
     """
     Apply YAML-defined universe rules.
 
@@ -352,9 +356,17 @@ def apply_universe_rules(df: pd.DataFrame, rules: Dict[str, Any]) -> pd.DataFram
 
     tickers = df["Ticker"].astype(str).str.upper().tolist()
 
-    if not cfg.effective_universe_allow_network():
+    # Network gating:
+    # - If caller explicitly requests offline mode (allow_network=False), never invoke any
+    #   metrics provider (even if environment would otherwise allow it). This keeps backtests
+    #   and offline harnesses deterministic and non-blocking.
+    # - If allow_network is None, preserve existing behavior by deferring to cfg/env.
+    effective_allow_network = (
+        allow_network if allow_network is not None else cfg.effective_universe_allow_network()
+    )
+    if not effective_allow_network:
         logger.warning(
-            "Universe metrics skipped due to universe_network_disallowed (UNIVERSE_ALLOW_NETWORK=0)."
+            "Universe metrics skipped due to universe_network_disallowed (allow_network=0)."
         )
         return df
 
@@ -394,6 +406,6 @@ def load_universe(force_refresh: bool = False, allow_network: Optional[bool] = N
     df = load_r3k_universe_from_iwv(force_refresh=force_refresh, allow_network=allow_network)
 
     rules = load_universe_rules()
-    df = apply_universe_rules(df, rules)
+    df = apply_universe_rules(df, rules, allow_network=allow_network)
 
     return df
