@@ -24,6 +24,13 @@ from provenance import (
     require_provenance_fields,
     validate_execution_mode,
 )
+from portfolio.risk_controls import (
+    adjust_order_quantity,
+    build_risk_controls,
+    resolve_drawdown_guardrail,
+    RiskControls,
+    risk_modulation_enabled,
+)
 
 DEFAULT_OHLCV_PATH = Path("cache") / "ohlcv_history.parquet"
 DEFAULT_OUTPUT_DIR = Path("backtests")
@@ -396,6 +403,29 @@ def run_backtest(
     max_positions = int(_cfg_value(cfg, "BACKTEST_MAX_POSITIONS", "BACKTEST_MAX_CONCURRENT", 5))
     max_gross_exposure_pct = float(getattr(cfg, "BACKTEST_MAX_GROSS_EXPOSURE_PCT", 1.0))
 
+    repo_root = Path(getattr(cfg, "BACKTEST_REPO_ROOT", ".")).resolve()
+    risk_controls_enabled = risk_modulation_enabled()
+    drawdown_value, drawdown_threshold, _ = resolve_drawdown_guardrail()
+    risk_controls_cache: dict[str, RiskControls] = {}
+
+    def _resolve_risk_controls(date_ny: str) -> RiskControls | None:
+        if not risk_controls_enabled:
+            return None
+        cached = risk_controls_cache.get(date_ny)
+        if cached is not None:
+            return cached
+        result = build_risk_controls(
+            ny_date=date_ny,
+            repo_root=repo_root,
+            base_max_positions=max_positions,
+            base_max_gross_exposure=max_gross_exposure_pct,
+            base_per_position_cap=None,
+            drawdown=drawdown_value,
+            max_drawdown_pct_block=drawdown_threshold,
+        )
+        risk_controls_cache[date_ny] = result.controls
+        return result.controls
+
     output_dir = Path(getattr(cfg, "BACKTEST_OUTPUT_DIR", DEFAULT_OUTPUT_DIR))
     data_path = Path(getattr(cfg, "BACKTEST_OHLCV_PATH", DEFAULT_OHLCV_PATH))
     history = load_ohlcv_history(data_path)
@@ -519,19 +549,19 @@ def run_backtest(
                 equity_before = cash + _compute_positions_value(history, positions, session_date)
                 risk_per_share = _risk_per_share(entry_price, entry["stop"], direction)
                 dollar_risk = equity_before * risk_per_trade_pct
-                qty = math.floor(dollar_risk / risk_per_share)
-                if qty < 1:
+                base_qty = math.floor(dollar_risk / risk_per_share)
+                if base_qty < 1:
                     entries_skipped_size_zero += 1
                     continue
-                notional = entry_price * qty
-                if notional < min_dollar_position:
+                base_notional = entry_price * base_qty
+                if base_notional < min_dollar_position:
                     entries_skipped_size_zero += 1
                     continue
-                if _direction_sign(direction) > 0 and notional > cash + EPSILON:
+                if _direction_sign(direction) > 0 and base_notional > cash + EPSILON:
                     entries_skipped_cash += 1
                     continue
                 gross_exposure = _compute_gross_exposure(history, positions, session_date)
-                trade_risk = risk_per_share * qty
+                base_trade_risk = risk_per_share * base_qty
                 _enforce_entry_guardrails(
                     scan_cfg=cfg,
                     session_date=session_date,
@@ -541,9 +571,25 @@ def run_backtest(
                     positions=positions,
                     equity_before=equity_before,
                     gross_exposure=gross_exposure,
-                    notional=notional,
-                    trade_risk=trade_risk,
+                    notional=base_notional,
+                    trade_risk=base_trade_risk,
                 )
+                qty = base_qty
+                risk_controls = _resolve_risk_controls(session_date.date().isoformat())
+                if risk_controls is not None:
+                    min_qty = None
+                    if min_dollar_position > 0:
+                        min_qty = int(math.ceil(min_dollar_position / entry_price))
+                    qty = adjust_order_quantity(
+                        base_qty=base_qty,
+                        price=entry_price,
+                        account_equity=equity_before,
+                        risk_controls=risk_controls,
+                        gross_exposure=gross_exposure,
+                        min_qty=min_qty,
+                    )
+                notional = entry_price * qty
+                trade_risk = risk_per_share * qty
                 sign = _direction_sign(direction)
                 cash -= sign * entry_price * qty
                 sym_hist = get_symbol_history(history, symbol, session_date)
@@ -960,19 +1006,19 @@ def run_backtest(
                 equity_before = cash + _compute_positions_value(history, positions, session_date)
                 risk_per_share = _risk_per_share(entry_price, float(row["Stop_Loss"]), direction)
                 dollar_risk = equity_before * risk_per_trade_pct
-                qty = math.floor(dollar_risk / risk_per_share)
-                if qty < 1:
+                base_qty = math.floor(dollar_risk / risk_per_share)
+                if base_qty < 1:
                     entries_skipped_size_zero += 1
                     continue
-                notional = entry_price * qty
-                if notional < min_dollar_position:
+                base_notional = entry_price * base_qty
+                if base_notional < min_dollar_position:
                     entries_skipped_size_zero += 1
                     continue
-                if _direction_sign(direction) > 0 and notional > cash + EPSILON:
+                if _direction_sign(direction) > 0 and base_notional > cash + EPSILON:
                     entries_skipped_cash += 1
                     continue
                 gross_exposure = _compute_gross_exposure(history, positions, session_date)
-                trade_risk = risk_per_share * qty
+                base_trade_risk = risk_per_share * base_qty
                 _enforce_entry_guardrails(
                     scan_cfg=cfg,
                     session_date=session_date,
@@ -982,9 +1028,25 @@ def run_backtest(
                     positions=positions,
                     equity_before=equity_before,
                     gross_exposure=gross_exposure,
-                    notional=notional,
-                    trade_risk=trade_risk,
+                    notional=base_notional,
+                    trade_risk=base_trade_risk,
                 )
+                qty = base_qty
+                risk_controls = _resolve_risk_controls(session_date.date().isoformat())
+                if risk_controls is not None:
+                    min_qty = None
+                    if min_dollar_position > 0:
+                        min_qty = int(math.ceil(min_dollar_position / entry_price))
+                    qty = adjust_order_quantity(
+                        base_qty=base_qty,
+                        price=entry_price,
+                        account_equity=equity_before,
+                        risk_controls=risk_controls,
+                        gross_exposure=gross_exposure,
+                        min_qty=min_qty,
+                    )
+                notional = entry_price * qty
+                trade_risk = risk_per_share * qty
                 sign = _direction_sign(direction)
                 cash -= sign * entry_price * qty
                 sym_hist = get_symbol_history(history, symbol, session_date)

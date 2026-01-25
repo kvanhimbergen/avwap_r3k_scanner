@@ -380,20 +380,20 @@ Provide deterministic, explainable offline behavior without filtering.
 
 ## Phase E2 — Regime-Based Risk Modulation (No Signal Changes)
 
-**Status:** ⏭️ NOT STARTED
+**Status:** ✅ COMPLETE
 
 **Objective:**  
 Modulate **risk parameters only** based on detected regimes, without altering
 signals, symbol selection, or exit logic.
 
 ### Tasks
-- [ ] Define allowable risk controls (sizing multipliers, exposure caps, throttles)
-- [ ] Map regimes to risk multipliers deterministically
-- [ ] Integrate regime outputs with portfolio decision layer
-- [ ] Enforce feature-flagged activation (default OFF)
-- [ ] Drawdown-aware interaction with existing portfolio guardrails
-- [ ] Offline portfolio simulations with and without modulation
-- [ ] Deterministic tests proving signals remain unchanged
+- [x] Define allowable risk controls (sizing multipliers, exposure caps, throttles)
+- [x] Map regimes to risk multipliers deterministically
+- [x] Integrate regime outputs with portfolio decision layer
+- [x] Enforce feature-flagged activation (default OFF)
+- [x] Drawdown-aware interaction with existing portfolio guardrails
+- [x] Offline portfolio simulations with and without modulation
+- [x] Deterministic tests proving signals remain unchanged
 
 **Constraints**
 - Signals and entries remain unchanged
