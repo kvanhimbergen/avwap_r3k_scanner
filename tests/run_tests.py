@@ -83,6 +83,7 @@ def main() -> int:
         root / "tests" / "test_regime_risk_controls.py",
         root / "tests" / "test_risk_attribution.py",
         root / "tests" / "test_risk_attribution_summary.py",
+        root / "tests" / "test_risk_attribution_slack_summary.py",
         root / "tests" / "test_universe_offline_rules.py",
         root / "tests" / "test_scan_engine_benchmark_refresh.py",
         root / "tests" / "test_execution_v2_no_analytics_imports.py",
