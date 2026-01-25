@@ -426,7 +426,9 @@ def compute_setup_context_contract(
     gap_threshold_pct = float(normalized_rules["setup"]["gaps"]["gap_pct"])
     prev_close = float(df["Close"].iloc[-2]) if len(df) > 1 else float(df["Close"].iloc[-1])
     open_now = float(df["Open"].iloc[-1])
-    gap_pct = abs(open_now - prev_close) / prev_close * 100.0
+    gap_pct = 0.0
+    if prev_close > 0:
+        gap_pct = abs(open_now - prev_close) / prev_close * 100.0
     has_gap = gap_pct >= gap_threshold_pct
     gap_direction = "none"
     if has_gap:

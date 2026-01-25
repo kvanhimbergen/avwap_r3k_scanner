@@ -26,7 +26,7 @@ def anchor_swing_high(df: pd.DataFrame, lookback: int) -> int:
 
 def anchor_gap_day(df: pd.DataFrame, lookback: int, gap_pct: float):
     d = df.iloc[-lookback:].copy()
-    prev_close = d["Close"].shift(1)
+    prev_close = d["Close"].shift(1).replace(0, np.nan)
     gap = (d["Open"] - prev_close).abs() / prev_close
     cand = gap[gap >= gap_pct]
     if cand.empty:
