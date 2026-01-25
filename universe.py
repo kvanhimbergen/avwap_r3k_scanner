@@ -1,5 +1,6 @@
 import html
 import io
+import logging
 import os
 import re
 import time
@@ -348,6 +349,12 @@ def apply_universe_rules(df: pd.DataFrame, rules: Dict[str, Any]) -> pd.DataFram
         return df
 
     tickers = df["Ticker"].astype(str).str.upper().tolist()
+
+    if not cfg.effective_universe_allow_network():
+        logging.getLogger(__name__).warning(
+            "Universe metrics skipped due to universe_network_disallowed (UNIVERSE_ALLOW_NETWORK=0)."
+        )
+        return df
 
     # Metrics provider hook (optional)
     # Expected:
