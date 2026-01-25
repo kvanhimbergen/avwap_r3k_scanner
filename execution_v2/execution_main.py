@@ -22,6 +22,7 @@ from alerts.slack import (
 )
 from execution_v2 import buy_loop, exits
 from execution_v2 import live_gate
+from execution_v2 import config_check as _config_check
 from execution_v2 import alpaca_paper
 from execution_v2 import book_ids
 from execution_v2 import book_router
@@ -82,46 +83,8 @@ def _resolve_execution_mode() -> str:
 
 
 def run_config_check(state_dir: str | None = None) -> tuple[bool, list[str]]:
-    issues: list[str] = []
-    mode = _resolve_execution_mode()
-    resolved_state_dir = Path(state_dir) if state_dir else _state_dir()
-
-    if str(resolved_state_dir).strip() == "":
-        issues.append("state_dir_missing")
-    else:
-        try:
-            resolved_state_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as exc:
-            issues.append(f"state_dir_unwritable:{exc}")
-
-    if mode in {"LIVE", "ALPACA_PAPER"}:
-        if not os.getenv("APCA_API_KEY_ID"):
-            issues.append("missing:APCA_API_KEY_ID")
-        if not os.getenv("APCA_API_SECRET_KEY"):
-            issues.append("missing:APCA_API_SECRET_KEY")
-
-    if mode == "ALPACA_PAPER":
-        base_url = os.getenv("APCA_API_BASE_URL") or ""
-        if not base_url:
-            issues.append("missing:APCA_API_BASE_URL")
-        else:
-            normalized = _normalize_base_url(base_url)
-            if normalized != PAPER_BASE_URL:
-                issues.append(f"invalid:APCA_API_BASE_URL({base_url})")
-
-    if mode == "LIVE" and os.getenv("LIVE_TRADING", "0") == "1":
-        enabled, reason = live_gate.live_trading_enabled(str(resolved_state_dir))
-        if not enabled:
-            issues.append(f"live_trading_disabled:{reason}")
-        if live_gate._phase_c_enabled():
-            live_enable_date_ny = os.getenv("LIVE_ENABLE_DATE_NY", "").strip()
-            if not live_enable_date_ny:
-                issues.append("missing:LIVE_ENABLE_DATE_NY")
-            allowlist = live_gate.parse_allowlist()
-            if not allowlist or len(allowlist) != 1:
-                issues.append("invalid:ALLOWLIST_SYMBOLS_phase_c")
-
-    return (len(issues) == 0, issues)
+    """Delegates to execution_v2.config_check (dependency-light, offline-only)."""
+    return _config_check.run_config_check(state_dir=state_dir)
 
 
 def _get_trading_client() -> TradingClient:
