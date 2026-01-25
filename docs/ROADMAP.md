@@ -351,6 +351,33 @@ regime signals without impacting risk, portfolio decisions, or execution.
 - Offline tests validate stability and correctness
 
 
+### Phase E1.2 — Universe Network Guardrails
+
+**Status:** ✅ COMPLETE
+
+**Objective:**  
+Guarantee universe metrics never trigger network calls when offline or in dev.
+
+### Tasks
+- [x] Add runtime `UNIVERSE_ALLOW_NETWORK` override (env-first)
+- [x] Fail-closed `get_universe_metrics` guard before yfinance import
+- [x] Skip metrics provider in universe rules when network is disallowed
+- [x] Deterministic warning log for `universe_network_disallowed`
+- [x] Tests proving yfinance is not imported when disallowed
+
+
+### Phase E1.3 — Offline Universe Metrics Contract
+
+**Status:** ✅ COMPLETE
+
+**Objective:**  
+Provide deterministic, explainable offline behavior without filtering.
+
+### Tasks
+- [x] Preserve fail-open semantics when metrics are skipped
+- [x] Tests confirming provider is never invoked offline
+
+
 ## Phase E2 — Regime-Based Risk Modulation (No Signal Changes)
 
 **Status:** ⏭️ NOT STARTED

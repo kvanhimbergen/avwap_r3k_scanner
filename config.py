@@ -1,4 +1,15 @@
 from dataclasses import dataclass
+import os
+from typing import Optional
+
+
+def _parse_env_bool(value: str) -> Optional[bool]:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return None
 
 @dataclass
 class CFG:
@@ -172,6 +183,22 @@ class CFG:
     # Determinism
     BACKTEST_RANDOM_SEED: int = 42
 
+    def effective_universe_allow_network(self) -> bool:
+        raw = os.getenv("UNIVERSE_ALLOW_NETWORK")
+        if raw is None:
+            return self.UNIVERSE_ALLOW_NETWORK
+        parsed = _parse_env_bool(raw)
+        if parsed is None:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Invalid UNIVERSE_ALLOW_NETWORK value %r; using config default %s",
+                raw,
+                self.UNIVERSE_ALLOW_NETWORK,
+            )
+            return self.UNIVERSE_ALLOW_NETWORK
+        return parsed
+
     def get_universe_metrics(self, tickers: list[str]) -> dict[str, dict]:
         """
         Minimal universe metrics provider for universe.py.
@@ -186,6 +213,12 @@ class CFG:
         """
         import logging
         import re
+
+        if not self.effective_universe_allow_network():
+            raise RuntimeError(
+                "Universe metrics requested but network access is disallowed (UNIVERSE_ALLOW_NETWORK=0)."
+            )
+
         import yfinance as yf
 
         # Reduce yfinance noise
