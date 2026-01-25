@@ -50,6 +50,7 @@
 - [x] Max concurrent positions
 - [x] Max new entries per day
 - [x] Allowlist enforcement
+- [x] Offline execution config-check command (preflight validation)
 - [x] NY-date ledger rollover
 - [x] Broker reconciliation discipline
 - [x] Slack alerts for execution decisions

@@ -21,11 +21,24 @@ from execution_v2.exit_events import (
 
 NY_TZ = ZoneInfo("America/New_York")
 
-if importlib.util.find_spec("alpaca.common.exceptions") is not None:
-    from alpaca.common.exceptions import APIError
-else:
+
+def _resolve_api_error() -> type[Exception]:
+    try:
+        spec = importlib.util.find_spec("alpaca.common.exceptions")
+    except ModuleNotFoundError:
+        spec = None
+    if spec is not None:
+        from alpaca.common.exceptions import APIError as AlpacaAPIError
+
+        return AlpacaAPIError
+
     class APIError(Exception):
         code = None
+
+    return APIError
+
+
+APIError = _resolve_api_error()
 
 
 @dataclass
