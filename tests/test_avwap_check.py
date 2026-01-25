@@ -82,3 +82,21 @@ def test_json_output_is_stable(monkeypatch, tmp_path, capsys):
     assert exit_code == 0
     payload = json.loads(output)
     assert output == json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def test_execution_config_preserves_dry_run_env(monkeypatch, tmp_path):
+    base_dir = _make_repo(tmp_path)
+    captured = {}
+
+    def fake_run(cmd, cwd, capture_output, text, env, check):
+        captured["env"] = env
+        return _mock_proc()
+
+    monkeypatch.setenv("DRY_RUN", "1")
+    monkeypatch.delenv("EXECUTION_MODE", raising=False)
+    monkeypatch.setattr(avwap_check.subprocess, "run", fake_run)
+
+    avwap_check._run_execution_config_check(base_dir)
+
+    assert captured["env"]["DRY_RUN"] == "1"
+    assert captured["env"]["EXECUTION_MODE"] == "DRY_RUN"

@@ -58,7 +58,8 @@ def _summarize_output(stdout: str, stderr: str) -> str:
 def _run_execution_config_check(base_dir: Path) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.pop("LIVE_TRADING", None)
-    env.pop("DRY_RUN", None)
+    if env.get("DRY_RUN", "").strip() == "1" and not env.get("EXECUTION_MODE"):
+        env["EXECUTION_MODE"] = "DRY_RUN"
     cmd = [sys.executable, "-m", "execution_v2.execution_main", "--config-check"]
     return subprocess.run(
         cmd,
