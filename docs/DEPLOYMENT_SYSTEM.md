@@ -38,6 +38,56 @@ Execution runs under systemd, restarts automatically on failure, and logs to `jo
 
 ## Execution Safety Guardrails
 
+### Deployment Assumptions (Important)
+
+The current system assumes:
+
+- The codebase lives at /root/avwap_r3k_scanner
+- The execution user has write access to the repository directory
+
+The following paths must be writable at runtime:
+- daily_candidates.csv
+- tradingview_watchlist.txt
+- cache/ (including bad_tickers.txt)
+- state/ (dry-run ledger, kill switch)
+- ledger/ (execution, attribution, caps)
+- data/execution_v2.sqlite
+
+Non-root or read-only deployments are currently out of scope unless
+paths are reconfigured via environment variables.
+
+
+### Fail-Closed vs Fail-Open Enforcement Model
+
+This system intentionally splits safety enforcement across two layers:
+
+Fail-closed (hard stop, enforced by systemd):
+- Watchlist freshness gate (`ExecStartPre` via check_watchlist_today.sh)
+- Restart storm prevention (systemd RestartPreventExitStatus drop-ins)
+- Live trading gate (LIVE_TRADING + confirm token)
+- Alpaca clock / market status failures
+
+Fail-open (runtime, execution continues with warnings):
+- Market regime checks
+- Earnings proximity checks
+- Optional analytics / attribution modules
+- Dry-run ledger write failures
+
+Important: Not all safety guarantees are enforced in Python. Several critical gates live exclusively in systemd and are only active if the correct unit files and drop-ins are installed.
+
+
+### Timezone Semantics (Important)
+
+Execution components (Execution V2, live gates, market-hours enforcement, and drawdown guards) operate strictly in `America/New_York` time and rely on exchange-aligned clocks for determinism.
+
+The scan pipeline and cache freshness logic currently use the **local system timezone** for:
+- weekend detection
+- cache TTL and freshness checks
+
+This is intentional but means scan behavior may differ around DST boundaries or if the host timezone is not aligned with New York.
+
+Operators should ensure system timezone consistency or account for this when validating deterministic scan output.
+
 ### Watchlist Gate (Critical)
 
 Execution is **blocked from starting** unless:
@@ -56,9 +106,20 @@ Execution will not start
 Restart storms are prevented by systemd policy
 
 Deployment: The Only Approved Method
-⚠️ IMPORTANT
-Do NOT run deploy.sh in production.
-It is tmux-based and will create duplicate processes.
+⚠️ IMPORTANT: systemd drop-ins are required
+
+Restart-storm prevention and the watchlist freshness gate are enforced via
+systemd drop-in files (e.g. execution.service.d/).
+
+These are NOT installed by deploy_systemd.sh.
+
+You must run the following at least once on a new host:
+
+sudo ./ops/install_systemd_units.sh
+
+If this step is skipped, execution may start without the watchlist gate
+and restart-storm protection will not be active.
+
 
 ✅ Approved Script
 Use only:
@@ -165,6 +226,24 @@ Offline config sanity check (no network):
 ```bash
 python execution_v2/execution_main.py --config-check
 ```
+
+### What to do
+Immediately **after that code block**, add a clarification paragraph.
+
+### What to add
+```markdown
+> **Scope Note**
+>
+> `--config-check` validates **execution configuration only** (environment variables, required paths, and basic runtime wiring).
+>
+> It does **not** validate:
+> - scan freshness
+> - watchlist age
+> - universe completeness
+> - market regime availability
+>
+> Passing `--config-check` indicates the execution environment is internally consistent, not that it is safe or optimal to trade.
+
 
 One-Command Morning Health Check
 avwap-check
