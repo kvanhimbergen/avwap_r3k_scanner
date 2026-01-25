@@ -96,7 +96,7 @@ def test_execution_config_preserves_dry_run_env(monkeypatch, tmp_path):
     monkeypatch.delenv("EXECUTION_MODE", raising=False)
     monkeypatch.setattr(avwap_check.subprocess, "run", fake_run)
 
-    avwap_check._run_execution_config_check(base_dir)
+    avwap_check._run_execution_config_check(base_dir, base_dir / "state")
 
     assert captured["env"]["DRY_RUN"] == "1"
     assert captured["env"]["EXECUTION_MODE"] == "DRY_RUN"

@@ -55,9 +55,10 @@ def _summarize_output(stdout: str, stderr: str) -> str:
     return " ".join(chunks) if chunks else "no output"
 
 
-def _run_execution_config_check(base_dir: Path) -> subprocess.CompletedProcess[str]:
+def _run_execution_config_check(base_dir: Path, state_dir: Path) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.pop("LIVE_TRADING", None)
+    env["AVWAP_STATE_DIR"] = str(state_dir)
     if env.get("DRY_RUN", "").strip() == "1" and not env.get("EXECUTION_MODE"):
         env["EXECUTION_MODE"] = "DRY_RUN"
     cmd = [sys.executable, "-m", "execution_v2.config_check"]
@@ -100,8 +101,8 @@ def _check_required_dir(name: str, path: Path) -> CheckResult:
     return CheckResult(status="PASS", name=name, message=f"{path}: ok")
 
 
-def _check_execution_config(base_dir: Path) -> CheckResult:
-    proc = _run_execution_config_check(base_dir)
+def _check_execution_config(base_dir: Path, state_dir: Path) -> CheckResult:
+    proc = _run_execution_config_check(base_dir, state_dir)
     if proc.returncode != 0:
         summary = _summarize_output(proc.stdout, proc.stderr)
         return CheckResult(
@@ -222,7 +223,7 @@ def _collect_results(args: argparse.Namespace) -> List[CheckResult]:
     results.append(_check_required_dir("cache_dir", cache_dir))
 
     if args.mode in {"execution", "all"}:
-        results.append(_check_execution_config(base_dir))
+        results.append(_check_execution_config(base_dir, state_dir))
         if _is_linux() and _systemctl_available():
             results.append(_check_systemd_unit())
             results.append(_check_systemd_dropins())
