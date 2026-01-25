@@ -594,19 +594,19 @@ Phase E3.3 (Operator Reporting).
 
 ## Phase E3.3 — Operator Reporting (Shadow Visibility Only)
 
-**Status:** ⏭️ FUTURE (NOT STARTED)
+**Status:** ✅ COMPLETE
 
 **Objective:**  
 Expose risk attribution insights to the operator without affecting execution.
 
 ### Tasks
-- [ ] Add optional Slack summary (daily):
+- [x] Add optional Slack summary (daily):
   - headline exposure reduction
   - dominant regime + reason codes
   - count of affected symbols
-- [ ] Feature flag `E3_RISK_ATTRIBUTION_SLACK_SUMMARY=0` (default OFF)
-- [ ] Ensure Slack output is sourced only from deterministic ledger artifacts
-- [ ] Operator-facing language (explanatory, not prescriptive)
+- [x] Feature flag `E3_RISK_ATTRIBUTION_SLACK_SUMMARY=0` (default OFF)
+- [x] Ensure Slack output is sourced only from deterministic ledger artifacts
+- [x] Operator-facing language (explanatory, not prescriptive)
 
 **Constraints**
 - Shadow-only (no control surface)
