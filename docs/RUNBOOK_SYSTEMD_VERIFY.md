@@ -58,7 +58,7 @@ systemctl show scan.timer -p LoadState --value
 ### 4) Verify `scan.timer` schedule and timezone
 **Command**
 ```bash
-systemctl show scan.timer -p OnCalendar --value
+systemctl show scan.timer -p TimersCalendar --value
 ```
 **Expected**
 - Output includes: `Mon..Fri 08:30 America/New_York`.

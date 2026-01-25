@@ -46,6 +46,10 @@ def check_watchlist_freshness(base_dir: Path) -> tuple[str, str]:
     file_date_ny = datetime.fromtimestamp(stat.st_mtime, tz=ZoneInfo("America/New_York")).date()
     if file_date_ny == now_ny:
         return "PASS", f"fresh: {watchlist} ({file_date_ny})"
+    # If today is not a scheduled scan day (e.g., weekend), do not report a hard FAIL.
+    # This tool is verification-only; execution remains fail-closed via the watchlist gate.
+    if now_ny.weekday() >= 5:
+        return "WARN", f"stale (expected on weekend): {watchlist} (file_date={file_date_ny} today={now_ny})"
     return "FAIL", f"stale: {watchlist} (file_date={file_date_ny} today={now_ny})"
 
 
@@ -68,7 +72,7 @@ def main() -> int:
         else:
             checks.append(CheckResult("scan.timer.load_state", "FAIL", err or "unable to read"))
 
-        code, out, err = systemctl_show("scan.timer", "OnCalendar")
+        code, out, err = systemctl_show("scan.timer", "TimersCalendar")
         if code == 0 and out:
             tz_ok = "America/New_York" in out
             checks.append(
