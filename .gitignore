@@ -52,3 +52,4 @@ tradingview_watchlist.txt
 # Local artifacts
 _local_backups/
 ledger/
+backtests/
