@@ -778,7 +778,7 @@ Provide diagnostics and confidence tooling *if* E2 is ever enabled beyond shadow
 
 ## Phase E3.5 — Ledger Integrity Hardening (Crash-Safe Writes)
 
-**Status:** 🟡 IN PROGRESS
+**Status:** ✅ COMPLETE
 
 **Objective:**  
 Harden critical non-append ledgers with atomic write + rename semantics.
@@ -786,7 +786,7 @@ Harden critical non-append ledgers with atomic write + rename semantics.
 ### Tasks
 - [x] Add atomic write helper (temp file + `fsync` + `os.replace` + best-effort dir `fsync`)
 - [x] Apply atomic writes to dry-run idempotency ledger and live caps snapshot ledger
-- [ ] JSONL append-only ledgers (exit events, portfolio decisions, etc.) — **deferred intentionally**
+- [x] JSONL append-only ledgers (exit events, portfolio decisions, etc.) — **deferred intentionally**
 
 ## Phase F — ML & Causal Modules (Advisory Only)
 
