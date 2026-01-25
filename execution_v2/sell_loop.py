@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from execution_v2 import buy_loop
 from execution_v2.config_types import PositionState, StopMode
+from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ def evaluate_positions(store, trading_client, cfg: SellLoopConfig) -> None:
             stop_price = candidate.stop_loss
             high_water = current_price
             state = PositionState(
+                strategy_id=DEFAULT_STRATEGY_ID,
                 symbol=symbol,
                 size_shares=int(float(pos.qty)),
                 avg_price=float(pos.avg_entry_price),

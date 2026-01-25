@@ -23,6 +23,7 @@ Side = Literal["buy", "sell"]
 
 @dataclass(frozen=True)
 class OrderSpec:
+    strategy_id: str
     symbol: str
     side: Side
     qty: int
@@ -62,6 +63,7 @@ def generate_idempotency_key(
 
 def build_marketable_limit(
     *,
+    strategy_id: str,
     symbol: str,
     side: Side,
     qty: int,
@@ -97,6 +99,7 @@ def build_marketable_limit(
     key = generate_idempotency_key(symbol, side, qty, ref_price)
 
     return OrderSpec(
+        strategy_id=strategy_id,
         symbol=symbol,
         side=side,
         qty=int(qty),

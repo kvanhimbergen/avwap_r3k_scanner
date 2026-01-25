@@ -10,6 +10,7 @@ from analytics.portfolio_decision import (
     dumps_portfolio_decision_batch,
     load_daily_candidates,
 )
+from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 
 
 def _write_candidates(path: Path, symbols: list[str]) -> None:
@@ -18,14 +19,20 @@ def _write_candidates(path: Path, symbols: list[str]) -> None:
 
 
 def _write_snapshot(path: Path, *, date_ny: str, capital: float, drawdown: float, positions: list[dict]) -> None:
+    payload_positions = []
+    for position in positions:
+        item = dict(position)
+        item.setdefault("strategy_id", DEFAULT_STRATEGY_ID)
+        payload_positions.append(item)
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "date_ny": date_ny,
         "run_id": "test",
+        "strategy_ids": [DEFAULT_STRATEGY_ID],
         "capital": {"starting": capital, "ending": capital},
         "gross_exposure": 0.0,
         "net_exposure": 0.0,
-        "positions": positions,
+        "positions": payload_positions,
         "pnl": {},
         "metrics": {"drawdown": drawdown},
         "provenance": {},

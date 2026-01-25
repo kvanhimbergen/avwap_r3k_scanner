@@ -6,6 +6,7 @@ from pathlib import Path
 from analytics.broker_adapter import AlpacaFixtureAdapter
 from analytics.reconciliation import build_reconciliation_report, serialize_reconciliation_report
 from analytics.schemas import BrokerPosition, PortfolioPosition
+from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "analytics"
 
@@ -13,6 +14,7 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "analytics"
 def test_reconciliation_deterministic_serialization() -> None:
     internal = [
         PortfolioPosition(
+            strategy_id=DEFAULT_STRATEGY_ID,
             symbol="AAA",
             qty=10.0,
             avg_price=100.0,
@@ -47,6 +49,7 @@ def test_reconciliation_deterministic_serialization() -> None:
 def test_reconciliation_delta_detection() -> None:
     internal = [
         PortfolioPosition(
+            strategy_id=DEFAULT_STRATEGY_ID,
             symbol="AAA",
             qty=10.0,
             avg_price=100.0,
@@ -54,6 +57,7 @@ def test_reconciliation_delta_detection() -> None:
             notional=1010.0,
         ),
         PortfolioPosition(
+            strategy_id=DEFAULT_STRATEGY_ID,
             symbol="CCC",
             qty=5.0,
             avg_price=50.0,

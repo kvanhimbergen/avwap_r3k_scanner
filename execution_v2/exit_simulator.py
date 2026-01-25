@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from execution_v2.exit_events import build_exit_event
+from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 from execution_v2.exits import apply_trailing_stop, resolve_structural_stop
 
 
@@ -47,7 +48,7 @@ def simulate_exit(
     stop_buffer_dollars: float,
     min_intraday_bars: int = 6,
     source: str = "simulation",
-    strategy_id: str = "default",
+    strategy_id: str = DEFAULT_STRATEGY_ID,
     sleeve_id: str = "default",
 ) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []

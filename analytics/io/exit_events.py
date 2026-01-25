@@ -6,6 +6,7 @@ from typing import Any
 
 from analytics.schemas import ExitEvent, ExitIngestResult
 from analytics.util import parse_timestamp
+from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 
 
 class ExitLedgerParseError(ValueError):
@@ -68,7 +69,7 @@ def _parse_event(raw: dict[str, Any], *, source_path: str, idx: int) -> ExitEven
         ts_ny=str(_require(raw.get("ts_ny"), "ts_ny", source_path, idx)),
         date_ny=str(_require(raw.get("date_ny"), "date_ny", source_path, idx)),
         source=str(_require(raw.get("source"), "source", source_path, idx)),
-        strategy_id=str(raw.get("strategy_id") or "default"),
+        strategy_id=str(raw.get("strategy_id") or DEFAULT_STRATEGY_ID),
         sleeve_id=str(raw.get("sleeve_id") or "default"),
         metadata=dict(raw.get("metadata") or {}),
     )

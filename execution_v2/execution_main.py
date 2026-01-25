@@ -32,6 +32,7 @@ from execution_v2 import portfolio_decisions
 from execution_v2 import portfolio_decision_enforce
 from execution_v2.orders import generate_idempotency_key
 from execution_v2.state_store import StateStore
+from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 from utils.atomic_write import atomic_write_text
 
 if TYPE_CHECKING:
@@ -773,7 +774,13 @@ def run_once(cfg) -> None:
                     continue
 
                 key = generate_idempotency_key(intent.symbol, "buy", intent.size_shares, intent.ref_price)
-                if not store.record_order_once(key, intent.symbol, "buy", intent.size_shares):
+                if not store.record_order_once(
+                    key,
+                    intent.strategy_id,
+                    intent.symbol,
+                    "buy",
+                    intent.size_shares,
+                ):
                     _log(f"SKIP {intent.symbol}: idempotency key already used")
                     decision_record["actions"]["skipped"].append(
                         {"symbol": intent.symbol, "reason": "idempotency_key_used"}
@@ -937,7 +944,13 @@ def run_once(cfg) -> None:
 
             key = generate_idempotency_key(intent.symbol, "buy", intent.size_shares, intent.ref_price)
             if not effective_dry_run:
-                if not store.record_order_once(key, intent.symbol, "buy", intent.size_shares):
+                if not store.record_order_once(
+                    key,
+                    intent.strategy_id,
+                    intent.symbol,
+                    "buy",
+                    intent.size_shares,
+                ):
                     _log(f"SKIP {intent.symbol}: idempotency key already used")
                     decision_record["actions"]["skipped"].append(
                         {"symbol": intent.symbol, "reason": "idempotency_key_used"}
@@ -1092,7 +1105,8 @@ def run_once(cfg) -> None:
             ref_price = current_price or float(position.avg_entry_price)
             key = generate_idempotency_key(symbol, "sell", qty, ref_price)
             if live_active:
-                if not store.record_order_once(key, symbol, "sell", qty):
+                strategy_id = state.strategy_id if state is not None else DEFAULT_STRATEGY_ID
+                if not store.record_order_once(key, strategy_id, symbol, "sell", qty):
                     continue
 
             if not live_active:

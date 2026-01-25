@@ -19,7 +19,7 @@ class Fill:
     date_ny: str
     source_path: str
     raw_json: Optional[str]
-    strategy_id: str = "default"
+    strategy_id: str
     sleeve_id: str = "default"
 
 
@@ -43,7 +43,7 @@ class Lot:
     remaining_qty: float
     venue: str
     source_paths: list[str]
-    strategy_id: str = "default"
+    strategy_id: str
     sleeve_id: str = "default"
 
 
@@ -64,7 +64,7 @@ class Trade:
     fees: float
     venue: str
     notes: Optional[str]
-    strategy_id: str = "default"
+    strategy_id: str
     sleeve_id: str = "default"
 
 
@@ -169,6 +169,7 @@ class ExitReconstructionResult:
 
 @dataclass(frozen=True)
 class PortfolioPosition:
+    strategy_id: str
     symbol: str
     qty: float
     avg_price: Optional[float]
@@ -181,6 +182,7 @@ class PortfolioSnapshot:
     schema_version: int
     date_ny: str
     run_id: str
+    strategy_ids: list[str]
     capital: dict[str, Optional[float]]
     gross_exposure: float
     net_exposure: float

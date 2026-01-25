@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from typing import Optional
 
 from analytics.schemas import Lot, PortfolioPosition, PortfolioSnapshot, Trade
+from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_VOLATILITY_WINDOW = 5
 
 
@@ -207,8 +208,12 @@ def build_positions(
                 "qty": 0.0,
                 "cost_total": 0.0,
                 "price_missing": False,
+                "strategy_id": lot.strategy_id,
+                "strategy_mixed": False,
             },
         )
+        if entry["strategy_id"] != lot.strategy_id:
+            entry["strategy_mixed"] = True
         qty = float(lot.remaining_qty)
         entry["qty"] = float(entry["qty"]) + qty
         if lot.open_price is None:
@@ -233,8 +238,13 @@ def build_positions(
             reason_codes.append("position_price_missing")
             notional_price = 0.0
         notional = qty * float(notional_price)
+        strategy_id = entry["strategy_id"]
+        if entry["strategy_mixed"]:
+            reason_codes.append("position_strategy_mixed")
+            strategy_id = "MULTI"
         positions.append(
             PortfolioPosition(
+                strategy_id=strategy_id,
                 symbol=symbol,
                 qty=qty,
                 avg_price=avg_price,
@@ -321,10 +331,20 @@ def build_portfolio_snapshot(
         "reason_codes": combined_reason_codes,
     }
 
+    strategy_ids = sorted(
+        {
+            *(trade.strategy_id for trade in trades),
+            *(lot.strategy_id for lot in open_lots),
+        }
+    )
+    if not strategy_ids:
+        strategy_ids = [DEFAULT_STRATEGY_ID]
+
     return PortfolioSnapshot(
         schema_version=SCHEMA_VERSION,
         date_ny=date_ny,
         run_id=run_id,
+        strategy_ids=strategy_ids,
         capital={"starting": starting_capital, "ending": ending_capital},
         gross_exposure=gross_exposure,
         net_exposure=net_exposure,

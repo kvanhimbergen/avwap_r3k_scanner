@@ -62,6 +62,7 @@ def main() -> int:
         root / "tests" / "test_paper_sim_pricing.py"
         root / "tests" / "test_paper_sim_routing_invariant.py"
         root / "tests" / "test_parity_scan_backtest.py"
+        root / "tests" / "test_phase_s0_strategy_identity.py"
         root / "tests" / "test_portfolio_daily_snapshot.py"
         root / "tests" / "test_portfolio_decision_contract.py"
         root / "tests" / "test_portfolio_decision_enforcement.py"

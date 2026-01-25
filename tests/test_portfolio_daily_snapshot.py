@@ -7,6 +7,7 @@ from analytics.portfolio_daily import build_daily_portfolio_snapshot, write_dail
 from analytics.portfolio_storage import serialize_portfolio_snapshot
 from analytics.schemas import Lot, ReconstructionResult, Trade
 from analytics.storage import write_reconstruction_json
+from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 
 
 def _make_trade(*, trade_id: str, symbol: str) -> Trade:
@@ -26,7 +27,7 @@ def _make_trade(*, trade_id: str, symbol: str) -> Trade:
         fees=1.0,
         venue="TEST",
         notes=None,
-        strategy_id="default",
+        strategy_id=DEFAULT_STRATEGY_ID,
         sleeve_id="default",
     )
 
@@ -44,7 +45,7 @@ def _make_open_lot(symbol: str) -> Lot:
         remaining_qty=1.0,
         venue="TEST",
         source_paths=["ledger.json"],
-        strategy_id="default",
+        strategy_id=DEFAULT_STRATEGY_ID,
         sleeve_id="default",
     )
 

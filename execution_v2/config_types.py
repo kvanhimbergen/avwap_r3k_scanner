@@ -38,6 +38,7 @@ class StopMode(Enum):
 # -------------------------
 @dataclass(frozen=True)
 class EntryIntent:
+    strategy_id: str
     symbol: str
     pivot_level: float
     boh_confirmed_at: float
@@ -53,6 +54,7 @@ class EntryIntent:
 # -------------------------
 @dataclass
 class PositionState:
+    strategy_id: str
     symbol: str
     size_shares: int
     avg_price: float

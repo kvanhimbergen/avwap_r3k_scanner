@@ -21,6 +21,7 @@ from analytics.portfolio_storage import (
     write_portfolio_snapshot_json,
 )
 from analytics.schemas import Lot, Trade
+from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 
 
 def _make_trade(
@@ -49,7 +50,7 @@ def _make_trade(
         fees=fees,
         venue="TEST",
         notes=None,
-        strategy_id="default",
+        strategy_id=DEFAULT_STRATEGY_ID,
         sleeve_id="default",
     )
 
@@ -67,7 +68,7 @@ def _make_open_lot(symbol: str, qty: float, open_price: float | None) -> Lot:
         remaining_qty=qty,
         venue="TEST",
         source_paths=["ledger.json"],
-        strategy_id="default",
+        strategy_id=DEFAULT_STRATEGY_ID,
         sleeve_id="default",
     )
 

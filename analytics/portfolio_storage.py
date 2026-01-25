@@ -12,11 +12,13 @@ def serialize_portfolio_snapshot(snapshot: PortfolioSnapshot) -> dict[str, Any]:
         "schema_version": int(snapshot.schema_version),
         "date_ny": snapshot.date_ny,
         "run_id": snapshot.run_id,
+        "strategy_ids": list(snapshot.strategy_ids),
         "capital": dict(snapshot.capital),
         "gross_exposure": snapshot.gross_exposure,
         "net_exposure": snapshot.net_exposure,
         "positions": [
             {
+                "strategy_id": position.strategy_id,
                 "symbol": position.symbol,
                 "qty": position.qty,
                 "avg_price": position.avg_price,

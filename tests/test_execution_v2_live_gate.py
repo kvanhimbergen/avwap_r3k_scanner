@@ -6,11 +6,13 @@ import pytest
 
 from execution_v2 import live_gate
 from execution_v2.config_types import EntryIntent
+from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 
 
 def _intent(symbol: str, qty: int = 10, price: float = 10.0) -> EntryIntent:
     now = datetime.now(tz=timezone.utc).timestamp()
     return EntryIntent(
+        strategy_id=DEFAULT_STRATEGY_ID,
         symbol=symbol,
         pivot_level=1.0,
         boh_confirmed_at=now,

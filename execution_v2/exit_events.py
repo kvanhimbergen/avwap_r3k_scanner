@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 from utils.atomic_write import atomic_write_text
 
 NY_TZ = ZoneInfo("America/New_York")
@@ -78,7 +79,7 @@ def build_position_id(
     entry_ts_utc: str,
     qty: float,
     entry_price: Optional[float],
-    strategy_id: str = "default",
+    strategy_id: str = DEFAULT_STRATEGY_ID,
     sleeve_id: str = "default",
     entry_id: Optional[str] = None,
 ) -> str:
@@ -135,7 +136,7 @@ def build_exit_event(
     position_id: Optional[str] = None,
     trade_id: Optional[str] = None,
     metadata: Optional[dict[str, Any]] = None,
-    strategy_id: str = "default",
+    strategy_id: str = DEFAULT_STRATEGY_ID,
     sleeve_id: str = "default",
 ) -> dict[str, Any]:
     ts_dt = _parse_dt(ts)

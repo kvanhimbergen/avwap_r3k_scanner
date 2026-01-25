@@ -12,7 +12,7 @@ from typing import Optional, List
 
 from execution_v2.config_types import EntryIntent, PositionState, StopMode
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 class StateStore:
     def __init__(self, db_path: str) -> None:
@@ -68,6 +68,7 @@ class StateStore:
         # Entry intents table
         cur.execute("""
         CREATE TABLE IF NOT EXISTS entry_intents (
+            strategy_id TEXT NOT NULL,
             symbol TEXT PRIMARY KEY,
             pivot_level REAL NOT NULL,
             boh_confirmed_at REAL NOT NULL,
@@ -83,6 +84,7 @@ class StateStore:
         # Positions table
         cur.execute("""
         CREATE TABLE IF NOT EXISTS positions (
+            strategy_id TEXT NOT NULL,
             symbol TEXT PRIMARY KEY,
             size_shares INTEGER NOT NULL,
             avg_price REAL NOT NULL,
@@ -103,6 +105,7 @@ class StateStore:
         cur.execute("""
         CREATE TABLE IF NOT EXISTS order_ledger (
             idempotency_key TEXT PRIMARY KEY,
+            strategy_id TEXT NOT NULL,
             symbol TEXT NOT NULL,
             side TEXT NOT NULL,
             qty INTEGER NOT NULL,
@@ -159,9 +162,10 @@ class StateStore:
         now_ts = time.time()
         cur.execute("""
         INSERT OR REPLACE INTO entry_intents
-        (symbol, pivot_level, boh_confirmed_at, scheduled_entry_at, size_shares, stop_loss, take_profit, ref_price, dist_pct, created_ts)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
+        (strategy_id, symbol, pivot_level, boh_confirmed_at, scheduled_entry_at, size_shares, stop_loss, take_profit, ref_price, dist_pct, created_ts)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
         """, (
+            intent.strategy_id,
             intent.symbol,
             intent.pivot_level,
             intent.boh_confirmed_at,
@@ -181,6 +185,7 @@ class StateStore:
         if r is None:
             return None
         return EntryIntent(
+            strategy_id=r["strategy_id"],
             symbol=r["symbol"],
             pivot_level=r["pivot_level"],
             boh_confirmed_at=r["boh_confirmed_at"],
@@ -199,6 +204,7 @@ class StateStore:
         cur.execute("DELETE FROM entry_intents WHERE scheduled_entry_at <= ?;", (now_ts,))
         return [
             EntryIntent(
+                strategy_id=r["strategy_id"],
                 symbol=r["symbol"],
                 pivot_level=r["pivot_level"],
                 boh_confirmed_at=r["boh_confirmed_at"],
@@ -218,9 +224,10 @@ class StateStore:
     def upsert_position(self, ps: PositionState) -> None:
         cur = self.conn.cursor()
         cur.execute("""
-        INSERT INTO positions(symbol, size_shares, avg_price, pivot_level, r1_level, r2_level, stop_mode, last_update_ts, stop_price, high_water, last_boh_level, invalidation_count, trimmed_r1, trimmed_r2)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO positions(strategy_id, symbol, size_shares, avg_price, pivot_level, r1_level, r2_level, stop_mode, last_update_ts, stop_price, high_water, last_boh_level, invalidation_count, trimmed_r1, trimmed_r2)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(symbol) DO UPDATE SET
+            strategy_id=excluded.strategy_id,
             size_shares=excluded.size_shares,
             avg_price=excluded.avg_price,
             pivot_level=excluded.pivot_level,
@@ -234,7 +241,7 @@ class StateStore:
             invalidation_count=excluded.invalidation_count,
             trimmed_r1=excluded.trimmed_r1,
             trimmed_r2=excluded.trimmed_r2
-        """, (ps.symbol, ps.size_shares, ps.avg_price, ps.pivot_level, ps.r1_level, ps.r2_level, ps.stop_mode.value, ps.last_update_ts, ps.stop_price, ps.high_water, ps.last_boh_level, ps.invalidation_count, int(ps.trimmed_r1), int(ps.trimmed_r2)))
+        """, (ps.strategy_id, ps.symbol, ps.size_shares, ps.avg_price, ps.pivot_level, ps.r1_level, ps.r2_level, ps.stop_mode.value, ps.last_update_ts, ps.stop_price, ps.high_water, ps.last_boh_level, ps.invalidation_count, int(ps.trimmed_r1), int(ps.trimmed_r2)))
 
     def get_position(self, symbol: str) -> Optional[PositionState]:
         cur = self.conn.cursor()
@@ -243,6 +250,7 @@ class StateStore:
         if r is None:
             return None
         return PositionState(
+            strategy_id=r["strategy_id"],
             symbol=r["symbol"],
             size_shares=r["size_shares"],
             avg_price=r["avg_price"],
@@ -264,6 +272,7 @@ class StateStore:
         cur.execute("SELECT * FROM positions ORDER BY symbol;")
         rows = cur.fetchall()
         return [PositionState(
+            strategy_id=r["strategy_id"],
             symbol=r["symbol"],
             size_shares=r["size_shares"],
             avg_price=r["avg_price"],
@@ -315,11 +324,11 @@ class StateStore:
     # -------------------------
     # Order idempotency
     # -------------------------
-    def record_order_once(self, idempotency_key: str, symbol: str, side: str, qty: int, external_order_id: Optional[str]=None) -> bool:
+    def record_order_once(self, idempotency_key: str, strategy_id: str, symbol: str, side: str, qty: int, external_order_id: Optional[str]=None) -> bool:
         cur = self.conn.cursor()
         try:
-            cur.execute("INSERT INTO order_ledger(idempotency_key,symbol,side,qty,created_ts,external_order_id) VALUES(?,?,?,?,?,?);",
-                        (idempotency_key, symbol, side, qty, time.time(), external_order_id))
+            cur.execute("INSERT INTO order_ledger(idempotency_key,strategy_id,symbol,side,qty,created_ts,external_order_id) VALUES(?,?,?,?,?,?,?);",
+                        (idempotency_key, strategy_id, symbol, side, qty, time.time(), external_order_id))
             return True
         except sqlite3.IntegrityError:
             return False

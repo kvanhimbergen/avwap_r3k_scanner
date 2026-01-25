@@ -18,6 +18,7 @@ from analytics.util import (
     to_iso_ny,
     to_iso_utc,
 )
+from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 
 
 class LedgerParseError(RuntimeError):
@@ -193,7 +194,7 @@ def _build_fills(
                 date_ny=date_ny_value,
                 source_path=source_path,
                 raw_json=raw_json,
-                strategy_id="default",
+                strategy_id=DEFAULT_STRATEGY_ID,
                 sleeve_id="default",
             )
         )

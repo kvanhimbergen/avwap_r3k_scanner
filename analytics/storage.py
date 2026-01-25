@@ -79,7 +79,7 @@ def parse_reconstruction_json(path: str) -> ReconstructionResult:
             fees=float(entry["fees"]),
             venue=entry["venue"],
             notes=entry.get("notes"),
-            strategy_id=entry.get("strategy_id", "default"),
+            strategy_id=entry["strategy_id"],
             sleeve_id=entry.get("sleeve_id", "default"),
         )
         for entry in payload.get("trades", [])
@@ -97,7 +97,7 @@ def parse_reconstruction_json(path: str) -> ReconstructionResult:
             remaining_qty=float(entry["remaining_qty"]),
             venue=entry["venue"],
             source_paths=list(entry.get("source_paths", [])),
-            strategy_id=entry.get("strategy_id", "default"),
+            strategy_id=entry["strategy_id"],
             sleeve_id=entry.get("sleeve_id", "default"),
         )
         for entry in payload.get("open_lots", [])

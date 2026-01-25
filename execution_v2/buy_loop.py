@@ -18,6 +18,7 @@ import pandas as pd
 from execution_v2.boh import boh_confirmed_option2
 from execution_v2.config_types import EntryIntent
 from execution_v2.sizing import SizingConfig, compute_size_shares
+from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 from execution_v2 import exits
 from portfolio.risk_controls import (
     adjust_order_quantity,
@@ -255,6 +256,7 @@ def evaluate_and_create_entry_intents(store, md, cfg: BuyLoopConfig, account_equ
 
         delay = random.uniform(cfg.entry_delay_min_sec, cfg.entry_delay_max_sec)
         intent = EntryIntent(
+            strategy_id=DEFAULT_STRATEGY_ID,
             symbol=cand.symbol,
             pivot_level=cand.entry_level,
             boh_confirmed_at=boh.confirm_bar_ts or now_ts,
