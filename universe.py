@@ -14,6 +14,8 @@ import requests
 
 from config import cfg
 
+logger = logging.getLogger(__name__)
+
 # --- CONFIGURATION (script-relative cache path) ---
 _BASE_DIR = Path(__file__).resolve().parent
 LOCAL_CACHE_PATH = str(_BASE_DIR / "cache" / "iwv_holdings.csv")
@@ -351,7 +353,7 @@ def apply_universe_rules(df: pd.DataFrame, rules: Dict[str, Any]) -> pd.DataFram
     tickers = df["Ticker"].astype(str).str.upper().tolist()
 
     if not cfg.effective_universe_allow_network():
-        logging.getLogger(__name__).warning(
+        logger.warning(
             "Universe metrics skipped due to universe_network_disallowed (UNIVERSE_ALLOW_NETWORK=0)."
         )
         return df

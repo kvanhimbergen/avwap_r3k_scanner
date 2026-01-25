@@ -46,9 +46,10 @@ def test_apply_universe_rules_skips_metrics_when_network_disallowed(
     monkeypatch.setattr(cfg, "get_universe_metrics", _raise_if_called)
 
     df = pd.DataFrame({"Ticker": ["AAPL"]})
-    rules = {"liquidity": {"min_price": 1.0}}
+    rules = {"universe": {"liquidity": {"min_price": 1.0}}}
 
-    with caplog.at_level(logging.WARNING):
+    caplog.set_level(logging.WARNING, logger=universe.__name__)
+    with caplog.at_level(logging.WARNING, logger=universe.__name__):
         out = universe.apply_universe_rules(df, rules)
 
     assert out.equals(df)
