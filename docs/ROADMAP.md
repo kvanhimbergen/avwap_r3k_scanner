@@ -540,6 +540,51 @@ Summarize E3.1 attribution events into deterministic, human-auditable daily arti
 
 ---
 
+## Phase E3.2b — Temporal Risk Attribution Aggregation (Analytics Only)
+
+**Status:** ⏭️ FUTURE (NOT STARTED)
+
+**Objective:**  
+Derive deterministic, multi-day views of risk attribution behavior to expose
+*persistence*, *dominance*, and *temporal structure* in E2-driven risk modulation,
+without introducing operator outputs or execution coupling.
+
+This phase exists solely to enrich the analytics substrate consumed by
+Phase E3.3 (Operator Reporting).
+
+### Tasks
+- [ ] Define canonical rolling-window attribution schema (derived-only)
+  - window length (e.g., 5D / 20D / 60D)
+  - cumulative baseline vs modulated notional
+  - persistent throttle / reason-code dominance
+  - regime prevalence over window
+  - top symbols by cumulative notional suppression
+- [ ] Implement deterministic rolling aggregation job
+  - source data: `PORTFOLIO_RISK_ATTRIBUTION_SUMMARY/YYYY-MM-DD.json`
+  - no direct dependency on execution or strategy logic
+- [ ] Write windowed artifacts to:
+  - `ledger/PORTFOLIO_RISK_ATTRIBUTION_ROLLING/<WINDOW>/<YYYY-MM-DD>.json`
+- [ ] Feature flag `E3_RISK_ATTRIBUTION_ROLLING_WRITE=0` (default OFF)
+- [ ] Deterministic ordering, rounding, and serialization
+- [ ] Unit tests validating:
+  - byte-for-byte reproducibility
+  - correct handling of missing / partial windows
+
+**Constraints**
+- Analytics-only (no operator output, no Slack)
+- Derived data only (no new decisions)
+- Offline-safe and deterministic
+- Fail-open (missing inputs → no artifact, no error)
+
+**Exit Criteria**
+- Rolling summaries reproducible from daily summaries
+- Temporal aggregates match daily data exactly
+- No execution, sizing, or reporting side effects
+- Tests pass locally and on droplet
+
+
+---
+
 ## Phase E3.3 — Operator Reporting (Shadow Visibility Only)
 
 **Status:** ⏭️ FUTURE (NOT STARTED)
