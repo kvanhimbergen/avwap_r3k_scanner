@@ -12,6 +12,7 @@ from typing import Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from execution_v2 import book_ids
+from utils.atomic_write import atomic_write_text
 
 _NY_TZ = ZoneInfo("America/New_York")
 _LAST_LIVE_ENABLED: Optional[bool] = None
@@ -364,12 +365,16 @@ class LiveLedger:
 
     def save(self) -> None:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        with open(self.path, "w") as f:
-            for entry in self.entries:
-                payload = dict(entry)
-                payload.setdefault("date_ny", self.date_ny)
-                payload.setdefault("book_id", book_ids.ALPACA_LIVE)
-                f.write(json.dumps(payload, sort_keys=True) + "\n")
+        lines = []
+        for entry in self.entries:
+            payload = dict(entry)
+            payload.setdefault("date_ny", self.date_ny)
+            payload.setdefault("book_id", book_ids.ALPACA_LIVE)
+            lines.append(json.dumps(payload, sort_keys=True))
+        data = ""
+        if lines:
+            data = "\n".join(lines) + "\n"
+        atomic_write_text(self.path, data)
 
 
 def live_ledger_path(repo_root: Path, date_ny: str) -> Path:
