@@ -204,36 +204,40 @@ def evaluate_and_create_entry_intents(store, md, cfg: BuyLoopConfig, account_equ
                 min_qty=None,
             )
             if os.getenv("E3_RISK_ATTRIBUTION_WRITE", "0").strip() == "1" and risk_controls_result is not None:
-                risk_attribution = importlib.import_module("analytics.risk_attribution")
                 try:
-                    throttle = risk_controls_result.throttle or {}
-                    throttle_regime_label = throttle.get("regime_label")
-                    throttle_policy_ref = risk_attribution.resolve_throttle_policy_reference(
-                        repo_root=repo_root,
-                        ny_date=ny_date,
-                        source=risk_controls_result.source,
-                    )
-                    event = risk_attribution.build_attribution_event(
-                        date_ny=ny_date,
-                        symbol=cand.symbol,
-                        baseline_qty=base_size,
-                        modulated_qty=size,
-                        price=cand.price,
-                        account_equity=account_equity,
-                        gross_exposure=None,
-                        risk_controls=risk_controls,
-                        risk_control_reasons=risk_controls_result.reasons,
-                        throttle_source=risk_controls_result.source,
-                        throttle_regime_label=throttle_regime_label,
-                        throttle_policy_ref=throttle_policy_ref,
-                        drawdown=drawdown_value,
-                        drawdown_threshold=drawdown_threshold,
-                        min_qty=None,
-                        source="execution_v2.buy_loop",
-                    )
-                    risk_attribution.write_attribution_event(event)
+                    risk_attribution = importlib.import_module("analytics.risk_attribution")
                 except Exception as exc:
-                    print(f"WARN: risk attribution write failed for {cand.symbol}: {exc}")
+                    print(f"WARN: risk attribution import failed for {cand.symbol}: {exc}")
+                else:
+                    try:
+                        throttle = risk_controls_result.throttle or {}
+                        throttle_regime_label = throttle.get("regime_label")
+                        throttle_policy_ref = risk_attribution.resolve_throttle_policy_reference(
+                            repo_root=repo_root,
+                            ny_date=ny_date,
+                            source=risk_controls_result.source,
+                        )
+                        event = risk_attribution.build_attribution_event(
+                            date_ny=ny_date,
+                            symbol=cand.symbol,
+                            baseline_qty=base_size,
+                            modulated_qty=size,
+                            price=cand.price,
+                            account_equity=account_equity,
+                            gross_exposure=None,
+                            risk_controls=risk_controls,
+                            risk_control_reasons=risk_controls_result.reasons,
+                            throttle_source=risk_controls_result.source,
+                            throttle_regime_label=throttle_regime_label,
+                            throttle_policy_ref=throttle_policy_ref,
+                            drawdown=drawdown_value,
+                            drawdown_threshold=drawdown_threshold,
+                            min_qty=None,
+                            source="execution_v2.buy_loop",
+                        )
+                        risk_attribution.write_attribution_event(event)
+                    except Exception as exc:
+                        print(f"WARN: risk attribution write failed for {cand.symbol}: {exc}")
         if size <= 0:
             continue
 
