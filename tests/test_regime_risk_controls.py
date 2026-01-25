@@ -163,6 +163,86 @@ def test_adjust_order_quantity_preserves_entry_decision() -> None:
     assert qty == 1
 
 
+def test_adjust_order_quantity_caps_pct_gross_exposure() -> None:
+    controls = risk_controls.RiskControls(
+        risk_multiplier=1.0,
+        max_gross_exposure=0.5,
+        max_positions=None,
+        per_position_cap=None,
+        throttle_reason="ok",
+    )
+
+    qty = risk_controls.adjust_order_quantity(
+        base_qty=200,
+        price=10.0,
+        account_equity=1_000.0,
+        risk_controls=controls,
+        gross_exposure=400.0,
+        min_qty=None,
+    )
+    assert qty == 10
+
+
+def test_adjust_order_quantity_caps_absolute_gross_exposure() -> None:
+    controls = risk_controls.RiskControls(
+        risk_multiplier=1.0,
+        max_gross_exposure=5_000.0,
+        max_positions=None,
+        per_position_cap=None,
+        throttle_reason="ok",
+    )
+
+    qty = risk_controls.adjust_order_quantity(
+        base_qty=200,
+        price=10.0,
+        account_equity=1_000.0,
+        risk_controls=controls,
+        gross_exposure=4_800.0,
+        min_qty=None,
+    )
+    assert qty == 20
+
+
+def test_resolve_drawdown_from_snapshot_numeric(tmp_path: Path) -> None:
+    snapshot = {"metrics": {"drawdown": 0.12}}
+    path = tmp_path / "2024-01-02.json"
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    drawdown, reasons = risk_controls.resolve_drawdown_from_snapshot(base_dir=str(tmp_path))
+    assert drawdown == pytest.approx(0.12)
+    assert reasons == []
+
+
+def test_resolve_drawdown_from_snapshot_dict(tmp_path: Path) -> None:
+    snapshot = {"metrics": {"drawdown": {"max_drawdown": -0.25, "series": []}}}
+    path = tmp_path / "2024-01-03.json"
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    drawdown, reasons = risk_controls.resolve_drawdown_from_snapshot(base_dir=str(tmp_path))
+    assert drawdown == pytest.approx(-0.25)
+    assert reasons == []
+
+
+def test_resolve_drawdown_from_snapshot_missing_max(tmp_path: Path) -> None:
+    snapshot = {"metrics": {"drawdown": {"series": []}}}
+    path = tmp_path / "2024-01-04.json"
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    drawdown, reasons = risk_controls.resolve_drawdown_from_snapshot(base_dir=str(tmp_path))
+    assert drawdown is None
+    assert reasons == ["portfolio_snapshot_invalid"]
+
+
+def test_resolve_drawdown_from_snapshot_invalid_value(tmp_path: Path) -> None:
+    snapshot = {"metrics": {"drawdown": {"max_drawdown": "bad"}}}
+    path = tmp_path / "2024-01-05.json"
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    drawdown, reasons = risk_controls.resolve_drawdown_from_snapshot(base_dir=str(tmp_path))
+    assert drawdown is None
+    assert reasons == ["portfolio_snapshot_invalid"]
+
+
 def test_offline_artifacts_only() -> None:
     source = Path(risk_controls.__file__).read_text(encoding="utf-8")
     assert "yfinance" not in source

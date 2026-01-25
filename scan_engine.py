@@ -84,6 +84,8 @@ BENCHMARK_TICKERS = (
     "GLD",
     "UUP",
 )
+BENCHMARK_BACKFILL_DAYS = 730
+BENCHMARK_MIN_BARS = 200
 
 
 def _cfg():
@@ -579,13 +581,24 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
     history = cs.read_parquet(str(hist_path))
     batch_size = 200
     benchmark_tickers = [t for t in BENCHMARK_TICKERS if t not in set(filtered)]
+    now_dt = datetime.now()
+    long_start = now_dt - timedelta(days=BENCHMARK_BACKFILL_DAYS)
+    short_start = now_dt - timedelta(days=15)
 
     # First-run / missing-cache backfill: must exceed 80 bars
     if history is None or history.empty:
         print("History cache missing/empty. Backfilling ~2 years...")
-        hist_start = datetime.now() - timedelta(days=730)
+        hist_start = long_start
+        benchmark_backfill = benchmark_tickers
     else:
-        hist_start = datetime.now() - timedelta(days=15)
+        hist_start = short_start
+        benchmark_backfill = []
+        if benchmark_tickers:
+            bench_hist = history[history["Ticker"].isin(benchmark_tickers)]
+            bench_counts = bench_hist.groupby("Ticker")["Date"].nunique().to_dict()
+            for ticker in benchmark_tickers:
+                if bench_counts.get(ticker, 0) < BENCHMARK_MIN_BARS:
+                    benchmark_backfill.append(ticker)
 
     for i in tqdm(range(0, len(filtered), batch_size), desc="History Refresh"):
         batch = filtered[i : i + batch_size]
@@ -602,12 +615,12 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
             PBT_DIAG["history_refresh_errors"] += 1
             continue
 
-    if benchmark_tickers:
+    if benchmark_backfill:
         try:
             req = StockBarsRequest(
-                symbol_or_symbols=benchmark_tickers,
+                symbol_or_symbols=benchmark_backfill,
                 timeframe=TimeFrame.Day,
-                start=hist_start,
+                start=long_start,
             )
             raw_new = data_client.get_stock_bars(req).df
             if raw_new is not None and not raw_new.empty:

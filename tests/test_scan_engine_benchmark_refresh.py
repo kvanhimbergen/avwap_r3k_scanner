@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -31,11 +32,11 @@ def _make_history(tickers: list[str], dates: pd.DatetimeIndex) -> pd.DataFrame:
 
 class _FakeAlpacaClient:
     def __init__(self) -> None:
-        self.calls: list[list[str]] = []
+        self.calls: list[tuple[list[str], object]] = []
 
     def get_stock_bars(self, req) -> SimpleNamespace:
         symbols = list(req.symbol_or_symbols)
-        self.calls.append(symbols)
+        self.calls.append((symbols, req.start))
         now = pd.Timestamp("2024-04-01")
         rows = [
             {
@@ -84,4 +85,72 @@ def test_run_scan_refreshes_benchmarks_without_scanning(monkeypatch: pytest.Monk
 
     assert set(result["Symbol"]) == {"AAA"}
     assert scanned == ["AAA"]
-    assert any(benchmark_set.issubset(set(call)) for call in fake_client.calls)
+    assert any(benchmark_set.issubset(set(call[0])) for call in fake_client.calls)
+
+
+def test_run_scan_backfills_missing_benchmark_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    benchmark_set = {"SPY", "IWM", "IWV", "QQQ"}
+    filtered = ["AAA"]
+    dates = pd.date_range("2024-01-02", periods=90, freq="B")
+    history = _make_history(filtered, dates)
+
+    fixed_now = pd.Timestamp("2024-04-01")
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now
+
+    fake_client = _FakeAlpacaClient()
+    scanned: list[str] = []
+
+    def _fake_build_candidate_row(df, ticker, sector, setup_rules, *, as_of_dt=None, direction="Long"):
+        scanned.append(ticker)
+        return {"Symbol": ticker}
+
+    monkeypatch.setattr(scan_engine, "datetime", _FixedDatetime)
+    monkeypatch.setattr(scan_engine, "StockHistoricalDataClient", lambda *args, **kwargs: fake_client)
+    monkeypatch.setattr(scan_engine, "get_market_regime", lambda *_: True)
+    monkeypatch.setattr(scan_engine, "load_setup_rules", lambda: {})
+    monkeypatch.setattr(
+        scan_engine,
+        "build_liquidity_snapshot",
+        lambda universe, client: pd.DataFrame([{"Ticker": "AAA", "Sector": "Tech"}]),
+    )
+    monkeypatch.setattr(scan_engine, "load_universe", lambda: ["AAA"])
+    monkeypatch.setattr(scan_engine, "is_near_earnings_cached", lambda *_: False)
+    monkeypatch.setattr(scan_engine, "build_candidate_row", _fake_build_candidate_row)
+    monkeypatch.setattr(scan_engine.cs, "read_parquet", lambda *_: history.copy())
+    monkeypatch.setattr(scan_engine.cs, "write_parquet", lambda *_: None)
+
+    scan_engine.run_scan(scan_engine.default_cfg, as_of_dt=dates[-1])
+
+    expected_start = fixed_now - scan_engine.timedelta(days=scan_engine.BENCHMARK_BACKFILL_DAYS)
+    assert any(benchmark_set.issubset(set(call[0])) and call[1] == expected_start for call in fake_client.calls)
+
+
+def test_run_scan_skips_sufficient_benchmark_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    benchmark_set = {"SPY", "IWM", "IWV", "QQQ"}
+    filtered = ["AAA"]
+    dates = pd.date_range("2023-01-02", periods=scan_engine.BENCHMARK_MIN_BARS + 5, freq="B")
+    history = _make_history(filtered + sorted(benchmark_set), dates)
+
+    fake_client = _FakeAlpacaClient()
+
+    monkeypatch.setattr(scan_engine, "StockHistoricalDataClient", lambda *args, **kwargs: fake_client)
+    monkeypatch.setattr(scan_engine, "get_market_regime", lambda *_: True)
+    monkeypatch.setattr(scan_engine, "load_setup_rules", lambda: {})
+    monkeypatch.setattr(
+        scan_engine,
+        "build_liquidity_snapshot",
+        lambda universe, client: pd.DataFrame([{"Ticker": "AAA", "Sector": "Tech"}]),
+    )
+    monkeypatch.setattr(scan_engine, "load_universe", lambda: ["AAA"])
+    monkeypatch.setattr(scan_engine, "is_near_earnings_cached", lambda *_: False)
+    monkeypatch.setattr(scan_engine, "build_candidate_row", lambda *_args, **_kwargs: {"Symbol": "AAA"})
+    monkeypatch.setattr(scan_engine.cs, "read_parquet", lambda *_: history.copy())
+    monkeypatch.setattr(scan_engine.cs, "write_parquet", lambda *_: None)
+
+    scan_engine.run_scan(scan_engine.default_cfg, as_of_dt=dates[-1])
+
+    assert not any(benchmark_set.issubset(set(call[0])) for call in fake_client.calls)

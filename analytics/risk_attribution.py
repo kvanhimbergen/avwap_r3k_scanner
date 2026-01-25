@@ -19,8 +19,27 @@ def attribution_write_enabled() -> bool:
     return os.getenv(FEATURE_FLAG_ENV, "0").strip() == "1"
 
 
+def _normalize_payload_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _normalize_payload_value(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_normalize_payload_value(val) for val in value]
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return _normalize_payload_value(item())
+        except Exception:
+            return value
+    return value
+
+
+def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return _normalize_payload_value(payload)
+
+
 def stable_json_dumps(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    normalized = normalize_payload(payload)
+    return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
 
 
 def ordered_reason_codes(reasons: Iterable[str] | None) -> list[str]:
@@ -30,7 +49,7 @@ def ordered_reason_codes(reasons: Iterable[str] | None) -> list[str]:
 
 
 def build_decision_id(payload: dict[str, Any]) -> str:
-    packed = stable_json_dumps(payload)
+    packed = json.dumps(normalize_payload(payload), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(packed.encode("utf-8")).hexdigest()
 
 
@@ -83,7 +102,11 @@ def _infer_hard_caps(
         adjusted_qty = min(adjusted_qty, cap_qty)
 
     if risk_controls.max_gross_exposure is not None and gross_exposure is not None:
-        remaining = (account_equity * risk_controls.max_gross_exposure) - gross_exposure
+        if risk_controls.max_gross_exposure <= 1.0:
+            limit = account_equity * risk_controls.max_gross_exposure
+        else:
+            limit = risk_controls.max_gross_exposure
+        remaining = limit - gross_exposure
         remaining = max(0.0, remaining)
         cap_qty = int(math.floor(remaining / price))
         if cap_qty < adjusted_qty:

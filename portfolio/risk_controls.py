@@ -154,7 +154,11 @@ def adjust_order_quantity(
         adjusted_qty = min(adjusted_qty, cap_qty)
 
     if risk_controls.max_gross_exposure is not None and gross_exposure is not None:
-        remaining = (account_equity * risk_controls.max_gross_exposure) - gross_exposure
+        if risk_controls.max_gross_exposure <= 1.0:
+            limit = account_equity * risk_controls.max_gross_exposure
+        else:
+            limit = risk_controls.max_gross_exposure
+        remaining = limit - gross_exposure
         remaining = max(0.0, remaining)
         cap_qty = int(math.floor(remaining / price))
         adjusted_qty = min(adjusted_qty, cap_qty)
@@ -180,6 +184,14 @@ def resolve_drawdown_from_snapshot(
     drawdown = metrics.get("drawdown") if isinstance(metrics, dict) else None
     if drawdown is None:
         return None, ["portfolio_snapshot_invalid"]
+    if isinstance(drawdown, dict):
+        raw = drawdown.get("max_drawdown")
+        if raw is None:
+            return None, ["portfolio_snapshot_invalid"]
+        try:
+            return float(raw), []
+        except (TypeError, ValueError):
+            return None, ["portfolio_snapshot_invalid"]
     try:
         return float(drawdown), []
     except (TypeError, ValueError):

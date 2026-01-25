@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from analytics import risk_attribution
 from portfolio.risk_controls import RiskControls
 
@@ -82,3 +84,18 @@ def test_no_network_imports() -> None:
     source = Path(risk_attribution.__file__).read_text(encoding="utf-8")
     banned = ("requests", "httpx", "urllib3", "aiohttp")
     assert not any(token in source for token in banned)
+
+
+def test_stable_json_dumps_normalizes_numpy_scalars() -> None:
+    np = pytest.importorskip("numpy")
+    payload = {"value": np.float64(1.5), "count": np.int64(2)}
+    assert risk_attribution.stable_json_dumps(payload) == '{"count":2,"value":1.5}'
+
+
+def test_decision_id_matches_equivalent_wrapped_values() -> None:
+    np = pytest.importorskip("numpy")
+    pd = pytest.importorskip("pandas")
+    pandas_scalar = pd.Series([1.25], dtype="Float64").iloc[0]
+    payload_a = {"value": np.float64(1.5), "count": np.int64(2), "scalar": pandas_scalar}
+    payload_b = {"value": 1.5, "count": 2, "scalar": 1.25}
+    assert risk_attribution.build_decision_id(payload_a) == risk_attribution.build_decision_id(payload_b)
