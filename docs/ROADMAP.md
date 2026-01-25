@@ -570,6 +570,12 @@ Phase E3.3 (Operator Reporting).
 - [ ] Unit tests validating:
   - byte-for-byte reproducibility
   - correct handling of missing / partial windows
+  - window rule: last 20 available daily summary dates on disk <= as-of
+
+**Notes**
+- Gated by `E3_RISK_ATTRIBUTION_ROLLING_WRITE=0` (default OFF)
+- Output path: `ledger/PORTFOLIO_RISK_ATTRIBUTION_ROLLING/20D/YYYY-MM-DD.json`
+- Window rule: last 20 available daily summary dates on disk <= as-of
 
 **Constraints**
 - Analytics-only (no operator output, no Slack)
