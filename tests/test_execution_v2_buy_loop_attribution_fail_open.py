@@ -97,7 +97,7 @@ def test_attribution_import_failure_is_fail_open(
     monkeypatch.setattr(buy_loop, "boh_confirmed_option2", lambda *_: SimpleNamespace(confirmed=True, confirm_bar_ts=None))
     monkeypatch.setattr(buy_loop, "compute_size_shares", lambda **_: 10)
     monkeypatch.setattr(buy_loop, "adjust_order_quantity", lambda **_: 10)
-    monkeypatch.setattr(buy_loop.exits, "compute_stop_price", lambda *_: 95.0)
+    monkeypatch.setattr(buy_loop.exits, "compute_stop_price", lambda *args, **kwargs: 95.0)
     monkeypatch.setattr(buy_loop.exits, "validate_risk", lambda *_: True)
     monkeypatch.setattr(buy_loop.importlib, "import_module", lambda *_: (_ for _ in ()).throw(ImportError("boom")))
 
