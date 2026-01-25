@@ -13,6 +13,7 @@ from typing import Iterable
 import pandas as pd
 
 from analytics import risk_attribution
+from analytics import risk_attribution_rolling
 from analytics import risk_attribution_summary
 import scan_engine
 from config import cfg as default_cfg
@@ -1498,6 +1499,15 @@ def run_backtest(
                     ny_date=ny_date,
                     source="backtest_engine",
                 )
+    if risk_attribution_rolling.rolling_write_enabled():
+        try:
+            if trading_days:
+                end_date_ny = pd.Timestamp(trading_days[-1]).date().isoformat()
+                risk_attribution_rolling.generate_and_write_rolling_summary(
+                    as_of_date_ny=end_date_ny,
+                )
+        except Exception as exc:
+            print(f"WARN: risk attribution rolling write failed: {exc}")
     if write_run_meta:
         _atomic_write_json(run_meta, output_dir / "run_meta.json")
     diagnostics_df = pd.DataFrame(diagnostics_rows)
