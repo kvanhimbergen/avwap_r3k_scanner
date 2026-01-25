@@ -774,6 +774,20 @@ Provide diagnostics and confidence tooling *if* E2 is ever enabled beyond shadow
 - No automatic control changes
 - Advisory only
 
+---
+
+## Phase E3.5 — Ledger Integrity Hardening (Crash-Safe Writes)
+
+**Status:** 🟡 IN PROGRESS
+
+**Objective:**  
+Harden critical non-append ledgers with atomic write + rename semantics.
+
+### Tasks
+- [x] Add atomic write helper (temp file + `fsync` + `os.replace` + best-effort dir `fsync`)
+- [x] Apply atomic writes to dry-run idempotency ledger and live caps snapshot ledger
+- [ ] JSONL append-only ledgers (exit events, portfolio decisions, etc.) — **deferred intentionally**
+
 ## Phase F — ML & Causal Modules (Advisory Only)
 
 **Status:** ❌ DEFERRED
@@ -816,4 +830,3 @@ Every Codex run **must**:
 Failure to update this roadmap is a failed implementation.
 
 ---
-

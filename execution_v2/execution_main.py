@@ -32,6 +32,7 @@ from execution_v2 import portfolio_decisions
 from execution_v2 import portfolio_decision_enforce
 from execution_v2.orders import generate_idempotency_key
 from execution_v2.state_store import StateStore
+from utils.atomic_write import atomic_write_text
 
 if TYPE_CHECKING:
     from alpaca.trading.client import TradingClient
@@ -229,8 +230,8 @@ def _submit_market_entry(trading_client: TradingClient, intent, dry_run: bool) -
 
         if ledger_enabled:
             try:
-                with ledger_path.open("w", encoding="utf-8") as f:
-                    json.dump(ledger, f)
+                payload = json.dumps(ledger)
+                atomic_write_text(ledger_path, payload)
             except Exception as exc:
                 _log(f"WARNING: failed to write dry run ledger: {exc}")
 
