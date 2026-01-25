@@ -236,13 +236,18 @@ def _enforce_entry_guardrails(
     gross_exposure: float,
     notional: float,
     trade_risk: float,
+    effective_max_positions: int | None = None,
+    effective_max_gross_exposure_abs: float | None = None,
 ) -> None:
     run_id = _get_run_id(scan_cfg)
 
     if _kill_switch_active(scan_cfg, session_date):
         _guardrail_violation("kill_switch", True, False, run_id)
 
-    max_positions = int(_cfg_value(scan_cfg, "BACKTEST_MAX_POSITIONS", "BACKTEST_MAX_CONCURRENT", 5))
+    base_max_positions = int(_cfg_value(scan_cfg, "BACKTEST_MAX_POSITIONS", "BACKTEST_MAX_CONCURRENT", 5))
+    max_positions = base_max_positions
+    if effective_max_positions is not None:
+        max_positions = min(base_max_positions, int(effective_max_positions))
     if len(positions) >= max_positions:
         _guardrail_violation("max_concurrent_positions", len(positions) + 1, max_positions, run_id)
 
@@ -275,9 +280,12 @@ def _enforce_entry_guardrails(
             run_id,
         )
 
-    max_gross_exposure_abs = float(
+    base_max_gross_exposure_abs = float(
         getattr(scan_cfg, "BACKTEST_MAX_GROSS_EXPOSURE_DOLLARS", 1_000_000.0)
     )
+    max_gross_exposure_abs = base_max_gross_exposure_abs
+    if effective_max_gross_exposure_abs is not None:
+        max_gross_exposure_abs = min(base_max_gross_exposure_abs, float(effective_max_gross_exposure_abs))
     if projected_gross > max_gross_exposure_abs + EPSILON:
         _guardrail_violation(
             "max_gross_exposure_abs", round(projected_gross, 6), max_gross_exposure_abs, run_id
@@ -403,6 +411,7 @@ def run_backtest(
     )
     max_positions = int(_cfg_value(cfg, "BACKTEST_MAX_POSITIONS", "BACKTEST_MAX_CONCURRENT", 5))
     max_gross_exposure_pct = float(getattr(cfg, "BACKTEST_MAX_GROSS_EXPOSURE_PCT", 1.0))
+    max_gross_exposure_abs = float(getattr(cfg, "BACKTEST_MAX_GROSS_EXPOSURE_DOLLARS", 1_000_000.0))
 
     repo_root = Path(getattr(cfg, "BACKTEST_REPO_ROOT", ".")).resolve()
     risk_controls_enabled = risk_modulation_enabled()
@@ -419,7 +428,7 @@ def run_backtest(
             ny_date=date_ny,
             repo_root=repo_root,
             base_max_positions=max_positions,
-            base_max_gross_exposure=max_gross_exposure_pct,
+            base_max_gross_exposure=max_gross_exposure_abs,
             base_per_position_cap=None,
             drawdown=drawdown_value,
             max_drawdown_pct_block=drawdown_threshold,
@@ -563,6 +572,16 @@ def run_backtest(
                     continue
                 gross_exposure = _compute_gross_exposure(history, positions, session_date)
                 base_trade_risk = risk_per_share * base_qty
+                risk_controls_result = _resolve_risk_controls(session_date.date().isoformat())
+                effective_max_positions = None
+                effective_max_gross_exposure_abs = None
+                if risk_controls_result is not None:
+                    rc = risk_controls_result.controls
+                    if rc.max_positions is not None:
+                        effective_max_positions = int(rc.max_positions)
+                    if rc.max_gross_exposure is not None:
+                        effective_max_gross_exposure_abs = float(rc.max_gross_exposure)
+
                 _enforce_entry_guardrails(
                     scan_cfg=cfg,
                     session_date=session_date,
@@ -574,9 +593,10 @@ def run_backtest(
                     gross_exposure=gross_exposure,
                     notional=base_notional,
                     trade_risk=base_trade_risk,
+                    effective_max_positions=effective_max_positions,
+                    effective_max_gross_exposure_abs=effective_max_gross_exposure_abs,
                 )
                 qty = base_qty
-                risk_controls_result = _resolve_risk_controls(session_date.date().isoformat())
                 if risk_controls_result is not None:
                     min_qty = None
                     if min_dollar_position > 0:
@@ -1050,6 +1070,16 @@ def run_backtest(
                     continue
                 gross_exposure = _compute_gross_exposure(history, positions, session_date)
                 base_trade_risk = risk_per_share * base_qty
+                risk_controls_result = _resolve_risk_controls(session_date.date().isoformat())
+                effective_max_positions = None
+                effective_max_gross_exposure_abs = None
+                if risk_controls_result is not None:
+                    rc = risk_controls_result.controls
+                    if rc.max_positions is not None:
+                        effective_max_positions = int(rc.max_positions)
+                    if rc.max_gross_exposure is not None:
+                        effective_max_gross_exposure_abs = float(rc.max_gross_exposure)
+
                 _enforce_entry_guardrails(
                     scan_cfg=cfg,
                     session_date=session_date,
@@ -1061,9 +1091,10 @@ def run_backtest(
                     gross_exposure=gross_exposure,
                     notional=base_notional,
                     trade_risk=base_trade_risk,
+                    effective_max_positions=effective_max_positions,
+                    effective_max_gross_exposure_abs=effective_max_gross_exposure_abs,
                 )
                 qty = base_qty
-                risk_controls_result = _resolve_risk_controls(session_date.date().isoformat())
                 if risk_controls_result is not None:
                     min_qty = None
                     if min_dollar_position > 0:
