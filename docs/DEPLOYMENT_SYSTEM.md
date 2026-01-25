@@ -11,6 +11,8 @@ The system is designed to be:
 - Protected against trading with stale scan data
 - Operated entirely through systemd
 
+**Systemd verification runbook:** see [`docs/RUNBOOK_SYSTEMD_VERIFY.md`](RUNBOOK_SYSTEMD_VERIFY.md) for the deterministic verification sweep.
+
 ---
 
 ## Authoritative Runtime Components
