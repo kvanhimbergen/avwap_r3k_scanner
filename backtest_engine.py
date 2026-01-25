@@ -411,6 +411,7 @@ def run_backtest(
     )
     max_positions = int(_cfg_value(cfg, "BACKTEST_MAX_POSITIONS", "BACKTEST_MAX_CONCURRENT", 5))
     max_gross_exposure_pct = float(getattr(cfg, "BACKTEST_MAX_GROSS_EXPOSURE_PCT", 1.0))
+    max_gross_exposure_abs = float(getattr(cfg, "BACKTEST_MAX_GROSS_EXPOSURE_DOLLARS", 1_000_000.0))
 
     repo_root = Path(getattr(cfg, "BACKTEST_REPO_ROOT", ".")).resolve()
     risk_controls_enabled = risk_modulation_enabled()
@@ -427,7 +428,7 @@ def run_backtest(
             ny_date=date_ny,
             repo_root=repo_root,
             base_max_positions=max_positions,
-            base_max_gross_exposure=max_gross_exposure_pct,
+            base_max_gross_exposure=max_gross_exposure_abs,
             base_per_position_cap=None,
             drawdown=drawdown_value,
             max_drawdown_pct_block=drawdown_threshold,
