@@ -543,7 +543,7 @@ Summarize E3.1 attribution events into deterministic, human-auditable daily arti
 
 ## Phase E3.2b — Temporal Risk Attribution Aggregation (Analytics Only)
 
-**Status:** ⏭️ FUTURE (NOT STARTED)
+**Status:** ✅ COMPLETE
 
 **Objective:**  
 Derive deterministic, multi-day views of risk attribution behavior to expose
@@ -554,20 +554,20 @@ This phase exists solely to enrich the analytics substrate consumed by
 Phase E3.3 (Operator Reporting).
 
 ### Tasks
-- [ ] Define canonical rolling-window attribution schema (derived-only)
+- [x] Define canonical rolling-window attribution schema (derived-only)
   - window length (e.g., 5D / 20D / 60D)
   - cumulative baseline vs modulated notional
   - persistent throttle / reason-code dominance
   - regime prevalence over window
   - top symbols by cumulative notional suppression
-- [ ] Implement deterministic rolling aggregation job
+- [x] Implement deterministic rolling aggregation job
   - source data: `PORTFOLIO_RISK_ATTRIBUTION_SUMMARY/YYYY-MM-DD.json`
   - no direct dependency on execution or strategy logic
-- [ ] Write windowed artifacts to:
+- [x] Write windowed artifacts to:
   - `ledger/PORTFOLIO_RISK_ATTRIBUTION_ROLLING/<WINDOW>/<YYYY-MM-DD>.json`
-- [ ] Feature flag `E3_RISK_ATTRIBUTION_ROLLING_WRITE=0` (default OFF)
-- [ ] Deterministic ordering, rounding, and serialization
-- [ ] Unit tests validating:
+- [x] Feature flag `E3_RISK_ATTRIBUTION_ROLLING_WRITE=0` (default OFF)
+- [x] Deterministic ordering, rounding, and serialization
+- [x] Unit tests validating:
   - byte-for-byte reproducibility
   - correct handling of missing / partial windows
   - window rule: last 20 available daily summary dates on disk <= as-of
