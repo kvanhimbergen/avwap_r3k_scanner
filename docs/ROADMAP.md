@@ -509,23 +509,24 @@ Produce deterministic, audit-grade explanations for any E2-driven sizing modulat
 
 ## Phase E3.2 — Daily Aggregation & Portfolio-Level Attribution
 
-**Status:** ⏭️ UPCOMING (NOT STARTED)
+**Status:** ✅ COMPLETE
 
 **Objective:**  
 Summarize E3.1 attribution events into deterministic, human-auditable daily artifacts.
 
 ### Tasks
-- [ ] Define daily attribution summary schema:
+- [x] Define daily attribution summary schema:
   - total baseline notional vs modulated notional
   - net exposure delta
   - count of modulated vs unmodified decisions
   - breakdown by reason code
   - top symbols by notional reduction
-- [ ] Implement deterministic aggregation job
-- [ ] Write daily summary artifact to:
+- [x] Implement deterministic aggregation job
+- [x] Write daily summary artifact to:
   - `ledger/PORTFOLIO_RISK_ATTRIBUTION_SUMMARY/YYYY-MM-DD.json`
-- [ ] Ensure aggregation is reproducible from raw events
-- [ ] Unit tests for aggregation determinism
+- [x] Ensure aggregation is reproducible from raw events
+- [x] Unit tests for aggregation determinism
+- [x] Feature flag `E3_RISK_ATTRIBUTION_SUMMARY_WRITE=0` (default OFF)
 
 **Constraints**
 - Derived data only (no new decisions)

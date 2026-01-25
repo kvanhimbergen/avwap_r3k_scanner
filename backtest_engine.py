@@ -13,6 +13,7 @@ from typing import Iterable
 import pandas as pd
 
 from analytics import risk_attribution
+from analytics import risk_attribution_summary
 import scan_engine
 from config import cfg as default_cfg
 from setup_context import load_setup_rules
@@ -1488,6 +1489,15 @@ def run_backtest(
     _atomic_write_csv(positions_df, positions_path)
     _atomic_write_csv(equity_df, equity_curve_path)
     _atomic_write_json(summary, summary_path)
+    if risk_attribution_summary.summary_write_enabled():
+        for session_date in trading_days:
+            ny_date = pd.Timestamp(session_date).date().isoformat()
+            input_path = risk_attribution_summary.resolve_input_path(ny_date=ny_date)
+            if input_path.exists():
+                risk_attribution_summary.generate_and_write_daily_summary(
+                    ny_date=ny_date,
+                    source="backtest_engine",
+                )
     if write_run_meta:
         _atomic_write_json(run_meta, output_dir / "run_meta.json")
     diagnostics_df = pd.DataFrame(diagnostics_rows)
