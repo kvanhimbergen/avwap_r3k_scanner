@@ -135,7 +135,7 @@
 
 ## Phase D2 — Intelligent Allocation & Core Portfolio Metrics
 
-**Status:** ⏭️ NEXT (NOT STARTED)
+**Status:** ✅ COMPLETE
 
 **Objective:** Decide *how much* to trade each signal and *how to size the portfolio*.
 
@@ -410,48 +410,186 @@ signals, symbol selection, or exit logic.
 
 ---
 
-## Phase F — ML & Causal Modules (Advisory Only)
+# PHASE S — MULTI-STRATEGY ORCHESTRATION (STRUCTURAL ONLY)
 
-**Status:** ❌ DEFERRED
+**Status:** ⏭️ FUTURE (NOT STARTED)
 
-**Objective:** Inform humans, never auto-trade.
+**Purpose:**  
+Evolve the system from a *single-strategy executor* into a **portfolio of heterogeneous strategies**, governed by centralized risk, deterministic arbitration, and explicit capital partitioning — **without introducing new alpha, ML, or optimization logic**.
 
-### Tasks (Future)
-- [ ] Feature store (offline)
-- [ ] Label leakage controls
-- [ ] Advisory scoring only
-- [ ] No execution hooks
-- [ ] Explicit operator opt-in
+Phase S defines *where strategies live*, *how they interact*, and *how capital is shared*.  
+It does **not** define *what signals are generated*.
 
 ---
 
-## Phase G — Operations, Auditing, and Lifecycle
+## Phase S — Non-Negotiable Principles
 
-**Status:** ❌ DEFERRED
+- Strategies emit **intents**, never orders
+- A single **Control Plane** remains authoritative for:
+  - capital allocation
+  - approvals / rejections
+  - execution
+- Cross-strategy exposure is:
+  - visible
+  - capped
+  - attributable
+- Phase S introduces **structure, not intelligence**
+- No ML, no regime logic changes, no signal changes
 
-**Objective:** Make the system sale-, audit-, and handoff-ready.
+---
 
-### Tasks (Future)
-- [ ] Full runbook coverage
-- [ ] Disaster recovery plan
-- [ ] Immutable audit trails
-- [ ] Versioned strategy rulesets
-- [ ] Decommission / rollback playbooks
+## Phase S0 — Strategy Identity & Contracts
+
+**Objective:**  
+Introduce explicit, first-class **strategy identity** across the entire system.
+
+### Tasks
+- [ ] Define canonical `StrategyID` registry (e.g. `S1_AVWAP_CORE`)
+- [ ] Define **Strategy Metadata Contract**:
+  - strategy_id
+  - asset universe
+  - holding horizon
+  - execution style
+  - risk profile (directional / neutral / convex)
+- [ ] Persist `strategy_id` on:
+  - trade intents
+  - orders
+  - positions
+  - fills
+  - portfolio snapshots
+- [ ] Deterministic validation tests for identity propagation
+
+**Exit Criteria**
+- Every trade, position, and PnL unit is strategy-addressable
+- No anonymous or unscoped trades exist
 
 ---
 
-## Codex Instruction (MANDATORY)
+## Phase S1 — Trade Intent Contract & Control-Plane Arbitration
 
-Every Codex run **must**:
-1. Treat this file as canonical
-2. Operate on a single Phase only
-3. Update task checkboxes it completes
-4. Refuse to implement out-of-scope items
-5. Leave the system test-clean and deployable
+**Objective:**  
+Formalize the **Strategy → Control Plane** interface.
 
-Failure to update this roadmap is a failed implementation.
+### Tasks
+- [ ] Define canonical **TradeIntent schema** (append-only):
+  - strategy_id
+  - symbol
+  - side
+  - intended notional / risk
+  - stop / exit plan
+  - time_in_force
+  - thesis / tags
+  - model_version + data_version
+- [ ] Control Plane arbitration logic:
+  - approve / reject / resize intents
+  - deterministic reason codes
+- [ ] Intent → decision → order lineage
+- [ ] Idempotency + rejection tests
+
+**Constraints**
+- No strategy may bypass Phase B / Phase C safety gates
+- No strategy may mutate capital state directly
 
 ---
+
+## Phase S2 — Strategy Sleeves & Capital Partitioning
+
+**Objective:**  
+Introduce **strategy-scoped risk budgets** inside a unified portfolio.
+
+### Tasks
+- [ ] Define **strategy sleeves**:
+  - max daily loss
+  - max gross exposure
+  - max concurrent positions
+- [ ] Portfolio-level aggregation:
+  - cross-strategy exposure
+  - overlapping symbol risk
+- [ ] Deterministic enforcement:
+  - per-strategy caps
+  - portfolio caps
+- [ ] Attribution extensions:
+  - PnL by strategy
+  - drawdown by strategy
+  - exposure by strategy
+
+**Exit Criteria**
+- Strategies cannot crowd capital implicitly
+- Strategy totals reconcile exactly to portfolio totals
+
+---
+
+## Phase S3 — Cross-Strategy Conflict Resolution
+
+**Objective:**  
+Prevent unintended exposure amplification when strategies collide.
+
+### Tasks
+- [ ] Detect symbol overlap across strategies
+- [ ] Deterministic conflict rules:
+  - priority ordering
+  - offsetting / netting behavior
+- [ ] Portfolio-aware resizing when overlaps occur
+- [ ] Conflict reason-codes persisted
+
+**Constraints**
+- No alpha judgment
+- No signal ranking
+- Static, rule-based resolution only
+
+---
+
+## Phase S4 — Strategy-Level Attribution & Diagnostics
+
+**Objective:**  
+Make multi-strategy behavior **fully explainable**.
+
+### Tasks
+- [ ] Daily attribution by:
+  - strategy
+  - symbol
+  - sleeve
+- [ ] Strategy contribution to:
+  - portfolio PnL
+  - drawdown
+  - volatility
+- [ ] Deterministic diagnostics artifacts:
+  - “which strategy caused what?”
+
+**Exit Criteria**
+- Any portfolio outcome can be decomposed by strategy
+- Diagnostics are ledger-backed and reproducible
+
+---
+
+## Phase S — Global Constraints
+
+- No new alpha
+- No ML or optimization
+- No regime logic changes
+- Offline-safe, deterministic
+- Fail-closed on execution, fail-open on analytics
+- Ledger-backed artifacts only
+
+---
+
+## Dependency Position
+
+Phase S must complete **before**:
+- Phase F — ML & Causal Modules
+- Activation of additional live strategies
+
+Phase S consumes:
+- Phase D portfolio snapshots
+- Phase 2 portfolio decisions
+- Phase E risk modulation (constraints only)
+
+---
+
+**Rationale:**  
+Phase S is the structural layer that allows additional strategies and future ML to be *scoped, attributable, kill-switchable, and safe*. Skipping Phase S would force future intelligence to entangle with execution, sizing, and risk — exactly what the architecture is designed to avoid.
+
+
 
 ## Phase E3 — Risk Attribution & Explainability (Measurement Only)
 
@@ -635,3 +773,47 @@ Provide diagnostics and confidence tooling *if* E2 is ever enabled beyond shadow
 **Constraints**
 - No automatic control changes
 - Advisory only
+
+## Phase F — ML & Causal Modules (Advisory Only)
+
+**Status:** ❌ DEFERRED
+
+**Objective:** Inform humans, never auto-trade.
+
+### Tasks (Future)
+- [ ] Feature store (offline)
+- [ ] Label leakage controls
+- [ ] Advisory scoring only
+- [ ] No execution hooks
+- [ ] Explicit operator opt-in
+
+---
+
+## Phase G — Operations, Auditing, and Lifecycle
+
+**Status:** ❌ DEFERRED
+
+**Objective:** Make the system sale-, audit-, and handoff-ready.
+
+### Tasks (Future)
+- [ ] Full runbook coverage
+- [ ] Disaster recovery plan
+- [ ] Immutable audit trails
+- [ ] Versioned strategy rulesets
+- [ ] Decommission / rollback playbooks
+
+---
+
+## Codex Instruction (MANDATORY)
+
+Every Codex run **must**:
+1. Treat this file as canonical
+2. Operate on a single Phase only
+3. Update task checkboxes it completes
+4. Refuse to implement out-of-scope items
+5. Leave the system test-clean and deployable
+
+Failure to update this roadmap is a failed implementation.
+
+---
+
