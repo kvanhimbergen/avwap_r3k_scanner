@@ -449,3 +449,137 @@ Every Codex run **must**:
 5. Leave the system test-clean and deployable
 
 Failure to update this roadmap is a failed implementation.
+
+---
+
+## Phase E3 — Risk Attribution & Explainability (Measurement Only)
+
+> Phase E3 explains *why* risk was modulated.
+> It introduces **no new alpha** and **no execution changes**.
+> All behavior remains deterministic, offline-safe, and feature-flagged.
+
+---
+
+## Phase E3.1 — Risk Attribution Events (Per-Decision, Write-Only)
+
+**Status:** ⏭️ NEXT (NOT STARTED)
+
+**Objective:**  
+Produce deterministic, audit-grade explanations for any E2-driven sizing modulation
+*per symbol, per decision*, without affecting signals, entries, or exits.
+
+### Tasks
+- [ ] Define canonical **Risk Attribution Event** schema (append-only JSON)
+  - baseline qty / notional
+  - modulated qty / notional
+  - delta (absolute + percent)
+  - regime code + throttle policy reference
+  - drawdown guard contribution (if any)
+  - hard caps applied (if any)
+  - ordered reason codes
+- [ ] Implement `analytics/risk_attribution.py`
+  - deterministic event builder (pure function)
+  - stable hash–based `decision_id`
+  - deterministic ordering of components and reason codes
+- [ ] Integrate attribution writes into:
+  - `backtest_engine.py` (offline)
+  - `execution_v2/buy_loop.py` (runtime)
+- [ ] Fail-open analytics behavior:
+  - attribution failures must never block execution
+  - failures logged explicitly
+- [ ] Feature flag `E3_RISK_ATTRIBUTION_WRITE=0` (default OFF)
+- [ ] Unit tests proving:
+  - determinism
+  - no network imports
+  - no behavior changes to sizing logic
+- [ ] Register tests in `tests/run_tests.py`
+
+**Constraints**
+- Measurement only (no execution impact)
+- Offline-safe (no network calls)
+- Append-only ledgers
+- Deterministic byte-for-byte outputs
+
+**Exit Criteria**
+- Attribution events written deterministically when enabled
+- Baseline vs modulated deltas explainable per decision
+- All tests pass on Mac and droplet
+
+---
+
+## Phase E3.2 — Daily Aggregation & Portfolio-Level Attribution
+
+**Status:** ⏭️ UPCOMING (NOT STARTED)
+
+**Objective:**  
+Summarize E3.1 attribution events into deterministic, human-auditable daily artifacts.
+
+### Tasks
+- [ ] Define daily attribution summary schema:
+  - total baseline notional vs modulated notional
+  - net exposure delta
+  - count of modulated vs unmodified decisions
+  - breakdown by reason code
+  - top symbols by notional reduction
+- [ ] Implement deterministic aggregation job
+- [ ] Write daily summary artifact to:
+  - `ledger/PORTFOLIO_RISK_ATTRIBUTION_SUMMARY/YYYY-MM-DD.json`
+- [ ] Ensure aggregation is reproducible from raw events
+- [ ] Unit tests for aggregation determinism
+
+**Constraints**
+- Derived data only (no new decisions)
+- Deterministic ordering and serialization
+- Offline-safe
+
+**Exit Criteria**
+- Daily summaries reproducible from raw attribution events
+- Aggregates match per-decision data exactly
+- Tests pass locally and on droplet
+
+---
+
+## Phase E3.3 — Operator Reporting (Shadow Visibility Only)
+
+**Status:** ⏭️ FUTURE (NOT STARTED)
+
+**Objective:**  
+Expose risk attribution insights to the operator without affecting execution.
+
+### Tasks
+- [ ] Add optional Slack summary (daily):
+  - headline exposure reduction
+  - dominant regime + reason codes
+  - count of affected symbols
+- [ ] Feature flag `E3_RISK_ATTRIBUTION_SLACK_SUMMARY=0` (default OFF)
+- [ ] Ensure Slack output is sourced only from deterministic ledger artifacts
+- [ ] Operator-facing language (explanatory, not prescriptive)
+
+**Constraints**
+- Shadow-only (no control surface)
+- No execution coupling
+- Fully reversible
+
+**Exit Criteria**
+- Slack summaries match ledger data
+- Enabling/disabling has no trading impact
+- Tests validate summary formatting
+
+---
+
+## Phase E3.4 — Activation Support & Diagnostics (Optional)
+
+**Status:** ❌ DEFERRED
+
+**Objective:**  
+Provide diagnostics and confidence tooling *if* E2 is ever enabled beyond shadow mode.
+
+### Tasks (Future)
+- [ ] Compare realized vs hypothetical exposure deltas
+- [ ] Attribution-aware performance diagnostics
+- [ ] Operator review workflows
+
+**Constraints**
+- No automatic control changes
+- Advisory only
+
