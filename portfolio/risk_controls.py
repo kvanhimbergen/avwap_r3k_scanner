@@ -33,6 +33,9 @@ class RiskControlResult:
     controls: RiskControls
     record: dict[str, Any] | None
     reasons: list[str]
+    throttle: dict[str, Any] | None = None
+    source: str | None = None
+    resolved_ny_date: str | None = None
 
 
 def risk_modulation_enabled() -> bool:
@@ -63,7 +66,14 @@ def build_risk_controls(
             per_position_cap=base_per_position_cap,
             throttle_reason="disabled",
         )
-        return RiskControlResult(controls=controls, record=None, reasons=["disabled"])
+        return RiskControlResult(
+            controls=controls,
+            record=None,
+            reasons=["disabled"],
+            throttle=None,
+            source="disabled",
+            resolved_ny_date=ny_date,
+        )
 
     repo_root = Path(repo_root)
     throttle, throttle_reasons, source, resolved_ny_date = _resolve_regime_throttle(
@@ -115,7 +125,14 @@ def build_risk_controls(
         )
         _append_record(_risk_controls_path(repo_root, ny_date), record)
 
-    return RiskControlResult(controls=controls, record=record, reasons=reasons)
+    return RiskControlResult(
+        controls=controls,
+        record=record,
+        reasons=reasons,
+        throttle=throttle,
+        source=source,
+        resolved_ny_date=resolved_ny_date,
+    )
 
 
 def adjust_order_quantity(

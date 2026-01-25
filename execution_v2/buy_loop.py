@@ -6,6 +6,8 @@ Schedules entry intents from scan candidates using BOH + regime gating.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import importlib
+import os
 from pathlib import Path
 from time import time
 from typing import Iterable
@@ -147,12 +149,16 @@ def evaluate_and_create_entry_intents(store, md, cfg: BuyLoopConfig, account_equ
     now_ts = time()
     exit_cfg = exits.ExitConfig.from_env()
     risk_controls = None
+    risk_controls_result = None
+    drawdown_value = None
+    drawdown_threshold = None
+    repo_root = Path(".")
     if risk_modulation_enabled():
         ny_date = exits.entry_day_from_ts(now_ts)
         drawdown_value, drawdown_threshold, _ = resolve_drawdown_guardrail()
         result = build_risk_controls(
             ny_date=ny_date,
-            repo_root=Path("."),
+            repo_root=repo_root,
             base_max_positions=None,
             base_max_gross_exposure=None,
             base_per_position_cap=cfg.sizing_cfg.max_position_pct,
@@ -160,6 +166,7 @@ def evaluate_and_create_entry_intents(store, md, cfg: BuyLoopConfig, account_equ
             max_drawdown_pct_block=drawdown_threshold,
         )
         risk_controls = result.controls
+        risk_controls_result = result
     candidates = ingest_watchlist_as_candidates(store, cfg)
     active_symbols = set(store.list_active_candidates(now_ts))
 
@@ -196,6 +203,37 @@ def evaluate_and_create_entry_intents(store, md, cfg: BuyLoopConfig, account_equ
                 gross_exposure=None,
                 min_qty=None,
             )
+            if os.getenv("E3_RISK_ATTRIBUTION_WRITE", "0").strip() == "1" and risk_controls_result is not None:
+                risk_attribution = importlib.import_module("analytics.risk_attribution")
+                try:
+                    throttle = risk_controls_result.throttle or {}
+                    throttle_regime_label = throttle.get("regime_label")
+                    throttle_policy_ref = risk_attribution.resolve_throttle_policy_reference(
+                        repo_root=repo_root,
+                        ny_date=ny_date,
+                        source=risk_controls_result.source,
+                    )
+                    event = risk_attribution.build_attribution_event(
+                        date_ny=ny_date,
+                        symbol=cand.symbol,
+                        baseline_qty=base_size,
+                        modulated_qty=size,
+                        price=cand.price,
+                        account_equity=account_equity,
+                        gross_exposure=None,
+                        risk_controls=risk_controls,
+                        risk_control_reasons=risk_controls_result.reasons,
+                        throttle_source=risk_controls_result.source,
+                        throttle_regime_label=throttle_regime_label,
+                        throttle_policy_ref=throttle_policy_ref,
+                        drawdown=drawdown_value,
+                        drawdown_threshold=drawdown_threshold,
+                        min_qty=None,
+                        source="execution_v2.buy_loop",
+                    )
+                    risk_attribution.write_attribution_event(event)
+                except Exception as exc:
+                    print(f"WARN: risk attribution write failed for {cand.symbol}: {exc}")
         if size <= 0:
             continue
 

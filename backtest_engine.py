@@ -12,6 +12,7 @@ from typing import Iterable
 
 import pandas as pd
 
+from analytics import risk_attribution
 import scan_engine
 from config import cfg as default_cfg
 from setup_context import load_setup_rules
@@ -28,7 +29,7 @@ from portfolio.risk_controls import (
     adjust_order_quantity,
     build_risk_controls,
     resolve_drawdown_guardrail,
-    RiskControls,
+    RiskControlResult,
     risk_modulation_enabled,
 )
 
@@ -406,9 +407,9 @@ def run_backtest(
     repo_root = Path(getattr(cfg, "BACKTEST_REPO_ROOT", ".")).resolve()
     risk_controls_enabled = risk_modulation_enabled()
     drawdown_value, drawdown_threshold, _ = resolve_drawdown_guardrail()
-    risk_controls_cache: dict[str, RiskControls] = {}
+    risk_controls_cache: dict[str, RiskControlResult] = {}
 
-    def _resolve_risk_controls(date_ny: str) -> RiskControls | None:
+    def _resolve_risk_controls(date_ny: str) -> RiskControlResult | None:
         if not risk_controls_enabled:
             return None
         cached = risk_controls_cache.get(date_ny)
@@ -423,8 +424,8 @@ def run_backtest(
             drawdown=drawdown_value,
             max_drawdown_pct_block=drawdown_threshold,
         )
-        risk_controls_cache[date_ny] = result.controls
-        return result.controls
+        risk_controls_cache[date_ny] = result
+        return result
 
     output_dir = Path(getattr(cfg, "BACKTEST_OUTPUT_DIR", DEFAULT_OUTPUT_DIR))
     data_path = Path(getattr(cfg, "BACKTEST_OHLCV_PATH", DEFAULT_OHLCV_PATH))
@@ -575,8 +576,8 @@ def run_backtest(
                     trade_risk=base_trade_risk,
                 )
                 qty = base_qty
-                risk_controls = _resolve_risk_controls(session_date.date().isoformat())
-                if risk_controls is not None:
+                risk_controls_result = _resolve_risk_controls(session_date.date().isoformat())
+                if risk_controls_result is not None:
                     min_qty = None
                     if min_dollar_position > 0:
                         min_qty = int(math.ceil(min_dollar_position / entry_price))
@@ -584,10 +585,40 @@ def run_backtest(
                         base_qty=base_qty,
                         price=entry_price,
                         account_equity=equity_before,
-                        risk_controls=risk_controls,
+                        risk_controls=risk_controls_result.controls,
                         gross_exposure=gross_exposure,
                         min_qty=min_qty,
                     )
+                    if risk_attribution.attribution_write_enabled():
+                        try:
+                            throttle = risk_controls_result.throttle or {}
+                            throttle_regime_label = throttle.get("regime_label")
+                            throttle_policy_ref = risk_attribution.resolve_throttle_policy_reference(
+                                repo_root=repo_root,
+                                ny_date=session_date.date().isoformat(),
+                                source=risk_controls_result.source,
+                            )
+                            event = risk_attribution.build_attribution_event(
+                                date_ny=session_date.date().isoformat(),
+                                symbol=symbol,
+                                baseline_qty=base_qty,
+                                modulated_qty=qty,
+                                price=entry_price,
+                                account_equity=equity_before,
+                                gross_exposure=gross_exposure,
+                                risk_controls=risk_controls_result.controls,
+                                risk_control_reasons=risk_controls_result.reasons,
+                                throttle_source=risk_controls_result.source,
+                                throttle_regime_label=throttle_regime_label,
+                                throttle_policy_ref=throttle_policy_ref,
+                                drawdown=drawdown_value,
+                                drawdown_threshold=drawdown_threshold,
+                                min_qty=min_qty,
+                                source="backtest_engine",
+                            )
+                            risk_attribution.write_attribution_event(event)
+                        except Exception as exc:
+                            print(f"WARN: risk attribution write failed for {symbol}: {exc}")
                 notional = entry_price * qty
                 trade_risk = risk_per_share * qty
                 sign = _direction_sign(direction)
@@ -1032,8 +1063,8 @@ def run_backtest(
                     trade_risk=base_trade_risk,
                 )
                 qty = base_qty
-                risk_controls = _resolve_risk_controls(session_date.date().isoformat())
-                if risk_controls is not None:
+                risk_controls_result = _resolve_risk_controls(session_date.date().isoformat())
+                if risk_controls_result is not None:
                     min_qty = None
                     if min_dollar_position > 0:
                         min_qty = int(math.ceil(min_dollar_position / entry_price))
@@ -1041,10 +1072,40 @@ def run_backtest(
                         base_qty=base_qty,
                         price=entry_price,
                         account_equity=equity_before,
-                        risk_controls=risk_controls,
+                        risk_controls=risk_controls_result.controls,
                         gross_exposure=gross_exposure,
                         min_qty=min_qty,
                     )
+                    if risk_attribution.attribution_write_enabled():
+                        try:
+                            throttle = risk_controls_result.throttle or {}
+                            throttle_regime_label = throttle.get("regime_label")
+                            throttle_policy_ref = risk_attribution.resolve_throttle_policy_reference(
+                                repo_root=repo_root,
+                                ny_date=session_date.date().isoformat(),
+                                source=risk_controls_result.source,
+                            )
+                            event = risk_attribution.build_attribution_event(
+                                date_ny=session_date.date().isoformat(),
+                                symbol=symbol,
+                                baseline_qty=base_qty,
+                                modulated_qty=qty,
+                                price=entry_price,
+                                account_equity=equity_before,
+                                gross_exposure=gross_exposure,
+                                risk_controls=risk_controls_result.controls,
+                                risk_control_reasons=risk_controls_result.reasons,
+                                throttle_source=risk_controls_result.source,
+                                throttle_regime_label=throttle_regime_label,
+                                throttle_policy_ref=throttle_policy_ref,
+                                drawdown=drawdown_value,
+                                drawdown_threshold=drawdown_threshold,
+                                min_qty=min_qty,
+                                source="backtest_engine",
+                            )
+                            risk_attribution.write_attribution_event(event)
+                        except Exception as exc:
+                            print(f"WARN: risk attribution write failed for {symbol}: {exc}")
                 notional = entry_price * qty
                 trade_risk = risk_per_share * qty
                 sign = _direction_sign(direction)

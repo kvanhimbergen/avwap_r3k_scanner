@@ -462,14 +462,14 @@ Failure to update this roadmap is a failed implementation.
 
 ## Phase E3.1 — Risk Attribution Events (Per-Decision, Write-Only)
 
-**Status:** ⏭️ NEXT (NOT STARTED)
+**Status:** ✅ COMPLETE
 
 **Objective:**  
 Produce deterministic, audit-grade explanations for any E2-driven sizing modulation
 *per symbol, per decision*, without affecting signals, entries, or exits.
 
 ### Tasks
-- [ ] Define canonical **Risk Attribution Event** schema (append-only JSON)
+- [x] Define canonical **Risk Attribution Event** schema (append-only JSON)
   - baseline qty / notional
   - modulated qty / notional
   - delta (absolute + percent)
@@ -477,22 +477,22 @@ Produce deterministic, audit-grade explanations for any E2-driven sizing modulat
   - drawdown guard contribution (if any)
   - hard caps applied (if any)
   - ordered reason codes
-- [ ] Implement `analytics/risk_attribution.py`
+- [x] Implement `analytics/risk_attribution.py`
   - deterministic event builder (pure function)
   - stable hash–based `decision_id`
   - deterministic ordering of components and reason codes
-- [ ] Integrate attribution writes into:
+- [x] Integrate attribution writes into:
   - `backtest_engine.py` (offline)
   - `execution_v2/buy_loop.py` (runtime)
-- [ ] Fail-open analytics behavior:
+- [x] Fail-open analytics behavior:
   - attribution failures must never block execution
   - failures logged explicitly
-- [ ] Feature flag `E3_RISK_ATTRIBUTION_WRITE=0` (default OFF)
-- [ ] Unit tests proving:
+- [x] Feature flag `E3_RISK_ATTRIBUTION_WRITE=0` (default OFF)
+- [x] Unit tests proving:
   - determinism
   - no network imports
   - no behavior changes to sizing logic
-- [ ] Register tests in `tests/run_tests.py`
+- [x] Register tests in `tests/run_tests.py`
 
 **Constraints**
 - Measurement only (no execution impact)
@@ -582,4 +582,3 @@ Provide diagnostics and confidence tooling *if* E2 is ever enabled beyond shadow
 **Constraints**
 - No automatic control changes
 - Advisory only
-
