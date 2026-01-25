@@ -80,6 +80,7 @@ def main() -> int:
         root / "tests" / "test_regime_e1_features.py",
         root / "tests" / "test_regime_e1_no_execution_imports.py",
         root / "tests" / "test_regime_policy.py",
+        root / "tests" / "test_regime_risk_controls.py",
         root / "tests" / "test_scan_engine_benchmark_refresh.py",
         root / "tests" / "test_execution_v2_no_analytics_imports.py",
         root / "tests" / "test_universe.py",

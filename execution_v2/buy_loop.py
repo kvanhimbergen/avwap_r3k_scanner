@@ -17,6 +17,12 @@ from execution_v2.boh import boh_confirmed_option2
 from execution_v2.config_types import EntryIntent
 from execution_v2.sizing import SizingConfig, compute_size_shares
 from execution_v2 import exits
+from portfolio.risk_controls import (
+    adjust_order_quantity,
+    build_risk_controls,
+    resolve_drawdown_guardrail,
+    risk_modulation_enabled,
+)
 
 
 @dataclass(frozen=True)
@@ -140,6 +146,20 @@ def evaluate_and_create_entry_intents(store, md, cfg: BuyLoopConfig, account_equ
     """
     now_ts = time()
     exit_cfg = exits.ExitConfig.from_env()
+    risk_controls = None
+    if risk_modulation_enabled():
+        ny_date = exits.entry_day_from_ts(now_ts)
+        drawdown_value, drawdown_threshold, _ = resolve_drawdown_guardrail()
+        result = build_risk_controls(
+            ny_date=ny_date,
+            repo_root=Path("."),
+            base_max_positions=None,
+            base_max_gross_exposure=None,
+            base_per_position_cap=cfg.sizing_cfg.max_position_pct,
+            drawdown=drawdown_value,
+            max_drawdown_pct_block=drawdown_threshold,
+        )
+        risk_controls = result.controls
     candidates = ingest_watchlist_as_candidates(store, cfg)
     active_symbols = set(store.list_active_candidates(now_ts))
 
@@ -158,12 +178,24 @@ def evaluate_and_create_entry_intents(store, md, cfg: BuyLoopConfig, account_equ
         if not boh.confirmed:
             continue
 
-        size = compute_size_shares(
+        base_size = compute_size_shares(
             account_equity=account_equity,
             price=cand.price,
             dist_pct=abs(cand.dist_pct),
             cfg=cfg.sizing_cfg,
         )
+        if base_size <= 0:
+            continue
+        size = base_size
+        if risk_controls is not None:
+            size = adjust_order_quantity(
+                base_qty=base_size,
+                price=cand.price,
+                account_equity=account_equity,
+                risk_controls=risk_controls,
+                gross_exposure=None,
+                min_qty=None,
+            )
         if size <= 0:
             continue
 
