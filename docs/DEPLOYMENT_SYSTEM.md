@@ -160,6 +160,12 @@ Checks for readiness:
 systemctl list-timers --all | grep -E 'scan\.timer|execution-restart\.timer'
 systemctl status execution.service --no-pager
 
+Offline config sanity check (no network):
+
+```bash
+python execution_v2/execution_main.py --config-check
+```
+
 One-Command Morning Health Check
 avwap-check
 

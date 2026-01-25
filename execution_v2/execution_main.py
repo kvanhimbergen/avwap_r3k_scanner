@@ -45,6 +45,18 @@ def _log(msg: str) -> None:
 
 
 PAPER_BASE_URL = "https://paper-api.alpaca.markets"
+DEFAULT_STATE_DIR = "/root/avwap_r3k_scanner/state"
+
+
+def _state_dir() -> Path:
+    base = os.getenv("AVWAP_STATE_DIR", DEFAULT_STATE_DIR).strip()
+    if not base:
+        base = DEFAULT_STATE_DIR
+    return Path(base)
+
+
+def _dry_run_ledger_path() -> Path:
+    return _state_dir() / "dry_run_ledger.json"
 
 
 def _resolve_execution_mode() -> str:
@@ -67,6 +79,49 @@ def _resolve_execution_mode() -> str:
         return mode
 
     return "DRY_RUN" if dry_run_env else "LIVE"
+
+
+def run_config_check(state_dir: str | None = None) -> tuple[bool, list[str]]:
+    issues: list[str] = []
+    mode = _resolve_execution_mode()
+    resolved_state_dir = Path(state_dir) if state_dir else _state_dir()
+
+    if str(resolved_state_dir).strip() == "":
+        issues.append("state_dir_missing")
+    else:
+        try:
+            resolved_state_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            issues.append(f"state_dir_unwritable:{exc}")
+
+    if mode in {"LIVE", "ALPACA_PAPER"}:
+        if not os.getenv("APCA_API_KEY_ID"):
+            issues.append("missing:APCA_API_KEY_ID")
+        if not os.getenv("APCA_API_SECRET_KEY"):
+            issues.append("missing:APCA_API_SECRET_KEY")
+
+    if mode == "ALPACA_PAPER":
+        base_url = os.getenv("APCA_API_BASE_URL") or ""
+        if not base_url:
+            issues.append("missing:APCA_API_BASE_URL")
+        else:
+            normalized = _normalize_base_url(base_url)
+            if normalized != PAPER_BASE_URL:
+                issues.append(f"invalid:APCA_API_BASE_URL({base_url})")
+
+    if mode == "LIVE" and os.getenv("LIVE_TRADING", "0") == "1":
+        enabled, reason = live_gate.live_trading_enabled(str(resolved_state_dir))
+        if not enabled:
+            issues.append(f"live_trading_disabled:{reason}")
+        if live_gate._phase_c_enabled():
+            live_enable_date_ny = os.getenv("LIVE_ENABLE_DATE_NY", "").strip()
+            if not live_enable_date_ny:
+                issues.append("missing:LIVE_ENABLE_DATE_NY")
+            allowlist = live_gate.parse_allowlist()
+            if not allowlist or len(allowlist) != 1:
+                issues.append("invalid:ALLOWLIST_SYMBOLS_phase_c")
+
+    return (len(issues) == 0, issues)
 
 
 def _get_trading_client() -> TradingClient:
@@ -178,18 +233,26 @@ def _has_open_order_or_position(trading_client: TradingClient, symbol: str) -> b
 def _submit_market_entry(trading_client: TradingClient, intent, dry_run: bool) -> str | None:
     if dry_run:
         import json
-        
-        ledger_path = "/root/avwap_r3k_scanner/state/dry_run_ledger.json"
+
+        ledger_path = _dry_run_ledger_path()
+        ledger_enabled = True
+        try:
+            ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            ledger_enabled = False
+            _log(f"WARNING: unable to create dry run ledger directory: {exc}")
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         key = f"{today}:{intent.symbol}"
         
-        try:
-            with open(ledger_path, "r") as f:
-                ledger = json.load(f)
-        except Exception:
-            ledger = {}
+        ledger = {}
+        if ledger_enabled:
+            try:
+                with ledger_path.open("r", encoding="utf-8") as f:
+                    ledger = json.load(f)
+            except Exception:
+                ledger = {}
         
-        if key in ledger:
+        if ledger_enabled and key in ledger:
             _log(f"DRY_RUN: already submitted today -> {intent.symbol}; skipping")
             return "dry-run-skipped"
 
@@ -201,11 +264,12 @@ def _submit_market_entry(trading_client: TradingClient, intent, dry_run: bool) -
             "ts": datetime.now(timezone.utc).isoformat(),
         }
 
-        try:
-            with open(ledger_path, "w") as f:
-                json.dump(ledger, f)
-        except Exception as exc:
-            _log(f"WARNING: failed to write dry run ledger: {exc}")
+        if ledger_enabled:
+            try:
+                with ledger_path.open("w", encoding="utf-8") as f:
+                    json.dump(ledger, f)
+            except Exception as exc:
+                _log(f"WARNING: failed to write dry run ledger: {exc}")
 
         return "dry-run"
 
@@ -1127,6 +1191,11 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=int(os.getenv("ENTRY_DELAY_MAX_SECONDS", "240")),
     )
+    parser.add_argument(
+        "--config-check",
+        action="store_true",
+        help="Validate execution environment and exit (offline, no network)",
+    )
     parser.add_argument("--dry-run", action="store_true", default=os.getenv("DRY_RUN", "0") == "1")
     parser.add_argument(
         "--run-once",
@@ -1140,6 +1209,14 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     cfg = _parse_args()
     cfg.execution_mode = _resolve_execution_mode()
+    if cfg.config_check:
+        ok, issues = run_config_check()
+        if ok:
+            _log("CONFIG_CHECK_OK")
+            raise SystemExit(0)
+        for issue in issues:
+            _log(f"CONFIG_CHECK_FAIL {issue}")
+        raise SystemExit(1)
     if cfg.execution_mode in {"LIVE", "ALPACA_PAPER"}:
         cfg.dry_run = False
     else:
