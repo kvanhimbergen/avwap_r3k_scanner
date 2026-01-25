@@ -102,9 +102,9 @@ Added minimal offline repro scripts under `tools/repro/`:
 ### Issue 2 — Dry-run ledger path missing creates fail-open idempotency
 - **Severity**: Medium
 - **Location**: `execution_v2/execution_main.py` dry-run order submission
-- **Symptom**: If the state directory is missing, dry-run ledger writes fail and repeated submissions are not de-duplicated.
+- **Symptom**: If the state directory is missing or unwritable, dry-run ledger writes fail and repeated submissions are not de-duplicated.
 - **Repro**: `tools/repro/ledger_write_failure.py`
-- **Fix**: Centralize state directory resolution, ensure parent directory exists before writing.
+- **Fix**: Centralize state directory resolution, attempt to create parent directory, and fall back to a warning when it is unwritable.
 - **Tests**: `tests/test_execution_main_dry_run_ledger.py`
 
 ### Issue 3 — Missing preflight config check

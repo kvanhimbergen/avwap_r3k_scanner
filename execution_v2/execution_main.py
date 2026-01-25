@@ -235,17 +235,24 @@ def _submit_market_entry(trading_client: TradingClient, intent, dry_run: bool) -
         import json
 
         ledger_path = _dry_run_ledger_path()
-        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        ledger_enabled = True
+        try:
+            ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            ledger_enabled = False
+            _log(f"WARNING: unable to create dry run ledger directory: {exc}")
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         key = f"{today}:{intent.symbol}"
         
-        try:
-            with ledger_path.open("r", encoding="utf-8") as f:
-                ledger = json.load(f)
-        except Exception:
-            ledger = {}
+        ledger = {}
+        if ledger_enabled:
+            try:
+                with ledger_path.open("r", encoding="utf-8") as f:
+                    ledger = json.load(f)
+            except Exception:
+                ledger = {}
         
-        if key in ledger:
+        if ledger_enabled and key in ledger:
             _log(f"DRY_RUN: already submitted today -> {intent.symbol}; skipping")
             return "dry-run-skipped"
 
@@ -257,11 +264,12 @@ def _submit_market_entry(trading_client: TradingClient, intent, dry_run: bool) -
             "ts": datetime.now(timezone.utc).isoformat(),
         }
 
-        try:
-            with ledger_path.open("w", encoding="utf-8") as f:
-                json.dump(ledger, f)
-        except Exception as exc:
-            _log(f"WARNING: failed to write dry run ledger: {exc}")
+        if ledger_enabled:
+            try:
+                with ledger_path.open("w", encoding="utf-8") as f:
+                    json.dump(ledger, f)
+            except Exception as exc:
+                _log(f"WARNING: failed to write dry run ledger: {exc}")
 
         return "dry-run"
 
