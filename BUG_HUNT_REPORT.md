@@ -2,6 +2,28 @@
 
 ## Executive Summary
 
+### Enforcement Model Summary (Fail-Open vs Fail-Closed)
+
+The system intentionally mixes fail-closed execution safety with fail-open analytics.
+This table classifies *actual enforcement*, not design intent.
+
+| Subsystem | Mechanism | Enforcement Layer | Behavior |
+|---------|----------|-------------------|----------|
+| Live trading enablement | `LIVE_TRADING` + confirm token | Python runtime | **Fail-closed** |
+| Kill switch | State file | Python runtime | **Fail-closed** |
+| Broker clock / market closed | Alpaca clock | Python runtime | **Fail-closed** |
+| Watchlist freshness | Pre-start script | systemd drop-in | **Fail-closed** |
+| Restart storm prevention | Restart policy | systemd drop-in | **Fail-closed** |
+| Market regime detection | Analytics | Python runtime | **Fail-open (allow)** |
+| Earnings / event filters | Analytics | Python runtime | **Fail-open (allow)** |
+| Optional analytics imports | Import-time | Python runtime | **Fail-open by design** |
+
+Critical note:
+Some safety guarantees (watchlist freshness, restart protection) are enforced **only**
+via systemd drop-ins. If those drop-ins are not installed or are overridden, the
+corresponding protections do not exist.
+
+
 **Top risks**
 - **Import-time hard failure when Alpaca SDK is absent.** `execution_v2/exits.py` attempted to probe for Alpaca exception classes using `importlib.util.find_spec`, but this raises `ModuleNotFoundError` when the parent package is missing, which breaks test collection and any offline tooling that imports `execution_v2.exits`. This is a fail-open operational risk for offline environments and local CI. (Fixed.)
 - **Dry-run idempotency ledger silently fails when the state directory is missing.** The dry-run ledger was written to a hard-coded path without ensuring the directory existed. When the directory is absent or unwritable, the ledger write fails and idempotency is lost (repeated dry-run orders). This is a fail-open behavior. (Fixed.)
@@ -116,14 +138,80 @@ Added minimal offline repro scripts under `tools/repro/`:
 - **Tests**: `tests/test_execution_main_config_check.py`
 
 ## Not a Bug, but a Risk
-- **Missing optional dependencies in local test runs**: `pandas` and `alpaca` are required for some tests; local runs without these dependencies fail during collection. This is expected for minimal environments but should be documented for developers.
-- **Ruff/Mypy warnings**: There are numerous lint/type issues (unused imports, module import order, missing stubs). These are not addressed here but represent potential quality debt.
+
+### Optional dependency boundaries (Accepted risk; roadmap tracked)
+
+Several modules (`scan_engine.py`, `execution_v2/market_data.py`) import optional
+dependencies (`alpaca`, `pandas`, `yfinance`) at **module import time**.
+
+Implications:
+- Offline or minimal environments may fail during import or test collection
+- Missing dependencies can prevent execution or analytics from loading
+
+This is not a bug. It is an explicit boundary in the current system.
+Future hardening should ensure missing optional dependencies fail deterministically
+with explicit messaging rather than implicitly at import time.
+
+### Ledger integrity and atomicity (Accepted risk; roadmap tracked)
+
+Multiple critical ledgers are written via append or overwrite without atomic
+write-then-rename or `fsync`, including:
+
+- Dry-run JSON ledger
+- Live caps ledger
+- JSONL appenders:
+  - Exit events
+  - Portfolio decisions
+  - Paper-simulation events
+  - Risk-control snapshots
+
+Crash or power loss can result in partial lines or truncated files.
+This undermines strict determinism and audit expectations.
+
+This is an accepted risk today and is tracked as a follow-on hardening task.
+
+### Timezone determinism leakage (Accepted risk; roadmap tracked)
+
+The scan pipeline uses local-timezone constructs (`datetime.now()`, `date.today()`)
+for:
+- Weekend detection
+- Cache TTL and freshness checks
+
+Execution logic elsewhere standardizes on `America/New_York`.
+
+This mismatch can create divergence around DST boundaries and undermines deterministic
+behavior across environments.
+
+The behavior is intentional today but should be unified or explicitly constrained.
+
+### Design intent vs current implementation
+
+- **Intent:** Offline-first, deterministic execution with fail-closed safety gates
+- **Current state:** Analytics and scan-time logic may fail open and depend on local time
+
+These gaps are known, documented, and tracked rather than accidental regressions.
+
+### Documentation drift and operator expectations
+
+Some documentation references an `avwap-check` health-check command that may not
+exist in a given deployment.
+
+Operators should not assume a provided preflight tool unless explicitly installed.
+This is a documentation-alignment issue, not an execution defect.
 
 ## Recommended Follow-On Hardening Tasks
 - [ ] Add `pandas`/`alpaca` optional dependency handling for tests (e.g., skip markers or import guards).
 - [ ] Add an explicit schema validator for daily candidates CSV to enforce required columns/types.
 - [ ] Add atomic ledger writes (write+rename) for critical ledgers to avoid partial-line corruption.
 - [ ] Add a centralized config validation module and reuse it in systemd pre-start hooks.
+
+### Roadmap alignment notes
+
+The following items should be tracked explicitly in `docs/ROADMAP.md`:
+
+- Ledger integrity hardening (atomic write+rename, `fsync` where feasible)
+- Timezone unification for scan pipeline (align to `America/New_York`)
+- Optional dependency boundaries (explicit extras or deterministic import guards)
 
 ## Verification
 
