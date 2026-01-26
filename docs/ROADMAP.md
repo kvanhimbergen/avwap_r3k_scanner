@@ -500,17 +500,17 @@ Formalize the **Strategy → Control Plane** interface.
 Introduce **strategy-scoped risk budgets** inside a unified portfolio.
 
 ### Tasks
-- [ ] Define **strategy sleeves**:
+- [x] Define **strategy sleeves**:
   - max daily loss
   - max gross exposure
   - max concurrent positions
-- [ ] Portfolio-level aggregation:
+- [x] Portfolio-level aggregation:
   - cross-strategy exposure
   - overlapping symbol risk
-- [ ] Deterministic enforcement:
+- [x] Deterministic enforcement:
   - per-strategy caps
   - portfolio caps
-- [ ] Attribution extensions:
+- [x] Attribution extensions:
   - PnL by strategy
   - drawdown by strategy
   - exposure by strategy
@@ -518,6 +518,14 @@ Introduce **strategy-scoped risk budgets** inside a unified portfolio.
 **Exit Criteria**
 - Strategies cannot crowd capital implicitly
 - Strategy totals reconcile exactly to portfolio totals
+
+**Implementation Notes**
+- Sleeve config is loaded via `S2_SLEEVES_JSON` (JSON mapping by `strategy_id`) or `S2_SLEEVES_FILE` (path to JSON).
+- Missing sleeves for strategies with open positions or entry intents block entries unless `S2_ALLOW_UNSLEEVED=1`.
+- Overlapping symbol entries are blocked by default when a symbol is already held by another strategy; set `S2_ALLOW_SYMBOL_OVERLAP=1` to allow.
+- Daily loss checks use `S2_DAILY_PNL_JSON` (per-strategy PnL). Missing PnL for a capped strategy blocks entries.
+- Portfolio decisions ledger includes `sleeves` config snapshot and `s2_enforcement` summaries (bounded).
+- Attribution now includes per-strategy exposure, realized/unrealized PnL, and drawdown with reconciliation to portfolio totals.
 
 ---
 
