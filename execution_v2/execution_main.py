@@ -435,7 +435,7 @@ def run_once(cfg) -> None:
             _log(f"DRY_RUN=1 active; execution_mode={cfg.execution_mode}")
         else:
             _log(f"Execution mode={cfg.execution_mode}")
-        if cfg.execution_mode != "PAPER_SIM":
+        if cfg.execution_mode not in {"PAPER_SIM", "DRY_RUN"}:
             book_id = book_ids.resolve_book_id(cfg.execution_mode)
             if book_id == book_ids.SCHWAB_401K_MANUAL:
                 trading_client = book_router.select_trading_client(book_id)
@@ -717,7 +717,7 @@ def run_once(cfg) -> None:
         state_symbols = {position.symbol for position in positions}
         open_positions_count = positions_count if positions_count is not None else len(state_symbols)
         max_positions = None
-        if cfg.execution_mode != "PAPER_SIM":
+        if cfg.execution_mode not in {"PAPER_SIM", "DRY_RUN"}:
             max_positions = getattr(caps, "max_positions", None)
         constraints = portfolio_arbiter.PortfolioConstraints(
             max_positions=max_positions,
@@ -800,7 +800,7 @@ def run_once(cfg) -> None:
         enforcement_records: list[dict] = []
         if portfolio_decision_enforce.enforcement_enabled():
             enforcement_context = portfolio_decision_enforce.load_decision_context(decision_record["ny_date"])
-        if cfg.execution_mode != "PAPER_SIM":
+        if cfg.execution_mode not in {"PAPER_SIM", "DRY_RUN"}:
             decision_record["inputs"]["constraints_snapshot"]["allowlist_symbols"] = (
                 sorted(allowlist) if allowlist else None
             )
