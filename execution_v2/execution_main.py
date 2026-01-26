@@ -30,6 +30,9 @@ from execution_v2 import paper_sim
 from execution_v2 import clocks
 from execution_v2 import portfolio_decisions
 from execution_v2 import portfolio_decision_enforce
+from execution_v2 import portfolio_arbiter
+from execution_v2 import portfolio_decision as portfolio_decision_contract
+from execution_v2 import portfolio_intents
 from execution_v2.orders import generate_idempotency_key
 from execution_v2.state_store import StateStore
 from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
@@ -372,6 +375,7 @@ def run_once(cfg) -> None:
     decision_path = Path(decision_record["artifacts"]["portfolio_decisions_path"])
     errors = decision_record["actions"]["errors"]
     ledgers_written = decision_record["artifacts"]["ledgers_written"]
+    positions_count: int | None = None
 
     try:
         store = StateStore(cfg.db_path)
@@ -620,11 +624,11 @@ def run_once(cfg) -> None:
             )
 
         now_ts = time.time()
-        intents = store.pop_due_entry_intents(now_ts)
-        if not intents:
-            intents = []
+        entry_intents = store.pop_due_entry_intents(now_ts)
+        if not entry_intents:
+            entry_intents = []
         intent_projection = []
-        for intent in intents:
+        for intent in entry_intents:
             intent_projection.append(
                 {
                     "symbol": getattr(intent, "symbol", ""),
@@ -635,6 +639,76 @@ def run_once(cfg) -> None:
             )
         decision_record["intents"]["intents"] = intent_projection
         decision_record["intents"]["intent_count"] = len(intent_projection)
+        positions = store.list_positions()
+        open_positions_by_strategy: dict[str, int] = {}
+        for position in positions:
+            open_positions_by_strategy[position.strategy_id] = (
+                open_positions_by_strategy.get(position.strategy_id, 0) + 1
+            )
+        state_symbols = {position.symbol for position in positions}
+        open_positions_count = positions_count if positions_count is not None else len(state_symbols)
+        max_positions = None
+        if cfg.execution_mode != "PAPER_SIM":
+            max_positions = getattr(caps, "max_positions", None)
+        constraints = portfolio_arbiter.PortfolioConstraints(
+            max_positions=max_positions,
+            max_positions_per_strategy=None,
+            max_symbol_concentration=1,
+            open_positions_count=open_positions_count,
+            open_positions_by_strategy=open_positions_by_strategy,
+            existing_symbols=sorted(state_symbols),
+        )
+        # Phase S1 arbitration per docs/ROADMAP.md: trade intents -> portfolio decision gate.
+        trade_intents = [
+            portfolio_intents.trade_intent_from_entry_intent(intent)
+            for intent in entry_intents
+        ]
+        portfolio_decision = None
+        try:
+            portfolio_decision = portfolio_arbiter.arbitrate_intents(
+                trade_intents,
+                now_ts_utc=decision_ts_utc.timestamp(),
+                constraints=constraints,
+                run_id=decision_record["decision_id"],
+                date_ny=decision_record["ny_date"],
+            )
+        except Exception as exc:
+            errors.append(
+                {
+                    "where": "portfolio_arbiter",
+                    "message": str(exc),
+                    "exception_type": type(exc).__name__,
+                }
+            )
+            decision_record["gates"]["blocks"].append(
+                {
+                    "code": "portfolio_decision_failed",
+                    "message": "portfolio arbitration failed; entries blocked",
+                }
+            )
+            _log(f"Portfolio arbitration failed: {exc}")
+        if portfolio_decision is not None:
+            decision_state_path = _state_dir() / "portfolio_decision_latest.json"
+            portfolio_decision_contract.write_portfolio_decision(
+                portfolio_decision, decision_state_path
+            )
+            decision_record["artifacts"]["portfolio_decision_state_path"] = str(
+                decision_state_path.resolve()
+            )
+            decision_record["artifacts"]["portfolio_decision_hash"] = (
+                portfolio_decision.decision_hash
+            )
+        approved_intents: list = []
+        if portfolio_decision is not None:
+            intent_lookup = {
+                (intent.symbol, intent.strategy_id): intent for intent in entry_intents
+            }
+            for order in portfolio_decision.approved_orders:
+                matched = intent_lookup.get((order.symbol, order.strategy_id))
+                if matched is not None:
+                    approved_intents.append(matched)
+        intents = approved_intents
+        entries_blocked = portfolio_decision is None and bool(entry_intents)
         enforcement_context = None
         enforcement_records: list[dict] = []
         if portfolio_decision_enforce.enforcement_enabled():
@@ -654,6 +728,9 @@ def run_once(cfg) -> None:
             )
 
         if cfg.execution_mode == "PAPER_SIM":
+            if entries_blocked:
+                _log("PAPER_SIM: portfolio decision unavailable; skipping entry simulation.")
+                return
             now_utc = datetime.now(timezone.utc)
             date_ny = paper_sim.resolve_date_ny(now_utc)
             fills = paper_sim.simulate_fills(
@@ -685,6 +762,9 @@ def run_once(cfg) -> None:
             return
 
         if cfg.execution_mode == "SCHWAB_401K_MANUAL":
+            if entries_blocked:
+                _log("SCHWAB_401K_MANUAL: portfolio decision unavailable; skipping entry tickets.")
+                return
             from execution_v2.schwab_manual_adapter import send_manual_tickets
 
             now_utc = datetime.now(timezone.utc)
@@ -716,6 +796,14 @@ def run_once(cfg) -> None:
             return
 
         if cfg.execution_mode == "ALPACA_PAPER":
+            if entries_blocked:
+                _log("ALPACA_PAPER: portfolio decision unavailable; skipping entry orders.")
+                _finalize_portfolio_enforcement(
+                    records=enforcement_records,
+                    date_ny=decision_record["ny_date"],
+                    context=enforcement_context,
+                )
+                return
             now_utc = datetime.now(timezone.utc)
             date_ny = paper_sim.resolve_date_ny(now_utc)
             ledger_path = alpaca_paper.ledger_path(repo_root, date_ny)
@@ -897,6 +985,8 @@ def run_once(cfg) -> None:
             )
             return
 
+        if entries_blocked:
+            _log("Portfolio decision unavailable; skipping entry orders.")
         for intent in intents:
             effective_dry_run = not live_active
             if effective_dry_run and allowlist and intent.symbol.upper() not in allowlist:

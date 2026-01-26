@@ -471,7 +471,7 @@ Introduce explicit, first-class **strategy identity** across the entire system.
 Formalize the **Strategy → Control Plane** interface.
 
 ### Tasks
-- [ ] Define canonical **TradeIntent schema** (append-only):
+- [x] Define canonical **TradeIntent schema** (append-only):
   - strategy_id
   - symbol
   - side
@@ -480,11 +480,11 @@ Formalize the **Strategy → Control Plane** interface.
   - time_in_force
   - thesis / tags
   - model_version + data_version
-- [ ] Control Plane arbitration logic:
+- [x] Control Plane arbitration logic:
   - approve / reject / resize intents
   - deterministic reason codes
-- [ ] Intent → decision → order lineage
-- [ ] Idempotency + rejection tests
+- [x] Intent → decision → order lineage
+- [x] Idempotency + rejection tests
 
 **Constraints**
 - No strategy may bypass Phase B / Phase C safety gates
