@@ -485,6 +485,7 @@ Formalize the **Strategy → Control Plane** interface.
   - deterministic reason codes
 - [x] Intent → decision → order lineage
 - [x] Idempotency + rejection tests
+- [x] Phase S1.1: corrected portfolio decision persistence (append-only ledger + latest pointer)
 
 **Constraints**
 - No strategy may bypass Phase B / Phase C safety gates

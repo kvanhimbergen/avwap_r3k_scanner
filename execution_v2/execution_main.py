@@ -50,6 +50,38 @@ def _log(msg: str) -> None:
     print(f"[{_now_et()}] {msg}", flush=True)
 
 
+def _write_portfolio_decision_latest(
+    *,
+    decision_record: dict,
+    latest_path: Path,
+    errors: list[dict],
+    blocks: list[dict],
+    record_error: bool = True,
+) -> bool:
+    try:
+        portfolio_decisions.write_portfolio_decision_latest(decision_record, latest_path)
+        return True
+    except Exception as exc:
+        if record_error:
+            errors.append(
+                {
+                    "where": "portfolio_decision_latest",
+                    "message": str(exc),
+                    "exception_type": type(exc).__name__,
+                }
+            )
+            blocks.append(
+                {
+                    "code": "portfolio_decision_latest_write_failed",
+                    "message": "latest portfolio decision artifact failed; submissions blocked",
+                }
+            )
+        _log(
+            f"WARNING: failed to write portfolio decision latest artifact: {type(exc).__name__}: {exc}"
+        )
+        return False
+
+
 PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 DEFAULT_STATE_DIR = "/root/avwap_r3k_scanner/state"
 
@@ -373,9 +405,13 @@ def run_once(cfg) -> None:
     candidates_snapshot = _snapshot_candidates_csv(cfg.candidates_csv)
     decision_record = _init_decision_record(cfg, candidates_snapshot, decision_ts_utc)
     decision_path = Path(decision_record["artifacts"]["portfolio_decisions_path"])
+    latest_path = _state_dir() / "portfolio_decision_latest.json"
+    decision_record["artifacts"]["portfolio_decision_latest_path"] = str(latest_path.resolve())
     errors = decision_record["actions"]["errors"]
+    blocks = decision_record["gates"]["blocks"]
     ledgers_written = decision_record["artifacts"]["ledgers_written"]
     positions_count: int | None = None
+    latest_write_failed = False
 
     try:
         store = StateStore(cfg.db_path)
@@ -475,6 +511,16 @@ def run_once(cfg) -> None:
                 execution_mode=cfg.execution_mode,
                 ledger_path=ledger_path,
             )
+
+        latest_write_failed = not _write_portfolio_decision_latest(
+            decision_record=decision_record,
+            latest_path=latest_path,
+            errors=errors,
+            blocks=blocks,
+            record_error=True,
+        )
+        if latest_write_failed:
+            return
 
         if (not market_is_open) and (not getattr(cfg, 'ignore_market_hours', False)):
             _log("Market closed; skipping cycle.")
@@ -1237,6 +1283,14 @@ def run_once(cfg) -> None:
         )
         raise
     finally:
+        if not _write_portfolio_decision_latest(
+            decision_record=decision_record,
+            latest_path=latest_path,
+            errors=errors,
+            blocks=blocks,
+            record_error=not latest_write_failed,
+        ):
+            latest_write_failed = True
         portfolio_decisions.write_portfolio_decision(decision_record, decision_path)
         _log(f"Portfolio decision recorded: {decision_path}")
 

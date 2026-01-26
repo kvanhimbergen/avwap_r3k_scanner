@@ -110,11 +110,11 @@ def test_portfolio_decision_append_atomic_failure_leaves_existing(tmp_path, monk
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload + "\n", encoding="utf-8")
 
-    def _boom_replace(src, dst):
-        raise OSError("replace interrupted")
+    def _boom_write(fd, data):
+        raise OSError("write interrupted")
 
-    monkeypatch.setattr(atomic_write.os, "replace", _boom_replace)
-    with pytest.raises(OSError, match="replace interrupted"):
+    monkeypatch.setattr(atomic_write.os, "write", _boom_write)
+    with pytest.raises(OSError, match="write interrupted"):
         portfolio_decisions.write_portfolio_decision({"decision_id": "decision-2"}, path)
 
     assert path.read_text(encoding="utf-8") == payload + "\n"
