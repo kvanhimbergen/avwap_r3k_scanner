@@ -35,6 +35,8 @@ from execution_v2 import portfolio_decision_enforce
 from execution_v2 import portfolio_arbiter
 from execution_v2 import portfolio_decision as portfolio_decision_contract
 from execution_v2 import portfolio_intents
+from execution_v2 import portfolio_s2_enforcement
+from execution_v2 import strategy_sleeves
 from execution_v2.orders import generate_idempotency_key
 from execution_v2.state_store import StateStore
 from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
@@ -360,6 +362,8 @@ def _init_decision_record(cfg, candidates_snapshot: dict, now_utc: datetime) -> 
             },
         },
         "intents": {"intent_count": 0, "intents": []},
+        "sleeves": {},
+        "s2_enforcement": {},
         "gates": {
             "market": {"is_open": None, "clock_source": None},
             "freshness": {"candidates_fresh": None, "reason": None},
@@ -781,6 +785,141 @@ def run_once(cfg) -> None:
                 }
             )
             _log(f"Portfolio arbitration failed: {exc}")
+        approved_intents: list = []
+        if portfolio_decision is not None:
+            intent_lookup = {
+                (intent.symbol, intent.strategy_id): intent for intent in entry_intents
+            }
+            for order in portfolio_decision.approved_orders:
+                matched = intent_lookup.get((order.symbol, order.strategy_id))
+                if matched is not None:
+                    approved_intents.append(matched)
+        s2_blocked = False
+        if portfolio_decision is not None:
+            try:
+                sleeve_config, sleeve_errors = strategy_sleeves.load_sleeve_config()
+                decision_record["sleeves"] = sleeve_config.to_snapshot()
+                if sleeve_errors:
+                    decision_record["sleeves"]["errors"] = sleeve_errors[:10]
+                    s2_blocked = True
+                    decision_record["gates"]["blocks"].append(
+                        {
+                            "code": "s2_config_invalid",
+                            "message": "strategy sleeve configuration invalid; entries blocked",
+                        }
+                    )
+                    portfolio_s2_enforcement.append_rejections(
+                        rejected=portfolio_decision.rejected_intents,
+                        blocked=[
+                            portfolio_s2_enforcement.BlockedIntent(
+                                intent=intent,
+                                rejection_reason="s2_config_invalid",
+                                reason_codes=["s2_config_invalid"],
+                            )
+                            for intent in approved_intents
+                        ],
+                    )
+                    portfolio_decision = portfolio_decision_contract.PortfolioDecision(
+                        run_id=portfolio_decision.run_id,
+                        date_ny=portfolio_decision.date_ny,
+                        approved_orders=portfolio_decision.approved_orders,
+                        rejected_intents=portfolio_decision.rejected_intents,
+                        constraints_snapshot=portfolio_decision.constraints_snapshot,
+                        decision_hash=portfolio_decision_contract.build_decision_hash(
+                            portfolio_decision.to_payload()
+                        ),
+                    )
+                    decision_record["s2_enforcement"] = {
+                        "blocked_all": True,
+                        "blocked_count": len(approved_intents),
+                        "blocked_sample": [
+                            {
+                                "strategy_id": intent.strategy_id,
+                                "symbol": intent.symbol,
+                                "reason_codes": ["s2_config_invalid"],
+                            }
+                            for intent in approved_intents[:25]
+                        ],
+                        "reason_counts": {"s2_config_invalid": len(approved_intents)},
+                        "portfolio_summary": {},
+                        "strategy_summaries": {},
+                    }
+                    approved_intents = []
+                else:
+                    s2_result = portfolio_s2_enforcement.enforce_sleeves(
+                        intents=approved_intents,
+                        positions=positions,
+                        config=sleeve_config,
+                    )
+                    s2_blocked = s2_result.blocked_all
+                    if s2_result.blocked or s2_result.blocked_all:
+                        portfolio_s2_enforcement.append_rejections(
+                            rejected=portfolio_decision.rejected_intents,
+                            blocked=s2_result.blocked,
+                        )
+                    if s2_result.approved != approved_intents:
+                        approved_intents = s2_result.approved
+                        approved_keys = {
+                            (intent.symbol, intent.strategy_id) for intent in approved_intents
+                        }
+                        approved_orders = [
+                            order
+                            for order in portfolio_decision.approved_orders
+                            if (order.symbol, order.strategy_id) in approved_keys
+                        ]
+                        portfolio_decision = portfolio_decision_contract.PortfolioDecision(
+                            run_id=portfolio_decision.run_id,
+                            date_ny=portfolio_decision.date_ny,
+                            approved_orders=approved_orders,
+                            rejected_intents=portfolio_decision.rejected_intents,
+                            constraints_snapshot=portfolio_decision.constraints_snapshot,
+                            decision_hash="",
+                        )
+                    portfolio_decision = portfolio_decision_contract.PortfolioDecision(
+                        run_id=portfolio_decision.run_id,
+                        date_ny=portfolio_decision.date_ny,
+                        approved_orders=portfolio_decision.approved_orders,
+                        rejected_intents=portfolio_decision.rejected_intents,
+                        constraints_snapshot=portfolio_decision.constraints_snapshot,
+                        decision_hash=portfolio_decision_contract.build_decision_hash(
+                            portfolio_decision.to_payload()
+                        ),
+                    )
+                    decision_record["s2_enforcement"] = {
+                        "blocked_all": s2_result.blocked_all,
+                        "blocked_count": len(s2_result.blocked),
+                        "blocked_sample": s2_result.blocked_sample,
+                        "reason_counts": s2_result.reason_counts,
+                        "portfolio_summary": s2_result.portfolio_summary,
+                        "strategy_summaries": {
+                            key: vars(s2_result.strategy_summaries[key])
+                            for key in sorted(s2_result.strategy_summaries)[:50]
+                        },
+                        "strategy_summaries_truncated": len(s2_result.strategy_summaries) > 50,
+                    }
+                    if s2_blocked:
+                        decision_record["gates"]["blocks"].append(
+                            {
+                                "code": "s2_enforcement_blocked",
+                                "message": "strategy sleeve enforcement blocked entries",
+                            }
+                        )
+            except Exception as exc:
+                decision_record["gates"]["blocks"].append(
+                    {
+                        "code": "s2_enforcement_failed",
+                        "message": "strategy sleeve enforcement failed; entries blocked",
+                    }
+                )
+                errors.append(
+                    {
+                        "where": "portfolio_s2_enforcement",
+                        "message": str(exc),
+                        "exception_type": type(exc).__name__,
+                    }
+                )
+                approved_intents = []
+                s2_blocked = True
         if portfolio_decision is not None:
             decision_state_path = _state_dir() / "portfolio_decision_latest.json"
             portfolio_decision_contract.write_portfolio_decision(
@@ -792,17 +931,10 @@ def run_once(cfg) -> None:
             decision_record["artifacts"]["portfolio_decision_hash"] = (
                 portfolio_decision.decision_hash
             )
-        approved_intents: list = []
-        if portfolio_decision is not None:
-            intent_lookup = {
-                (intent.symbol, intent.strategy_id): intent for intent in entry_intents
-            }
-            for order in portfolio_decision.approved_orders:
-                matched = intent_lookup.get((order.symbol, order.strategy_id))
-                if matched is not None:
-                    approved_intents.append(matched)
         intents = approved_intents
-        entries_blocked = portfolio_decision is None and bool(entry_intents)
+        entries_blocked = (
+            portfolio_decision is None and bool(entry_intents)
+        ) or s2_blocked
         enforcement_context = None
         enforcement_records: list[dict] = []
         if portfolio_decision_enforce.enforcement_enabled():

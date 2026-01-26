@@ -110,6 +110,122 @@ def compute_symbol_contributions(trades: list[Trade]) -> list[dict[str, object]]
     return rows
 
 
+def compute_strategy_realized(trades: list[Trade]) -> dict[str, dict[str, object]]:
+    per_strategy: dict[str, dict[str, object]] = {}
+    for trade in trades:
+        strategy_id = trade.strategy_id or DEFAULT_STRATEGY_ID
+        entry = per_strategy.setdefault(
+            strategy_id,
+            {
+                "realized_pnl_total": 0.0,
+                "realized_pnl_known": True,
+                "fees_total": 0.0,
+                "trade_count": 0,
+                "missing_price_trade_count": 0,
+            },
+        )
+        entry["trade_count"] = int(entry["trade_count"]) + 1
+        entry["fees_total"] = float(entry["fees_total"]) + float(trade.fees)
+        pnl = _trade_realized_pnl_net_fees(trade)
+        if pnl is None:
+            entry["realized_pnl_known"] = False
+            entry["missing_price_trade_count"] = int(entry["missing_price_trade_count"]) + 1
+        if entry["realized_pnl_known"] and pnl is not None:
+            entry["realized_pnl_total"] = float(entry["realized_pnl_total"]) + pnl
+    realized: dict[str, dict[str, object]] = {}
+    for strategy_id in sorted(per_strategy):
+        entry = per_strategy[strategy_id]
+        realized_pnl = (
+            float(entry["realized_pnl_total"]) if entry["realized_pnl_known"] else None
+        )
+        realized[strategy_id] = {
+            "realized_pnl": realized_pnl,
+            "fees_total": float(entry["fees_total"]),
+            "trade_count": int(entry["trade_count"]),
+            "missing_price_trade_count": int(entry["missing_price_trade_count"]),
+        }
+    return realized
+
+
+def compute_strategy_unrealized(
+    positions: list[PortfolioPosition],
+) -> dict[str, dict[str, object]]:
+    per_strategy: dict[str, dict[str, object]] = {}
+    for position in positions:
+        strategy_id = position.strategy_id or DEFAULT_STRATEGY_ID
+        entry = per_strategy.setdefault(
+            strategy_id,
+            {
+                "unrealized_pnl_total": 0.0,
+                "unrealized_pnl_known": True,
+                "position_count": 0,
+                "missing_price_position_count": 0,
+            },
+        )
+        entry["position_count"] = int(entry["position_count"]) + 1
+        if position.mark_price is None or position.avg_price is None:
+            entry["unrealized_pnl_known"] = False
+            entry["missing_price_position_count"] = int(
+                entry["missing_price_position_count"]
+            ) + 1
+            continue
+        pnl = (float(position.mark_price) - float(position.avg_price)) * float(position.qty)
+        if entry["unrealized_pnl_known"]:
+            entry["unrealized_pnl_total"] = float(entry["unrealized_pnl_total"]) + pnl
+    unrealized: dict[str, dict[str, object]] = {}
+    for strategy_id in sorted(per_strategy):
+        entry = per_strategy[strategy_id]
+        unrealized_pnl = (
+            float(entry["unrealized_pnl_total"]) if entry["unrealized_pnl_known"] else None
+        )
+        unrealized[strategy_id] = {
+            "unrealized_pnl": unrealized_pnl,
+            "position_count": int(entry["position_count"]),
+            "missing_price_position_count": int(entry["missing_price_position_count"]),
+        }
+    return unrealized
+
+
+def compute_strategy_exposures(
+    positions: list[PortfolioPosition],
+) -> dict[str, dict[str, float | int]]:
+    per_strategy: dict[str, dict[str, object]] = {}
+    for position in positions:
+        strategy_id = position.strategy_id or DEFAULT_STRATEGY_ID
+        entry = per_strategy.setdefault(
+            strategy_id,
+            {"gross_exposure": 0.0, "net_exposure": 0.0, "position_count": 0},
+        )
+        entry["gross_exposure"] = float(entry["gross_exposure"]) + abs(float(position.notional))
+        entry["net_exposure"] = float(entry["net_exposure"]) + float(position.notional)
+        entry["position_count"] = int(entry["position_count"]) + 1
+    exposures: dict[str, dict[str, float | int]] = {}
+    for strategy_id in sorted(per_strategy):
+        entry = per_strategy[strategy_id]
+        exposures[strategy_id] = {
+            "gross_exposure": float(entry["gross_exposure"]),
+            "net_exposure": float(entry["net_exposure"]),
+            "position_count": int(entry["position_count"]),
+        }
+    return exposures
+
+
+def compute_strategy_drawdown(
+    trades: list[Trade], *, starting_capital: Optional[float]
+) -> dict[str, dict[str, object]]:
+    by_strategy: dict[str, list[Trade]] = {}
+    for trade in trades:
+        strategy_id = trade.strategy_id or DEFAULT_STRATEGY_ID
+        by_strategy.setdefault(strategy_id, []).append(trade)
+    drawdowns: dict[str, dict[str, object]] = {}
+    for strategy_id in sorted(by_strategy):
+        daily_realized = compute_daily_realized(by_strategy[strategy_id])
+        drawdowns[strategy_id] = compute_drawdown(
+            daily_realized, starting_capital=starting_capital
+        )
+    return drawdowns
+
+
 def compute_drawdown(
     daily_realized: list[DailyRealized], *, starting_capital: Optional[float]
 ) -> dict[str, object]:
@@ -319,6 +435,22 @@ def build_portfolio_snapshot(
         daily_realized, starting_capital=starting_capital, window=volatility_window
     )
     contributions = compute_symbol_contributions(trades)
+    strategy_exposures = compute_strategy_exposures(positions)
+    strategy_realized = compute_strategy_realized(trades)
+    strategy_unrealized = compute_strategy_unrealized(positions)
+    strategy_drawdown = compute_strategy_drawdown(
+        trades, starting_capital=starting_capital
+    )
+    strategy_attribution = _build_strategy_attribution(
+        strategy_exposures=strategy_exposures,
+        strategy_realized=strategy_realized,
+        strategy_unrealized=strategy_unrealized,
+        strategy_drawdown=strategy_drawdown,
+        gross_exposure=gross_exposure,
+        net_exposure=net_exposure,
+        realized_pnl=realized_pnl,
+        unrealized_pnl=unrealized_pnl,
+    )
 
     pnl_reason_codes = sorted(
         set(realized_reason_codes + unrealized_reason_codes + position_reason_codes)
@@ -359,6 +491,7 @@ def build_portfolio_snapshot(
             "drawdown": drawdown,
             "rolling_volatility": rolling_volatility,
             "contributions": contributions,
+            "strategy_attribution": strategy_attribution,
         },
         provenance=provenance,
     )
@@ -422,3 +555,93 @@ def evaluate_allocation_guardrails(
         "violations": violations,
         "correlation": correlation,
     }
+
+
+def _build_strategy_attribution(
+    *,
+    strategy_exposures: dict[str, dict[str, float | int]],
+    strategy_realized: dict[str, dict[str, object]],
+    strategy_unrealized: dict[str, dict[str, object]],
+    strategy_drawdown: dict[str, dict[str, object]],
+    gross_exposure: float,
+    net_exposure: float,
+    realized_pnl: Optional[float],
+    unrealized_pnl: Optional[float],
+) -> dict[str, object]:
+    by_strategy: dict[str, dict[str, object]] = {}
+    strategy_ids = sorted(
+        {
+            *strategy_exposures.keys(),
+            *strategy_realized.keys(),
+            *strategy_unrealized.keys(),
+            *strategy_drawdown.keys(),
+        }
+    )
+    for strategy_id in strategy_ids:
+        exposure = strategy_exposures.get(strategy_id, {})
+        realized = strategy_realized.get(strategy_id, {})
+        unrealized = strategy_unrealized.get(strategy_id, {})
+        drawdown = strategy_drawdown.get(strategy_id, {})
+        by_strategy[strategy_id] = {
+            "exposure": exposure,
+            "pnl": {
+                "realized": realized.get("realized_pnl"),
+                "unrealized": unrealized.get("unrealized_pnl"),
+                "fees_total": realized.get("fees_total"),
+                "trade_count": realized.get("trade_count"),
+                "missing_price_trade_count": realized.get("missing_price_trade_count"),
+                "missing_price_position_count": unrealized.get("missing_price_position_count"),
+            },
+            "drawdown": drawdown,
+        }
+
+    exposure_gross_total = sum(
+        float(entry.get("gross_exposure", 0.0)) for entry in strategy_exposures.values()
+    )
+    exposure_net_total = sum(
+        float(entry.get("net_exposure", 0.0)) for entry in strategy_exposures.values()
+    )
+    pnl_realized_total = _sum_if_known(strategy_realized, "realized_pnl")
+    pnl_unrealized_total = _sum_if_known(strategy_unrealized, "unrealized_pnl")
+
+    reconciliation = {
+        "exposure": {
+            "gross_total": exposure_gross_total,
+            "net_total": exposure_net_total,
+            "portfolio_gross": gross_exposure,
+            "portfolio_net": net_exposure,
+            "gross_delta": exposure_gross_total - gross_exposure,
+            "net_delta": exposure_net_total - net_exposure,
+        },
+        "pnl": {
+            "realized_total": pnl_realized_total,
+            "unrealized_total": pnl_unrealized_total,
+            "portfolio_realized": realized_pnl,
+            "portfolio_unrealized": unrealized_pnl,
+            "realized_delta": _delta(pnl_realized_total, realized_pnl),
+            "unrealized_delta": _delta(pnl_unrealized_total, unrealized_pnl),
+        },
+    }
+
+    return {
+        "by_strategy": by_strategy,
+        "reconciliation": reconciliation,
+    }
+
+
+def _sum_if_known(values: dict[str, dict[str, object]], key: str) -> Optional[float]:
+    if not values:
+        return 0.0
+    total = 0.0
+    for entry in values.values():
+        value = entry.get(key)
+        if value is None:
+            return None
+        total += float(value)
+    return total
+
+
+def _delta(total: Optional[float], portfolio_value: Optional[float]) -> Optional[float]:
+    if total is None or portfolio_value is None:
+        return None
+    return float(total) - float(portfolio_value)
