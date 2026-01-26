@@ -685,9 +685,17 @@ def run_once(cfg) -> None:
             )
 
         now_ts = time.time()
-        entry_intents = store.pop_due_entry_intents(now_ts)
-        if not entry_intents:
+
+        # Defensive guard: never consume entry intents in SCHWAB manual mode while market is closed
+        if (
+            cfg.execution_mode == "SCHWAB_401K_MANUAL"
+            and not decision_record["gates"]["market"]["is_open"]
+        ):
             entry_intents = []
+        else:
+            entry_intents = store.pop_due_entry_intents(now_ts)
+            if not entry_intents:
+                entry_intents = []
         intent_projection = []
         for intent in entry_intents:
             intent_projection.append(
@@ -737,6 +745,11 @@ def run_once(cfg) -> None:
             traceback_lines = traceback.format_exc().splitlines()
             max_lines = 10
             short_traceback = "\n".join(traceback_lines[-max_lines:])
+
+            # Hard cap to prevent pathological single-line tracebacks
+            max_chars = 4096
+            if len(short_traceback) > max_chars:
+                short_traceback = short_traceback[-max_chars:]
             errors.append(
                 {
                     "where": "portfolio_arbiter",
