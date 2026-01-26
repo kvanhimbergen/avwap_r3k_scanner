@@ -199,6 +199,7 @@
 - [x] Deterministic artifact writer (analytics/artifacts/portfolio_decisions/YYYY-MM-DD.json)
 - [x] Fail-closed handling for missing candidates and portfolio snapshots
 - [x] Offline fixture-based tests + registry updates
+- [x] Shadow strategy cloning + arbiter rejection for S2-era multi-strategy validation
 
 ## Phase 2B — Enforcement (COMPLETE)
 

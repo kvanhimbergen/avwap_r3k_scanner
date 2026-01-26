@@ -35,6 +35,7 @@ from execution_v2 import portfolio_decision_enforce
 from execution_v2 import portfolio_arbiter
 from execution_v2 import portfolio_decision as portfolio_decision_contract
 from execution_v2 import portfolio_intents
+from execution_v2 import shadow_strategies
 from execution_v2 import portfolio_s2_enforcement
 from execution_v2 import strategy_sleeves
 from execution_v2.orders import generate_idempotency_key
@@ -743,6 +744,8 @@ def run_once(cfg) -> None:
             portfolio_intents.trade_intent_from_entry_intent(intent)
             for intent in entry_intents
         ]
+        shadow_intents = shadow_strategies.clone_trade_intents_as_shadow(trade_intents)
+        trade_intents.extend(shadow_intents)
         portfolio_decision = None
         try:
             portfolio_decision = portfolio_arbiter.arbitrate_intents(

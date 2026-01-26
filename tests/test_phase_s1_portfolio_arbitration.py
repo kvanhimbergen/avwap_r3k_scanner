@@ -9,6 +9,7 @@ import pytest
 from execution_v2.portfolio_arbiter import PortfolioConstraints, arbitrate_intents
 from execution_v2.portfolio_intents import TradeIntent
 from execution_v2.config_types import EntryIntent
+from execution_v2.shadow_strategies import clone_trade_intents_as_shadow
 
 
 def _intent(
@@ -106,6 +107,46 @@ def test_strategy_id_propagates_to_orders() -> None:
     )
 
     assert decision.approved_orders[0].strategy_id == "S-STRAT"
+
+
+def test_shadow_strategy_ids_are_rejected(monkeypatch) -> None:
+    monkeypatch.setenv("SHADOW_STRATEGY_IDS", "shadow_default")
+    intents = [_intent(strategy_id="shadow_default", symbol="AAA")]
+    decision = arbitrate_intents(
+        intents,
+        now_ts_utc=1500.0,
+        constraints=PortfolioConstraints(),
+        run_id="run-shadow-1",
+        date_ny="2026-01-02",
+    )
+
+    assert decision.approved_orders == []
+    assert len(decision.rejected_intents) == 1
+    rejected = decision.rejected_intents[0]
+    assert rejected.rejection_reason == "shadow_strategy"
+    assert rejected.reason_codes == ["shadow_strategy"]
+
+
+def test_shadow_clones_are_rejected_before_arbitration(monkeypatch) -> None:
+    monkeypatch.setenv("SHADOW_STRATEGY_PREFIX", "shadow_")
+    monkeypatch.setenv("SHADOW_STRATEGY_IDS", "shadow_S-A,shadow_S-B")
+    base_intents = [
+        _intent(strategy_id="S-A", symbol="AAA", qty=10),
+        _intent(strategy_id="S-B", symbol="BBB", qty=5),
+    ]
+    shadow_intents = clone_trade_intents_as_shadow(base_intents)
+    decision = arbitrate_intents(
+        base_intents + shadow_intents,
+        now_ts_utc=1500.0,
+        constraints=PortfolioConstraints(),
+        run_id="run-shadow-2",
+        date_ny="2026-01-02",
+    )
+
+    assert [order.strategy_id for order in decision.approved_orders] == ["S-A", "S-B"]
+    rejected_ids = {rej.intent.strategy_id for rej in decision.rejected_intents}
+    assert rejected_ids == {"shadow_S-A", "shadow_S-B"}
+    assert {rej.rejection_reason for rej in decision.rejected_intents} == {"shadow_strategy"}
 
 
 def test_no_decision_no_orders_fail_closed(tmp_path, monkeypatch) -> None:
