@@ -9,6 +9,7 @@ import csv
 import os
 import socket
 import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,6 +25,7 @@ from execution_v2 import buy_loop, exits
 from execution_v2 import live_gate
 from execution_v2 import config_check as _config_check
 from execution_v2 import alpaca_paper
+from execution_v2 import build_info
 from execution_v2 import book_ids
 from execution_v2 import book_router
 from execution_v2 import paper_sim
@@ -423,6 +425,12 @@ def run_once(cfg) -> None:
             entry_delay_max_sec=cfg.entry_delay_max_sec,
         )
         repo_root = Path(__file__).resolve().parents[1]
+        decision_record["build"] = {
+            "git_sha": build_info.get_git_sha_short(repo_root),
+            "git_dirty": build_info.is_git_dirty(repo_root),
+            "python_version": build_info.get_python_version(),
+            "app_version": build_info.APP_VERSION,
+        }
         if os.getenv("DRY_RUN", "0") == "1":
             _log(f"DRY_RUN=1 active; execution_mode={cfg.execution_mode}")
         else:
@@ -520,6 +528,13 @@ def run_once(cfg) -> None:
             record_error=True,
         )
         if latest_write_failed:
+            return
+
+        if cfg.execution_mode == "SCHWAB_401K_MANUAL" and not market_is_open:
+            _log("Market closed; skipping manual cycle.")
+            decision_record["gates"]["blocks"].append(
+                {"code": "market_closed", "message": "market closed; manual cycle skipped"}
+            )
             return
 
         if (not market_is_open) and (not getattr(cfg, 'ignore_market_hours', False)):
@@ -719,11 +734,24 @@ def run_once(cfg) -> None:
                 date_ny=decision_record["ny_date"],
             )
         except Exception as exc:
+            traceback_lines = traceback.format_exc().splitlines()
+            max_lines = 10
+            short_traceback = "\n".join(traceback_lines[-max_lines:])
             errors.append(
                 {
                     "where": "portfolio_arbiter",
                     "message": str(exc),
                     "exception_type": type(exc).__name__,
+                    "traceback": short_traceback,
+                    "context": {
+                        "intent_count": len(entry_intents),
+                        "symbols": [
+                            getattr(intent, "symbol", "")
+                            for intent in entry_intents[:10]
+                        ],
+                        "execution_mode": cfg.execution_mode,
+                        "dry_run_forced": decision_record["mode"]["dry_run_forced"],
+                    },
                 }
             )
             decision_record["gates"]["blocks"].append(

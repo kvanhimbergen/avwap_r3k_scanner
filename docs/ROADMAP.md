@@ -486,6 +486,7 @@ Formalize the **Strategy → Control Plane** interface.
 - [x] Intent → decision → order lineage
 - [x] Idempotency + rejection tests
 - [x] Phase S1.1: corrected portfolio decision persistence (append-only ledger + latest pointer)
+- [x] Phase S1.2: added portfolio decision build provenance, arbiter error context, and manual fail-closed guards
 
 **Constraints**
 - No strategy may bypass Phase B / Phase C safety gates
