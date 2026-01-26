@@ -1,5 +1,7 @@
 """
-Execution V2 – Portfolio Decision Contract Helpers
+Execution V2 – Portfolio Decision Contract Helpers.
+
+Persistence semantics follow docs/ROADMAP.md (Phase S1.1 corrections).
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from execution_v2.clocks import ET
-from utils.atomic_write import atomic_write_text
+from utils.atomic_write import atomic_append_line, atomic_write_text
 
 
 LEDGER_DIR = Path("ledger") / "PORTFOLIO_DECISIONS"
@@ -56,17 +58,13 @@ def dumps_portfolio_decision(record: dict[str, Any]) -> str:
 def write_portfolio_decision(record: dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = dumps_portfolio_decision(record)
-    lines: list[str] = []
-    if path.exists():
-        try:
-            existing = path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            existing = ""
-        if existing:
-            lines.extend([line for line in existing.splitlines() if line])
-    lines.append(payload)
-    data = "\n".join(lines) + "\n"
-    atomic_write_text(path, data)
+    atomic_append_line(path, payload)
+
+
+def write_portfolio_decision_latest(record: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dumps_portfolio_decision(record) + "\n"
+    atomic_write_text(path, payload)
 
 
 def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
