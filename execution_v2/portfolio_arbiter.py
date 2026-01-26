@@ -13,6 +13,7 @@ import hashlib
 from execution_v2.orders import OrderSpec
 from execution_v2.portfolio_decision import PortfolioDecision, build_decision_hash
 from execution_v2.portfolio_intents import RejectedIntent, TradeIntent
+from execution_v2.shadow_strategies import parse_shadow_strategy_ids_from_env
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ def arbitrate_intents(
 
     validated: list[TradeIntent] = []
     rejected: list[RejectedIntent] = []
+    shadow_strategy_ids = parse_shadow_strategy_ids_from_env()
 
     for intent in intents:
         schema_errors = _validate_intent(intent)
@@ -62,6 +64,15 @@ def arbitrate_intents(
                     intent=intent,
                     rejection_reason="invalid_intent",
                     reason_codes=schema_errors,
+                )
+            )
+            continue
+        if intent.strategy_id in shadow_strategy_ids:
+            rejected.append(
+                RejectedIntent(
+                    intent=intent,
+                    rejection_reason="shadow_strategy",
+                    reason_codes=["shadow_strategy"],
                 )
             )
             continue
@@ -201,4 +212,3 @@ def _order_from_intent(intent: TradeIntent, *, run_id: str) -> OrderSpec:
         tif="day",
         idempotency_key=idempotency_key,
     )
-
