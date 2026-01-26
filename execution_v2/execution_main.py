@@ -481,6 +481,13 @@ def run_once(cfg) -> None:
             decision_record["gates"]["market"]["clock_source"] = "clock_snapshot"
             maybe_send_heartbeat(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
             maybe_send_daily_summary(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
+        elif cfg.execution_mode == "DRY_RUN":
+            clock_snapshot = clocks.now_snapshot()
+            market_is_open = clock_snapshot.market_open
+            decision_record["gates"]["market"]["is_open"] = market_is_open
+            decision_record["gates"]["market"]["clock_source"] = "clock_snapshot"
+            maybe_send_heartbeat(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
+            maybe_send_daily_summary(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
         elif cfg.execution_mode == "SCHWAB_401K_MANUAL":
             clock_snapshot = clocks.now_snapshot()
             market_is_open = clock_snapshot.market_open
