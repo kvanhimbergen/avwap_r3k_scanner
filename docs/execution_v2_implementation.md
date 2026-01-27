@@ -139,3 +139,118 @@ Optional fields (used for context but not required for execution):
 ---
 
 **End of Execution V2 Overview**
+
+---
+
+## Phase S2 — Strategy Sleeves (Risk Enforcement Layer)
+
+Phase S2 introduces **strategy-level risk enforcement** via *Strategy Sleeves*.  
+This layer sits **after signal generation** and **before order execution**.
+
+### Purpose
+Strategy Sleeves ensure that each strategy operates within explicit, pre-declared
+risk bounds. This prevents accidental execution due to misconfiguration and enforces
+a **fail-closed** safety model.
+
+### Default Behavior (Fail-Closed)
+By default:
+- `S2_ALLOW_UNSLEEVED = 0`
+- Any strategy **without an explicit sleeve** is blocked from execution
+
+In this state:
+- Entry intents may be generated and scheduled
+- Portfolio arbitration will run
+- **No orders will be executed**
+- Portfolio decisions will record `s2_enforcement_blocked`
+
+This behavior is intentional and required for safety.
+
+### Configuration
+Strategy sleeves are configured via environment variables:
+
+- `S2_SLEEVES_FILE` — Path to a JSON file defining per-strategy sleeves
+- `S2_SLEEVES_JSON` — Inline JSON alternative (not recommended for production)
+- `S2_ALLOW_UNSLEEVED` — Set to `1` to allow unsleeved strategies (NOT recommended)
+- `S2_ALLOW_SYMBOL_OVERLAP` — Allow cross-strategy symbol overlap (default: false)
+
+Example `s2_sleeves.json`:
+
+```json
+{
+  "S1_AVWAP_CORE": {
+    "max_concurrent_positions": 5,
+    "max_gross_exposure_usd": 5000,
+    "max_daily_loss_usd": 250
+  }
+}
+
+
+---
+
+## Phase S2 — Strategy Sleeves (Risk Enforcement Layer)
+
+Phase S2 introduces **strategy-level risk enforcement** via *Strategy Sleeves*.  
+This layer sits **after signal generation** and **before order execution**.
+
+### Purpose
+Strategy Sleeves ensure that each strategy operates within explicit, pre-declared
+risk bounds. This prevents accidental execution due to misconfiguration and enforces
+a **fail-closed** safety model.
+
+### Default Behavior (Fail-Closed)
+By default:
+- `S2_ALLOW_UNSLEEVED = 0`
+- Any strategy **without an explicit sleeve** is blocked from execution
+
+In this state:
+- Entry intents may be generated and scheduled
+- Portfolio arbitration will run
+- **No orders will be executed**
+- Portfolio decisions will record `s2_enforcement_blocked`
+
+This behavior is intentional and required for safety.
+
+### Configuration
+Strategy sleeves are configured via environment variables:
+
+- `S2_SLEEVES_FILE` — Path to a JSON file defining per-strategy sleeves
+- `S2_SLEEVES_JSON` — Inline JSON alternative (not recommended for production)
+- `S2_ALLOW_UNSLEEVED` — Set to `1` to allow unsleeved strategies (NOT recommended)
+- `S2_ALLOW_SYMBOL_OVERLAP` — Allow cross-strategy symbol overlap (default: false)
+
+Example `s2_sleeves.json`:
+
+```json
+{
+  "S1_AVWAP_CORE": {
+    "max_concurrent_positions": 5,
+    "max_gross_exposure_usd": 5000,
+    "max_daily_loss_usd": 250
+  }
+}
+
+Enforcement Outcomes
+
+During each execution cycle:
+
+Missing sleeves with allow_unsleeved=false result in:
+
+s2_missing_sleeve
+
+approved_orders = 0
+
+Sleeve limits may also block entries due to:
+
+max positions
+
+max gross exposure
+
+max daily loss
+
+All enforcement outcomes are recorded in
+ledger/PORTFOLIO_DECISIONS/YYYY-MM-DD.jsonl.
+
+Operational Note
+
+At least one sleeve must be defined for any active strategy (e.g. S1_AVWAP_CORE)
+for orders to execute in paper or live trading.
