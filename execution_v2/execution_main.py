@@ -364,6 +364,13 @@ def _init_decision_record(cfg, candidates_snapshot: dict, now_utc: datetime) -> 
             },
         },
         "intents": {"intent_count": 0, "intents": []},
+        "intents_meta": {
+            "entry_intents_created_count": 0,
+            "entry_intents_created_sample": [],
+            "entry_intents_pre_s2_count": 0,
+            "entry_intents_post_s2_count": 0,
+            "drop_reason_counts": {},
+        },
         "sleeves": {},
         "s2_enforcement": {},
         "gates": {
@@ -393,6 +400,44 @@ def _record_s2_inputs(decision_record: dict, sleeve_config: strategy_sleeves.Sle
     decision_record.setdefault("inputs", {})["s2_daily_pnl_by_strategy"] = (
         sleeve_config.daily_pnl_by_strategy
     )
+
+
+def _slim_entry_intent(intent) -> dict[str, object]:
+    return {
+        "symbol": getattr(intent, "symbol", ""),
+        "strategy_id": getattr(intent, "strategy_id", ""),
+        "side": "buy",
+        "qty": getattr(intent, "size_shares", None),
+    }
+
+
+def _update_intents_meta(
+    decision_record: dict,
+    *,
+    created_intents: list,
+    entry_intents: list,
+    approved_intents: list,
+    s2_snapshot: dict | None = None,
+) -> None:
+    meta = decision_record.setdefault("intents_meta", {})
+    meta["entry_intents_created_count"] = len(created_intents)
+    meta["entry_intents_created_sample"] = [
+        _slim_entry_intent(intent) for intent in created_intents[:5]
+    ]
+    meta["entry_intents_pre_s2_count"] = len(entry_intents)
+    meta["entry_intents_post_s2_count"] = len(approved_intents)
+    if meta["entry_intents_created_count"] == 0 and entry_intents:
+        meta["entry_intents_created_count"] = len(entry_intents)
+        meta["entry_intents_created_sample"] = [
+            _slim_entry_intent(intent) for intent in entry_intents[:5]
+        ]
+    if s2_snapshot is None:
+        s2_snapshot = decision_record.get("s2_enforcement") or {}
+    reason_counts = s2_snapshot.get("reason_counts")
+    if reason_counts is not None:
+        meta["drop_reason_counts"] = dict(reason_counts)
+    else:
+        meta.setdefault("drop_reason_counts", {})
 
 
 def _finalize_portfolio_enforcement(
@@ -425,6 +470,7 @@ def run_once(cfg) -> None:
     blocks = decision_record["gates"]["blocks"]
     ledgers_written = decision_record["artifacts"]["ledgers_written"]
     positions_count: int | None = None
+    entry_intents_created: list = []
     latest_write_failed = False
 
     try:
@@ -576,7 +622,13 @@ def run_once(cfg) -> None:
                         return []
 
                 md = _NoMarketData()
-            created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
+            created = buy_loop.evaluate_and_create_entry_intents(
+                store,
+                md,
+                buy_cfg,
+                account_equity,
+                created_intents=entry_intents_created,
+            )
             if created:
                 _log(f"Created {created} entry intents.")
             _log("PAPER_SIM: skipping live gate checks and broker position lookups.")
@@ -596,7 +648,13 @@ def run_once(cfg) -> None:
                 md = _NoMarketData()
             account_equity = float(os.getenv("MANUAL_ACCOUNT_EQUITY", "0") or 0.0)
             decision_record["inputs"]["account"]["equity"] = account_equity
-            created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
+            created = buy_loop.evaluate_and_create_entry_intents(
+                store,
+                md,
+                buy_cfg,
+                account_equity,
+                created_intents=entry_intents_created,
+            )
             if created:
                 _log(f"Created {created} entry intents.")
         elif cfg.execution_mode == "ALPACA_PAPER":
@@ -632,7 +690,13 @@ def run_once(cfg) -> None:
                     }
                 )
             account_equity = _get_account_equity(trading_client)
-            created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
+            created = buy_loop.evaluate_and_create_entry_intents(
+                store,
+                md,
+                buy_cfg,
+                account_equity,
+                created_intents=entry_intents_created,
+            )
             if created:
                 _log(f"Created {created} entry intents.")
             exits.manage_positions(
@@ -691,7 +755,13 @@ def run_once(cfg) -> None:
                     }
                 )
             account_equity = _get_account_equity(trading_client)
-            created = buy_loop.evaluate_and_create_entry_intents(store, md, buy_cfg, account_equity)
+            created = buy_loop.evaluate_and_create_entry_intents(
+                store,
+                md,
+                buy_cfg,
+                account_equity,
+                created_intents=entry_intents_created,
+            )
             if created:
                 _log(f"Created {created} entry intents.")
             exits.manage_positions(
@@ -927,6 +997,13 @@ def run_once(cfg) -> None:
                 )
                 approved_intents = []
                 s2_blocked = True
+        _update_intents_meta(
+            decision_record,
+            created_intents=entry_intents_created,
+            entry_intents=entry_intents,
+            approved_intents=approved_intents,
+            s2_snapshot=decision_record.get("s2_enforcement"),
+        )
         if portfolio_decision is not None:
             decision_state_path = _state_dir() / "portfolio_decision_latest.json"
             portfolio_decision_contract.write_portfolio_decision(

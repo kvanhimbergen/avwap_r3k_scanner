@@ -116,3 +116,57 @@ def test_s2_daily_pnl_invalid_json(monkeypatch) -> None:
     assert snapshot["pnl_parse_error"].startswith("daily_pnl_json_invalid")
     assert snapshot["strategy_summaries"]["S1_AVWAP_CORE"]["daily_pnl_usd"] is None
     assert snapshot["reason_counts"][REASON_MISSING_PNL] == 1
+
+
+def test_intents_meta_created_but_empty_pre_s2(monkeypatch) -> None:
+    monkeypatch.setenv("S2_DAILY_PNL_JSON", '{"S1_AVWAP_CORE": 0.0}')
+    parsed, _ = load_sleeve_config()
+    config = _build_config(parsed, max_loss=250.0)
+    decision_record = _build_decision_record()
+    execution_main._record_s2_inputs(decision_record, config)
+
+    created = [
+        _entry("S1_AVWAP_CORE", "AAPL"),
+        _entry("S1_AVWAP_CORE", "MSFT"),
+    ]
+    decision_record["intents"]["intent_count"] = 0
+    decision_record["intents"]["intents"] = []
+
+    execution_main._update_intents_meta(
+        decision_record,
+        created_intents=created,
+        entry_intents=[],
+        approved_intents=[],
+        s2_snapshot=None,
+    )
+
+    intents_meta = decision_record["intents_meta"]
+    assert intents_meta["entry_intents_created_count"] == 2
+    assert intents_meta["entry_intents_created_sample"]
+    assert intents_meta["entry_intents_pre_s2_count"] == 0
+    assert intents_meta["entry_intents_post_s2_count"] == 0
+    assert decision_record["inputs"]["s2_daily_pnl_by_strategy"]["S1_AVWAP_CORE"] == 0.0
+
+
+def test_intents_meta_counts_flow() -> None:
+    decision_record = _build_decision_record()
+    created = [
+        _entry("S1_AVWAP_CORE", "AAPL"),
+        _entry("S1_AVWAP_CORE", "MSFT"),
+    ]
+    entry_intents = created[:]
+    approved = created[:1]
+
+    execution_main._update_intents_meta(
+        decision_record,
+        created_intents=created,
+        entry_intents=entry_intents,
+        approved_intents=approved,
+        s2_snapshot={"reason_counts": {REASON_MAX_DAILY_LOSS: 1}},
+    )
+
+    intents_meta = decision_record["intents_meta"]
+    assert intents_meta["entry_intents_created_count"] > 0
+    assert intents_meta["entry_intents_created_count"] >= intents_meta["entry_intents_pre_s2_count"]
+    assert intents_meta["entry_intents_pre_s2_count"] >= intents_meta["entry_intents_post_s2_count"]
+    assert intents_meta["drop_reason_counts"][REASON_MAX_DAILY_LOSS] == 1
