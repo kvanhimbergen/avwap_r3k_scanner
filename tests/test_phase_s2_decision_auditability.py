@@ -167,5 +167,7 @@ def test_intents_meta_counts_flow() -> None:
 
     intents_meta = decision_record["intents_meta"]
     assert intents_meta["entry_intents_created_count"] >= intents_meta["entry_intents_pre_s2_count"]
+    if intents_meta["entry_intents_pre_s2_count"] > 0:
+        assert intents_meta["entry_intents_created_count"] > 0
     assert intents_meta["entry_intents_pre_s2_count"] >= intents_meta["entry_intents_post_s2_count"]
     assert intents_meta["drop_reason_counts"][REASON_MAX_DAILY_LOSS] == 1
