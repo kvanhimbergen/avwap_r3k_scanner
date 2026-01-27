@@ -38,6 +38,8 @@ class SleeveConfig:
     allow_unsleeved: bool
     allow_symbol_overlap: bool
     daily_pnl_by_strategy: dict[str, float]
+    daily_pnl_source: str | None = None
+    daily_pnl_parse_error: str | None = None
 
     def to_snapshot(self) -> dict[str, object]:
         items = []
@@ -61,7 +63,7 @@ def load_sleeve_config() -> tuple[SleeveConfig, list[str]]:
         errors.extend(parse_errors)
     allow_unsleeved = os.getenv(ALLOW_UNSLEEVED_ENV, "0").strip() == "1"
     allow_symbol_overlap = os.getenv(ALLOW_SYMBOL_OVERLAP_ENV, "0").strip() == "1"
-    daily_pnl_by_strategy, pnl_errors = _load_daily_pnl()
+    daily_pnl_by_strategy, pnl_errors, pnl_source, pnl_parse_error = _load_daily_pnl()
     errors.extend(pnl_errors)
     return (
         SleeveConfig(
@@ -69,6 +71,8 @@ def load_sleeve_config() -> tuple[SleeveConfig, list[str]]:
             allow_unsleeved=allow_unsleeved,
             allow_symbol_overlap=allow_symbol_overlap,
             daily_pnl_by_strategy=daily_pnl_by_strategy,
+            daily_pnl_source=pnl_source,
+            daily_pnl_parse_error=pnl_parse_error,
         ),
         errors,
     )
@@ -155,18 +159,21 @@ def _parse_optional_int(
         return None
 
 
-def _load_daily_pnl() -> tuple[dict[str, float], list[str]]:
+def _load_daily_pnl() -> tuple[dict[str, float], list[str], str | None, str | None]:
     errors: list[str] = []
     raw = os.getenv(DAILY_PNL_JSON_ENV)
     if not raw:
-        return {}, errors
+        return {}, errors, "none", None
+    source = f"env:{DAILY_PNL_JSON_ENV}"
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        errors.append(f"daily_pnl_json_invalid:{exc.msg}")
-        return {}, errors
+        parse_error = f"daily_pnl_json_invalid:{exc.msg}"
+        errors.append(parse_error)
+        return {}, errors, source, parse_error
     if not isinstance(payload, dict):
-        return {}, ["daily_pnl_payload_invalid"]
+        parse_error = "daily_pnl_payload_invalid"
+        return {}, [parse_error], source, parse_error
     pnl: dict[str, float] = {}
     for strategy_id, value in payload.items():
         if not strategy_id:
@@ -176,4 +183,4 @@ def _load_daily_pnl() -> tuple[dict[str, float], list[str]]:
             pnl[str(strategy_id)] = float(value)
         except (TypeError, ValueError):
             errors.append(f"daily_pnl_invalid_value:{strategy_id}")
-    return pnl, errors
+    return pnl, errors, source, None

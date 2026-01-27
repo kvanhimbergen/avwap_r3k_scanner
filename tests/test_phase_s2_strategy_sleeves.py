@@ -5,6 +5,7 @@ from execution_v2.portfolio_s2_enforcement import (
     REASON_MAX_DAILY_LOSS,
     REASON_MAX_GROSS_EXPOSURE,
     REASON_MAX_POSITIONS,
+    REASON_MISSING_PNL,
     REASON_MISSING_SLEEVE,
     REASON_SYMBOL_OVERLAP,
     enforce_sleeves,
@@ -105,6 +106,22 @@ def test_sleeve_blocks_max_daily_loss() -> None:
     assert result.approved == []
     assert len(result.blocked) == 1
     assert REASON_MAX_DAILY_LOSS in result.blocked[0].reason_codes
+
+
+def test_sleeve_blocks_missing_daily_pnl() -> None:
+    intents = [_entry("alpha", "AAA", 10, 10.0)]
+    config = SleeveConfig(
+        sleeves={"alpha": StrategySleeve(max_daily_loss_usd=100.0)},
+        allow_unsleeved=False,
+        allow_symbol_overlap=False,
+        daily_pnl_by_strategy={},
+    )
+
+    result = enforce_sleeves(intents=intents, positions=[], config=config)
+
+    assert result.approved == []
+    assert len(result.blocked) == 1
+    assert REASON_MISSING_PNL in result.blocked[0].reason_codes
 
 
 def test_symbol_overlap_blocked() -> None:
