@@ -26,6 +26,7 @@
 - [ ] **Scan artifacts are fresh** (daily candidates & watchlist updated today).
 - [ ] **Slack alerts are healthy** (heartbeat and daily summary visible).
 - [ ] **Broker credentials configured** (APCA_API_KEY_ID / APCA_API_SECRET_KEY present on the host).
+- [ ] **Phase S2 sleeves configured** (S2_SLEEVES_FILE or S2_SLEEVES_JSON present; active strategies mapped; unsleeved blocked unless explicitly allowed).  
 - [ ] **System time/timezone are correct** (host clock aligned; logs show ET timestamps).
 - [ ] **execution.service is running** and **DRY_RUN is enforced** via a systemd drop-in or environment.
 
