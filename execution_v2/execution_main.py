@@ -411,6 +411,18 @@ def _slim_entry_intent(intent) -> dict[str, object]:
     }
 
 
+def _record_created_intents_meta(
+    decision_record: dict, created_intents: list, created: int
+) -> None:
+    if not created:
+        return
+    meta = decision_record.setdefault("intents_meta", {})
+    meta["entry_intents_created_count"] = created
+    meta["entry_intents_created_sample"] = [
+        _slim_entry_intent(intent) for intent in created_intents[:5]
+    ]
+
+
 def _update_intents_meta(
     decision_record: dict,
     *,
@@ -420,12 +432,25 @@ def _update_intents_meta(
     s2_snapshot: dict | None = None,
 ) -> None:
     meta = decision_record.setdefault("intents_meta", {})
-    meta["entry_intents_created_count"] = len(created_intents)
-    meta["entry_intents_created_sample"] = [
-        _slim_entry_intent(intent) for intent in created_intents[:5]
-    ]
+    if created_intents:
+        meta["entry_intents_created_count"] = len(created_intents)
+        meta["entry_intents_created_sample"] = [
+            _slim_entry_intent(intent) for intent in created_intents[:5]
+        ]
+    else:
+        meta.setdefault("entry_intents_created_count", 0)
+        meta.setdefault("entry_intents_created_sample", [])
     meta["entry_intents_pre_s2_count"] = len(entry_intents)
     meta["entry_intents_post_s2_count"] = len(approved_intents)
+    if (
+        meta.get("entry_intents_created_count", 0) == 0
+        and meta["entry_intents_pre_s2_count"] > 0
+    ):
+        meta["entry_intents_created_count"] = meta["entry_intents_pre_s2_count"]
+        if not meta.get("entry_intents_created_sample"):
+            meta["entry_intents_created_sample"] = [
+                _slim_entry_intent(intent) for intent in entry_intents[:5]
+            ]
     if s2_snapshot is None:
         s2_snapshot = decision_record.get("s2_enforcement") or {}
     reason_counts = s2_snapshot.get("reason_counts")
@@ -626,6 +651,7 @@ def run_once(cfg) -> None:
             )
             if created:
                 _log(f"Created {created} entry intents.")
+                _record_created_intents_meta(decision_record, entry_intents_created, created)
             _log("PAPER_SIM: skipping live gate checks and broker position lookups.")
         elif cfg.execution_mode == "SCHWAB_401K_MANUAL":
             allowlist = live_gate.parse_allowlist()
@@ -652,6 +678,7 @@ def run_once(cfg) -> None:
             )
             if created:
                 _log(f"Created {created} entry intents.")
+                _record_created_intents_meta(decision_record, entry_intents_created, created)
         elif cfg.execution_mode == "ALPACA_PAPER":
             decision_record["gates"]["live_gate_applied"] = True
             allowlist = live_gate.parse_allowlist()
@@ -694,6 +721,7 @@ def run_once(cfg) -> None:
             )
             if created:
                 _log(f"Created {created} entry intents.")
+                _record_created_intents_meta(decision_record, entry_intents_created, created)
             exits.manage_positions(
                 trading_client=trading_client,
                 md=md,
@@ -759,6 +787,7 @@ def run_once(cfg) -> None:
             )
             if created:
                 _log(f"Created {created} entry intents.")
+                _record_created_intents_meta(decision_record, entry_intents_created, created)
             exits.manage_positions(
                 trading_client=trading_client,
                 md=md,
