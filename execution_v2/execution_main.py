@@ -890,6 +890,7 @@ def run_once(cfg) -> None:
             )
             _log(f"Portfolio arbitration failed: {exc}")
         approved_intents: list = []
+        entry_intents_for_s2: list = []
         if portfolio_decision is not None:
             intent_lookup = {
                 (intent.symbol, intent.strategy_id): intent for intent in entry_intents
@@ -898,12 +899,16 @@ def run_once(cfg) -> None:
                 matched = intent_lookup.get((order.symbol, order.strategy_id))
                 if matched is not None:
                     approved_intents.append(matched)
+            entry_intents_for_s2 = list(approved_intents)
         s2_blocked = False
         if portfolio_decision is not None:
             try:
                 sleeve_config, sleeve_errors = strategy_sleeves.load_sleeve_config()
                 decision_record["sleeves"] = sleeve_config.to_snapshot()
                 _record_s2_inputs(decision_record, sleeve_config)
+                decision_record.setdefault("intents_meta", {})[
+                    "entry_intents_pre_s2_count"
+                ] = len(entry_intents_for_s2)
                 if sleeve_errors:
                     decision_record["sleeves"]["errors"] = sleeve_errors[:10]
                     s2_blocked = True
@@ -954,7 +959,7 @@ def run_once(cfg) -> None:
                     approved_intents = []
                 else:
                     s2_result = portfolio_s2_enforcement.enforce_sleeves(
-                        intents=approved_intents,
+                        intents=entry_intents_for_s2,
                         positions=positions,
                         config=sleeve_config,
                     )
@@ -1024,7 +1029,7 @@ def run_once(cfg) -> None:
         _update_intents_meta(
             decision_record,
             created_intents=entry_intents_created,
-            entry_intents=entry_intents,
+            entry_intents=entry_intents_for_s2,
             approved_intents=approved_intents,
             s2_snapshot=decision_record.get("s2_enforcement"),
         )
