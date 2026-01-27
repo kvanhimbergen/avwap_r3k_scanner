@@ -355,6 +355,7 @@ def _init_decision_record(cfg, candidates_snapshot: dict, now_utc: datetime) -> 
                 "buying_power": None,
                 "source": "unknown",
             },
+            "s2_daily_pnl_by_strategy": {},
             "constraints_snapshot": {
                 "allowlist_symbols": None,
                 "max_new_positions": None,
@@ -386,6 +387,12 @@ def _init_decision_record(cfg, candidates_snapshot: dict, now_utc: datetime) -> 
         ts_utc=record["ts_utc"],
     )
     return record
+
+
+def _record_s2_inputs(decision_record: dict, sleeve_config: strategy_sleeves.SleeveConfig) -> None:
+    decision_record.setdefault("inputs", {})["s2_daily_pnl_by_strategy"] = (
+        sleeve_config.daily_pnl_by_strategy
+    )
 
 
 def _finalize_portfolio_enforcement(
@@ -802,6 +809,7 @@ def run_once(cfg) -> None:
             try:
                 sleeve_config, sleeve_errors = strategy_sleeves.load_sleeve_config()
                 decision_record["sleeves"] = sleeve_config.to_snapshot()
+                _record_s2_inputs(decision_record, sleeve_config)
                 if sleeve_errors:
                     decision_record["sleeves"]["errors"] = sleeve_errors[:10]
                     s2_blocked = True
@@ -846,6 +854,8 @@ def run_once(cfg) -> None:
                         "reason_counts": {"s2_config_invalid": len(approved_intents)},
                         "portfolio_summary": {},
                         "strategy_summaries": {},
+                        "pnl_source": sleeve_config.daily_pnl_source,
+                        "pnl_parse_error": sleeve_config.daily_pnl_parse_error,
                     }
                     approved_intents = []
                 else:
@@ -888,18 +898,12 @@ def run_once(cfg) -> None:
                             portfolio_decision.to_payload()
                         ),
                     )
-                    decision_record["s2_enforcement"] = {
-                        "blocked_all": s2_result.blocked_all,
-                        "blocked_count": len(s2_result.blocked),
-                        "blocked_sample": s2_result.blocked_sample,
-                        "reason_counts": s2_result.reason_counts,
-                        "portfolio_summary": s2_result.portfolio_summary,
-                        "strategy_summaries": {
-                            key: vars(s2_result.strategy_summaries[key])
-                            for key in sorted(s2_result.strategy_summaries)[:50]
-                        },
-                        "strategy_summaries_truncated": len(s2_result.strategy_summaries) > 50,
-                    }
+                    decision_record["s2_enforcement"] = (
+                        portfolio_s2_enforcement.build_enforcement_snapshot(
+                            result=s2_result,
+                            config=sleeve_config,
+                        )
+                    )
                     if s2_blocked:
                         decision_record["gates"]["blocks"].append(
                             {

@@ -15,6 +15,7 @@ REASON_MAX_POSITIONS = "s2_max_positions"
 REASON_MAX_GROSS_EXPOSURE = "s2_max_gross_exposure"
 REASON_SYMBOL_OVERLAP = "s2_symbol_overlap"
 REASON_MAX_DAILY_LOSS = "s2_max_daily_loss"
+REASON_MISSING_PNL = "s2_missing_pnl"
 
 MAX_BLOCKED_SAMPLE = 25
 
@@ -29,6 +30,7 @@ class BlockedIntent:
 @dataclass(frozen=True)
 class StrategySummary:
     strategy_id: str
+    daily_pnl_usd: float | None
     open_positions: int
     approved_new_positions: int
     blocked_new_positions: int
@@ -219,7 +221,9 @@ def _evaluate_sleeve(
     reason_codes: list[str] = []
     if sleeve.max_daily_loss_usd is not None:
         pnl = daily_pnl_by_strategy.get(strategy_id)
-        if pnl is None or pnl <= -float(sleeve.max_daily_loss_usd):
+        if pnl is None:
+            reason_codes.append(REASON_MISSING_PNL)
+        elif pnl <= -float(sleeve.max_daily_loss_usd):
             reason_codes.append(REASON_MAX_DAILY_LOSS)
     if sleeve.max_concurrent_positions is not None:
         open_count = len(open_symbols_by_strategy.get(strategy_id, set()))
@@ -293,6 +297,7 @@ def _build_strategy_summaries(
         added = approved_gross.get(strategy_id, 0.0)
         summaries[strategy_id] = StrategySummary(
             strategy_id=strategy_id,
+            daily_pnl_usd=config.daily_pnl_by_strategy.get(strategy_id),
             open_positions=len(open_symbols_by_strategy.get(strategy_id, set())),
             approved_new_positions=approved_count.get(strategy_id, 0),
             blocked_new_positions=blocked_count.get(strategy_id, 0),
@@ -303,6 +308,27 @@ def _build_strategy_summaries(
             max_daily_loss_usd=sleeve.max_daily_loss_usd if sleeve else None,
         )
     return summaries
+
+
+def build_enforcement_snapshot(
+    *,
+    result: EnforcementResult,
+    config: SleeveConfig,
+) -> dict[str, object]:
+    return {
+        "blocked_all": result.blocked_all,
+        "blocked_count": len(result.blocked),
+        "blocked_sample": result.blocked_sample,
+        "reason_counts": result.reason_counts,
+        "portfolio_summary": result.portfolio_summary,
+        "strategy_summaries": {
+            key: vars(result.strategy_summaries[key])
+            for key in sorted(result.strategy_summaries)[:50]
+        },
+        "strategy_summaries_truncated": len(result.strategy_summaries) > 50,
+        "pnl_source": config.daily_pnl_source,
+        "pnl_parse_error": config.daily_pnl_parse_error,
+    }
 
 
 def _build_portfolio_summary(
