@@ -143,7 +143,13 @@ def _iter_active_candidates(candidates: Iterable[Candidate], active_symbols: set
             yield cand
 
 
-def evaluate_and_create_entry_intents(store, md, cfg: BuyLoopConfig, account_equity: float) -> int:
+def evaluate_and_create_entry_intents(
+    store,
+    md,
+    cfg: BuyLoopConfig,
+    account_equity: float,
+    created_intents: list[EntryIntent] | None = None,
+) -> int:
     """
     Evaluate scan candidates and create entry intents for BOH-confirmed names.
     """
@@ -268,6 +274,8 @@ def evaluate_and_create_entry_intents(store, md, cfg: BuyLoopConfig, account_equ
             dist_pct=cand.dist_pct,
         )
         store.put_entry_intent(intent)
+        if created_intents is not None:
+            created_intents.append(intent)
         created += 1
 
     return created
