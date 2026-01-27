@@ -1,0 +1,7 @@
+{
+  "S1_AVWAP_CORE": {
+    "max_concurrent_positions": 5,
+    "max_gross_exposure_usd": 5000,
+    "max_daily_loss_usd": 250
+  }
+}
