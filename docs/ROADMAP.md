@@ -324,6 +324,29 @@ or portfolio decisions.
 - All tests pass offline on Mac and droplet
 
 
+---
+
+## Phase M1-D — RAEC 401(k) Strategy v1 (ETF-only) + Monthly/Regime/Drift Rebalance Gating
+
+**Status:** ✅ COMPLETE
+
+**Objective:**  
+Provide an offline-first, manual-execution ETF-only strategy runner for Schwab 401(k)
+with deterministic intent generation, Slack ticketing, and low-turnover gating.
+
+### Tasks
+- [x] Strategy runner CLI with weekly evaluation and deterministic targets
+- [x] Offline price provider interface + fixture provider for tests
+- [x] Regime classification (SMA/vol/breadth) + target allocations
+- [x] Gating logic (monthly/regime/drift > 3%)
+- [x] Intent generation with turnover cap + deterministic intent IDs
+- [x] Single Slack ticket emission via manual adapter (idempotent)
+- [x] Strategy state persistence (last eval, regime, targets, allocations)
+- [x] Allocation update helper CLI
+- [x] Offline deterministic unit tests (regime, gating, intents, dry-run)
+- [x] Documentation for RAEC 401(k) manual workflow
+
+
 ## Phase E1 — Regime Detection (Measurement Only)
 
 **Status:** ✅ COMPLETE
