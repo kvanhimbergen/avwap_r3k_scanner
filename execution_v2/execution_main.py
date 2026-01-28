@@ -599,18 +599,8 @@ def run_once(cfg) -> None:
                         trading_client = book_router.select_trading_client(book_id)
                     else:
                         trading_client = _select_trading_client(cfg.execution_mode)
-                except RuntimeError as exc:
-                    if cfg.execution_mode == "ALPACA_PAPER":
-                        _log(f"ALPACA_PAPER disabled: {exc}")
-                        return
-                    raise
                 except Exception as exc:
-                    if cfg.execution_mode == "ALPACA_PAPER":
-                        _log(
-                            "ALPACA_PAPER disabled: unexpected "
-                            f"{type(exc).__name__}: {exc}"
-                        )
-                        return
+                    _log(f"ERROR: failed to initialize trading client: {type(exc).__name__}: {exc}")
                     raise
                 md = market_data_from_env()
         else:
