@@ -53,6 +53,7 @@ def test_strategy_id_present_on_intent_order_and_position() -> None:
 
     order = build_marketable_limit(
         strategy_id=DEFAULT_STRATEGY_ID,
+        date_ny="2024-01-02",
         symbol="AAA",
         side="buy",
         qty=10,

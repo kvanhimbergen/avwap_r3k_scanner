@@ -66,6 +66,8 @@ def build_order_event(
     now_utc: datetime,
 ) -> dict:
     order_id = getattr(order, "id", None) or getattr(order, "order_id", None)
+    if order_id is not None:
+        order_id = str(order_id)
     status = getattr(order, "status", None)
     filled_qty_raw = getattr(order, "filled_qty", None)
     filled_avg_price_raw = getattr(order, "filled_avg_price", None)
@@ -133,7 +135,7 @@ def append_events(path: Path, events: Iterable[dict]) -> tuple[int, int]:
             if intent_id in existing:
                 skipped += 1
                 continue
-            handle.write(json.dumps(event, sort_keys=True) + "\n")
+            handle.write(json.dumps(event, sort_keys=True, default=str) + "\n")
             existing.add(str(intent_id))
             written += 1
     return written, skipped
