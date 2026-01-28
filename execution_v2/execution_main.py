@@ -531,6 +531,9 @@ def _write_execution_heartbeat(cfg, decision_record: dict, candidates_snapshot: 
 def _is_material_cycle(decision_record: dict, cfg, market_is_open: bool | None) -> bool:
     if market_is_open or getattr(cfg, "ignore_market_hours", False):
         return True
+    blocks = (decision_record.get("gates") or {}).get("blocks") or []
+    if blocks:
+        return True
     actions = decision_record.get("actions", {})
     intents = decision_record.get("intents", {})
     errors = actions.get("errors") or []
