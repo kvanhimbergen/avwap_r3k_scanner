@@ -178,6 +178,19 @@ bash
 Copy code
 journalctl -u execution.service --since "today" --no-pager
 journalctl -u scan.service --since "today" --no-pager
+
+Execution V2 State Artifacts
+Execution V2 writes lightweight artifacts under `state/` and `ledger/` to support
+observability and deterministic audits:
+
+- `state/execution_heartbeat.json` is written every non-fatal cycle (including market-closed cycles).
+  It captures the current execution mode, market-open status, and lightweight intent/error counts.
+- `state/portfolio_decision_latest.json` and `ledger/PORTFOLIO_DECISIONS/<date>.jsonl` are now
+  **material-only** artifacts. They only update when the cycle is material (market open, intents,
+  orders, or errors). Market-closed "no-op" cycles intentionally do **not** update these files.
+
+ALPACA_PAPER credential checks are fail-closed: missing `APCA_API_KEY_ID`,
+`APCA_API_SECRET_KEY`, or `APCA_API_BASE_URL` will raise an error and skip all artifact writes.
 Process Verification (Sanity Check)
 At any time, this should show exactly one execution process:
 
@@ -228,6 +241,10 @@ Offline config sanity check (no network):
 ```bash
 python execution_v2/execution_main.py --config-check
 ```
+
+> **Scope Note**
+>
+> `--config-check` validates **execution configuration only** (environment variables, required paths, and basic runtime wiring).
 
 ### What to do
 Immediately **after that code block**, add a clarification paragraph.
