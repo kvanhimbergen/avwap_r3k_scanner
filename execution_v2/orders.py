@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import random
-import time
 from dataclasses import dataclass
 from typing import Literal
 
@@ -46,24 +45,24 @@ def _clamp(v: float, lo: float, hi: float) -> float:
 
 
 def generate_idempotency_key(
+    strategy_id: str,
+    date_ny: str,
     symbol: str,
     side: Side,
     qty: int,
-    ref_price: float,
-    ts_bucket_sec: int = 60,
 ) -> str:
     """
-    Generate a stable idempotency key within a time bucket.
-    Prevents duplicate orders on restarts while allowing retries later.
+    Generate a stable idempotency key scoped to a strategy and NY trading day.
+    Prevents duplicate orders on restarts while keeping a fixed daily key.
     """
-    bucket = int(time.time() // ts_bucket_sec)
-    raw = f"{symbol}|{side}|{qty}|{round(ref_price,4)}|{bucket}"
+    raw = f"{date_ny}|{strategy_id}|{symbol}|{side}|{qty}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def build_marketable_limit(
     *,
     strategy_id: str,
+    date_ny: str,
     symbol: str,
     side: Side,
     qty: int,
@@ -96,7 +95,7 @@ def build_marketable_limit(
     else:
         raise ValueError(f"Invalid side: {side}")
 
-    key = generate_idempotency_key(symbol, side, qty, ref_price)
+    key = generate_idempotency_key(strategy_id, date_ny, symbol, side, qty)
 
     return OrderSpec(
         strategy_id=strategy_id,

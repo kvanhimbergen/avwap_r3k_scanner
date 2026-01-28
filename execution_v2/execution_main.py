@@ -1375,7 +1375,13 @@ def run_once(cfg) -> None:
                     )
                     continue
 
-                key = generate_idempotency_key(intent.symbol, "buy", intent.size_shares, intent.ref_price)
+                key = generate_idempotency_key(
+                    intent.strategy_id,
+                    date_ny,
+                    intent.symbol,
+                    "buy",
+                    intent.size_shares,
+                )
                 if not store.record_order_once(
                     key,
                     intent.strategy_id,
@@ -1406,6 +1412,7 @@ def run_once(cfg) -> None:
 
                 try:
                     order_id = _submit_market_entry(trading_client, intent, dry_run=False)
+                    order_id_str = str(order_id) if order_id is not None else None
                     submitted += 1
                     _log(f"SUBMITTED {intent.symbol}: qty={intent.size_shares} order_id={order_id}")
                     decision_record["actions"]["submitted_orders"].append(
@@ -1415,7 +1422,7 @@ def run_once(cfg) -> None:
                             "qty": intent.size_shares,
                             "order_type": "market",
                             "client_order_id": key,
-                            "broker_order_id": order_id,
+                            "broker_order_id": order_id_str,
                             "status": "submitted",
                         }
                     )
@@ -1434,7 +1441,7 @@ def run_once(cfg) -> None:
                         throttle_seconds=60,
                     )
                     order_info = None
-                    if order_id:
+                    if order_id_str:
                         try:
                             order_info = trading_client.get_order_by_id(order_id)
                         except Exception as exc:
@@ -1456,7 +1463,7 @@ def run_once(cfg) -> None:
                             wrote_ledger = True
                         try:
                             caps_ledger.add_entry(
-                                order_id or key,
+                                order_id_str or key,
                                 intent.symbol,
                                 float(intent.size_shares) * float(intent.ref_price),
                                 now_utc.isoformat(),
@@ -1546,7 +1553,13 @@ def run_once(cfg) -> None:
                 )
                 continue
 
-            key = generate_idempotency_key(intent.symbol, "buy", intent.size_shares, intent.ref_price)
+            key = generate_idempotency_key(
+                intent.strategy_id,
+                decision_record["ny_date"],
+                intent.symbol,
+                "buy",
+                intent.size_shares,
+            )
             if not effective_dry_run:
                 if not store.record_order_once(
                     key,
@@ -1579,6 +1592,7 @@ def run_once(cfg) -> None:
 
             try:
                 order_id = _submit_market_entry(trading_client, intent, effective_dry_run)
+                order_id_str = str(order_id) if order_id is not None else None
                 _log(f"SUBMITTED {intent.symbol}: qty={intent.size_shares} order_id={order_id}")
                 if order_id == "dry-run-skipped":
                     decision_record["actions"]["skipped"].append(
@@ -1592,7 +1606,7 @@ def run_once(cfg) -> None:
                             "qty": intent.size_shares,
                             "order_type": "market",
                             "client_order_id": key,
-                            "broker_order_id": order_id,
+                            "broker_order_id": order_id_str,
                             "status": "submitted",
                         }
                     )
@@ -1612,14 +1626,14 @@ def run_once(cfg) -> None:
                     throttle_key=f"submit_{intent.symbol}",
                     throttle_seconds=60,
                 )
-                if order_id and not effective_dry_run:
-                    store.update_external_order_id(key, order_id)
+                if order_id_str and not effective_dry_run:
+                    store.update_external_order_id(key, order_id_str)
                     if live_active and live_ledger is not None:
                         try:
 
                             notional = float(intent.size_shares) * float(intent.ref_price)
                             live_ledger.add_entry(
-                                order_id or key,
+                                order_id_str or key,
                                 intent.symbol,
                                 notional,
                                 datetime.now(tz=timezone.utc).isoformat(),
@@ -1707,7 +1721,13 @@ def run_once(cfg) -> None:
                 continue
 
             ref_price = current_price or float(position.avg_entry_price)
-            key = generate_idempotency_key(symbol, "sell", qty, ref_price)
+            key = generate_idempotency_key(
+                state.strategy_id if state is not None else DEFAULT_STRATEGY_ID,
+                decision_record["ny_date"],
+                symbol,
+                "sell",
+                qty,
+            )
             if live_active:
                 strategy_id = state.strategy_id if state is not None else DEFAULT_STRATEGY_ID
                 if not store.record_order_once(key, strategy_id, symbol, "sell", qty):

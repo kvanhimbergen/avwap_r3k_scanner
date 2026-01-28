@@ -52,7 +52,7 @@ def build_decision_id(
 
 def dumps_portfolio_decision(record: dict[str, Any]) -> str:
     normalized = _normalize_record(record)
-    return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+    return json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def write_portfolio_decision(record: dict[str, Any], path: Path) -> None:

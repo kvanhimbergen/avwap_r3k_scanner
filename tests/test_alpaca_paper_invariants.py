@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import sys
 import types
+import uuid
+from datetime import datetime, timezone
 
 import pytest
 
@@ -122,3 +125,34 @@ def test_alpaca_paper_ledger_location(tmp_path) -> None:
     date_ny = "2024-01-02"
     path = alpaca_paper.ledger_path(tmp_path, date_ny)
     assert str(path).endswith(f"ledger/ALPACA_PAPER/{date_ny}.jsonl")
+
+
+def test_alpaca_paper_serializes_uuid_order_id(tmp_path) -> None:
+    order_id = uuid.uuid4()
+    now_utc = datetime(2024, 1, 2, 15, 4, tzinfo=timezone.utc)
+    order = types.SimpleNamespace(
+        id=order_id,
+        status="filled",
+        filled_qty="10",
+        filled_avg_price="12.34",
+        filled_at=now_utc,
+        created_at=now_utc,
+    )
+    event = alpaca_paper.build_order_event(
+        intent_id="intent-uuid",
+        symbol="AAA",
+        qty=10,
+        ref_price=12.34,
+        order=order,
+        now_utc=now_utc,
+    )
+    path = tmp_path / "ledger.jsonl"
+
+    written, skipped = alpaca_paper.append_events(path, [event])
+
+    assert written == 1
+    assert skipped == 0
+    lines = path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    parsed = json.loads(lines[0])
+    assert parsed["alpaca_order_id"] == str(order_id)

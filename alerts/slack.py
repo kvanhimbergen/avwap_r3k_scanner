@@ -94,33 +94,36 @@ def slack_alert(
     - Uses a short background thread and tight HTTP timeouts
     - Optional throttle to avoid alert storms
     """
-    level = (level or "INFO").strip().upper()
-    if level not in _LEVELS:
-        level = "INFO"
+    try:
+        level = (level or "INFO").strip().upper()
+        if level not in _LEVELS:
+            level = "INFO"
 
-    if not _enabled() or not _min_level_ok(level):
-        return
+        if not _enabled() or not _min_level_ok(level):
+            return
 
-    if throttle_key and should_throttle(throttle_key, throttle_seconds):
-        return
+        if throttle_key and should_throttle(throttle_key, throttle_seconds):
+            return
 
-    prefix = f"[AVWAP][{component}][{level}]"
-    text = f"{prefix} {title}\n{message}".strip()
+        prefix = f"[AVWAP][{component}][{level}]"
+        text = f"{prefix} {title}\n{message}".strip()
 
-    payload: dict = {"text": text}
+        payload: dict = {"text": text}
 
-    # Optional overrides (webhook must allow)
-    chan = os.getenv("SLACK_ALERTS_CHANNEL", "").strip()
-    if chan:
-        payload["channel"] = chan
-    username = os.getenv("SLACK_ALERTS_USERNAME", "").strip()
-    if username:
-        payload["username"] = username
+        # Optional overrides (webhook must allow)
+        chan = os.getenv("SLACK_ALERTS_CHANNEL", "").strip()
+        if chan:
+            payload["channel"] = chan
+        username = os.getenv("SLACK_ALERTS_USERNAME", "").strip()
+        if username:
+            payload["username"] = username
 
-    def _worker() -> None:
-        _post(payload)
+        def _worker() -> None:
+            _post(payload)
 
-    threading.Thread(target=_worker, daemon=True).start()
+        threading.Thread(target=_worker, daemon=True).start()
+    except Exception as exc:
+        _debug(f"Slack alert suppressed ({type(exc).__name__}: {exc})")
 
 
 def send_verbose_alert(
@@ -132,16 +135,19 @@ def send_verbose_alert(
     throttle_key: Optional[str] = None,
     throttle_seconds: int = 0,
 ) -> None:
-    if not slack_verbose_enabled():
-        return
-    slack_alert(
-        level,
-        title,
-        message,
-        component=component,
-        throttle_key=throttle_key,
-        throttle_seconds=throttle_seconds,
-    )
+    try:
+        if not slack_verbose_enabled():
+            return
+        slack_alert(
+            level,
+            title,
+            message,
+            component=component,
+            throttle_key=throttle_key,
+            throttle_seconds=throttle_seconds,
+        )
+    except Exception as exc:
+        _debug(f"Verbose slack alert suppressed ({type(exc).__name__}: {exc})")
 
 
 def _now_ny() -> datetime:
