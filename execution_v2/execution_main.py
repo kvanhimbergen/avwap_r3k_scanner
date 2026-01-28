@@ -11,10 +11,11 @@ import os
 import socket
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time as dt_time
 from pathlib import Path
 from typing import TYPE_CHECKING
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 from alerts.slack import (
     slack_alert,
@@ -54,6 +55,17 @@ def _now_et() -> str:
 
 def _log(msg: str) -> None:
     print(f"[{_now_et()}] {msg}", flush=True)
+
+
+_WARNED_KEYS: set[str] = set()
+
+
+def _warn_once(key: str, message: str) -> None:
+    if key in _WARNED_KEYS:
+        return
+    _WARNED_KEYS.add(key)
+    _log(message)
+
 
 
 def _write_portfolio_decision_latest(
@@ -196,19 +208,25 @@ def _select_trading_client(execution_mode: str) -> TradingClient:
     return _get_trading_client()
 
 
-def _market_open(trading_client: TradingClient) -> bool:
+def _alpaca_clock_snapshot(trading_client: TradingClient) -> tuple[bool, datetime | None]:
     try:
         clock = trading_client.get_clock()
         _log(
             f"Alpaca clock: is_open={clock.is_open}"
             f"ts={clock.timestamp} next_open={clock.next_open} next_close={clock.next_close}"
         )
-        return bool(clock.is_open)
+        now_et = None
+        try:
+            if getattr(clock, "timestamp", None) is not None:
+                now_et = clock.timestamp.astimezone(clocks.ET)
+        except Exception:
+            now_et = None
+        return bool(clock.is_open), now_et
     except Exception as exc:
         _log(
             f"WARNING: Alpaca clock unavailable ({type(exc).__name__}: {exc}); failing closed"
         )
-        return False
+        return False, None
 
 
 def _has_open_order_or_position(trading_client: TradingClient, symbol: str) -> bool:
@@ -527,6 +545,91 @@ def _is_material_cycle(decision_record: dict, cfg, market_is_open: bool | None) 
     return False
 
 
+def _parse_int_env(name: str, default: int, *, min_value: int | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        _warn_once(
+            name,
+            f"WARNING: invalid {name}={raw!r}; using default {default}",
+        )
+        return default
+    if min_value is not None and value < min_value:
+        _warn_once(
+            name,
+            f"WARNING: {name}={value} below minimum {min_value}; using default {default}",
+        )
+        return default
+    return value
+
+
+def _parse_time_env(name: str, default_value: str) -> dt_time:
+    raw = os.getenv(name)
+    value = raw.strip() if raw else ""
+    if not value:
+        value = default_value
+    try:
+        return datetime.strptime(value, "%H:%M").time()
+    except ValueError:
+        _warn_once(
+            name,
+            f"WARNING: invalid {name}={raw!r}; using default {default_value}",
+        )
+        return datetime.strptime(default_value, "%H:%M").time()
+
+
+def resolve_poll_seconds(cfg, now_et: datetime | None = None) -> int:
+    base_seconds = int(getattr(cfg, "poll_seconds", 0) or 0)
+    if base_seconds <= 0:
+        base_seconds = 300
+    market_seconds_default = min(base_seconds, 60)
+    tight_seconds = _parse_int_env("EXECUTION_POLL_TIGHT_SECONDS", 15, min_value=1)
+    market_seconds = _parse_int_env(
+        "EXECUTION_POLL_MARKET_SECONDS", market_seconds_default, min_value=1
+    )
+    tight_start = _parse_time_env("EXECUTION_POLL_TIGHT_START_ET", "09:30")
+    tight_end = _parse_time_env("EXECUTION_POLL_TIGHT_END_ET", "10:05")
+    if now_et is None:
+        now_et = datetime.now(tz=ZoneInfo("America/New_York"))
+    now_et = now_et.astimezone(clocks.ET)
+    weekday = now_et.weekday()
+    is_weekday = weekday <= 4
+    now_time = now_et.time()
+    market_open = is_weekday and (clocks.REG_OPEN <= now_time < clocks.REG_CLOSE)
+    if not market_open:
+        return base_seconds
+    if tight_start <= now_time < tight_end:
+        return tight_seconds
+    return market_seconds
+
+
+def _resolve_market_settle_minutes() -> int:
+    return _parse_int_env("MARKET_SETTLE_MINUTES", 0, min_value=0)
+
+
+def _market_settle_gate_active(
+    settle_minutes: int,
+    *,
+    market_is_open: bool,
+    now_et: datetime | None,
+) -> tuple[bool, str | None]:
+    if settle_minutes <= 0 or not market_is_open or now_et is None:
+        return False, None
+    now_et = now_et.astimezone(clocks.ET)
+    open_dt = datetime.combine(now_et.date(), clocks.REG_OPEN, tzinfo=clocks.ET)
+    delta_minutes = (now_et - open_dt).total_seconds() / 60.0
+    if 0 <= delta_minutes < settle_minutes:
+        msg = (
+            f"market settle delay active for {settle_minutes}m "
+            f"(now {now_et.strftime('%H:%M:%S %Z')})"
+        )
+        return True, msg
+    return False, None
+
+
 def _finalize_portfolio_enforcement(
     *,
     records: list[dict],
@@ -565,6 +668,7 @@ def run_once(cfg) -> None:
     ledgers_written = decision_record["artifacts"]["ledgers_written"]
     positions_count: int | None = None
     entry_intents_created: list = []
+    now_et: datetime | None = None
 
     try:
         store = StateStore(cfg.db_path)
@@ -618,6 +722,7 @@ def run_once(cfg) -> None:
         if cfg.execution_mode == "PAPER_SIM":
             clock_snapshot = clocks.now_snapshot()
             market_is_open = clock_snapshot.market_open
+            now_et = getattr(clock_snapshot, "now_et", None)
             decision_record["gates"]["market"]["is_open"] = market_is_open
             decision_record["gates"]["market"]["clock_source"] = "clock_snapshot"
             maybe_send_heartbeat(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
@@ -625,6 +730,7 @@ def run_once(cfg) -> None:
         elif cfg.execution_mode == "DRY_RUN":
             clock_snapshot = clocks.now_snapshot()
             market_is_open = clock_snapshot.market_open
+            now_et = getattr(clock_snapshot, "now_et", None)
             decision_record["gates"]["market"]["is_open"] = market_is_open
             decision_record["gates"]["market"]["clock_source"] = "clock_snapshot"
             maybe_send_heartbeat(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
@@ -632,6 +738,7 @@ def run_once(cfg) -> None:
         elif cfg.execution_mode == "SCHWAB_401K_MANUAL":
             clock_snapshot = clocks.now_snapshot()
             market_is_open = clock_snapshot.market_open
+            now_et = getattr(clock_snapshot, "now_et", None)
             decision_record["gates"]["market"]["is_open"] = market_is_open
             decision_record["gates"]["market"]["clock_source"] = "clock_snapshot"
             maybe_send_heartbeat(
@@ -653,7 +760,7 @@ def run_once(cfg) -> None:
                     f"ALPACA_PAPER ledger_path={ledger_path} "
                     f"(date_ny={date_ny})"
                 )
-            market_is_open = _market_open(trading_client)
+            market_is_open, now_et = _alpaca_clock_snapshot(trading_client)
             decision_record["gates"]["market"]["is_open"] = market_is_open
             decision_record["gates"]["market"]["clock_source"] = "alpaca_clock"
             maybe_send_heartbeat(
@@ -682,6 +789,19 @@ def run_once(cfg) -> None:
             )
             return
 
+        settle_minutes = _resolve_market_settle_minutes()
+        settle_active, settle_message = _market_settle_gate_active(
+            settle_minutes,
+            market_is_open=market_is_open,
+            now_et=now_et,
+        )
+        if settle_active and settle_message:
+            blocks.append({"code": "market_settle_delay", "message": settle_message})
+            _log(f"Gate market_settle_delay active ({settle_minutes}m).")
+        if settle_active and cfg.execution_mode == "DRY_RUN":
+            _log("DRY_RUN: settle delay active; skipping entry workflow.")
+            return
+
         if cfg.execution_mode == "PAPER_SIM":
             account_equity = float(os.getenv("PAPER_SIM_EQUITY", "100000"))
             decision_record["inputs"]["account"]["equity"] = account_equity
@@ -695,16 +815,19 @@ def run_once(cfg) -> None:
                         return []
 
                 md = _NoMarketData()
-            created = buy_loop.evaluate_and_create_entry_intents(
-                store,
-                md,
-                buy_cfg,
-                account_equity,
-                created_intents=entry_intents_created,
-            )
-            if created:
-                _log(f"Created {created} entry intents.")
-                _record_created_intents_meta(decision_record, entry_intents_created, created)
+            if not settle_active:
+                created = buy_loop.evaluate_and_create_entry_intents(
+                    store,
+                    md,
+                    buy_cfg,
+                    account_equity,
+                    created_intents=entry_intents_created,
+                )
+                if created:
+                    _log(f"Created {created} entry intents.")
+                    _record_created_intents_meta(decision_record, entry_intents_created, created)
+            else:
+                _log("PAPER_SIM: settle delay active; skipping entry intent creation.")
             _log("PAPER_SIM: skipping live gate checks and broker position lookups.")
         elif cfg.execution_mode == "SCHWAB_401K_MANUAL":
             allowlist = live_gate.parse_allowlist()
@@ -722,16 +845,19 @@ def run_once(cfg) -> None:
                 md = _NoMarketData()
             account_equity = float(os.getenv("MANUAL_ACCOUNT_EQUITY", "0") or 0.0)
             decision_record["inputs"]["account"]["equity"] = account_equity
-            created = buy_loop.evaluate_and_create_entry_intents(
-                store,
-                md,
-                buy_cfg,
-                account_equity,
-                created_intents=entry_intents_created,
-            )
-            if created:
-                _log(f"Created {created} entry intents.")
-                _record_created_intents_meta(decision_record, entry_intents_created, created)
+            if not settle_active:
+                created = buy_loop.evaluate_and_create_entry_intents(
+                    store,
+                    md,
+                    buy_cfg,
+                    account_equity,
+                    created_intents=entry_intents_created,
+                )
+                if created:
+                    _log(f"Created {created} entry intents.")
+                    _record_created_intents_meta(decision_record, entry_intents_created, created)
+            else:
+                _log("SCHWAB_401K_MANUAL: settle delay active; skipping entry intent creation.")
         elif cfg.execution_mode == "ALPACA_PAPER":
             decision_record["gates"]["live_gate_applied"] = True
             allowlist = live_gate.parse_allowlist()
@@ -765,16 +891,19 @@ def run_once(cfg) -> None:
                     }
                 )
             account_equity = _get_account_equity(trading_client)
-            created = buy_loop.evaluate_and_create_entry_intents(
-                store,
-                md,
-                buy_cfg,
-                account_equity,
-                created_intents=entry_intents_created,
-            )
-            if created:
-                _log(f"Created {created} entry intents.")
-                _record_created_intents_meta(decision_record, entry_intents_created, created)
+            if not settle_active:
+                created = buy_loop.evaluate_and_create_entry_intents(
+                    store,
+                    md,
+                    buy_cfg,
+                    account_equity,
+                    created_intents=entry_intents_created,
+                )
+                if created:
+                    _log(f"Created {created} entry intents.")
+                    _record_created_intents_meta(decision_record, entry_intents_created, created)
+            else:
+                _log("ALPACA_PAPER: settle delay active; skipping entry intent creation.")
             exits.manage_positions(
                 trading_client=trading_client,
                 md=md,
@@ -831,16 +960,19 @@ def run_once(cfg) -> None:
                     }
                 )
             account_equity = _get_account_equity(trading_client)
-            created = buy_loop.evaluate_and_create_entry_intents(
-                store,
-                md,
-                buy_cfg,
-                account_equity,
-                created_intents=entry_intents_created,
-            )
-            if created:
-                _log(f"Created {created} entry intents.")
-                _record_created_intents_meta(decision_record, entry_intents_created, created)
+            if not settle_active:
+                created = buy_loop.evaluate_and_create_entry_intents(
+                    store,
+                    md,
+                    buy_cfg,
+                    account_equity,
+                    created_intents=entry_intents_created,
+                )
+                if created:
+                    _log(f"Created {created} entry intents.")
+                    _record_created_intents_meta(decision_record, entry_intents_created, created)
+            else:
+                _log("LIVE: settle delay active; skipping entry intent creation.")
             exits.manage_positions(
                 trading_client=trading_client,
                 md=md,
@@ -859,9 +991,12 @@ def run_once(cfg) -> None:
         ):
             entry_intents = []
         else:
-            entry_intents = store.pop_due_entry_intents(now_ts)
-            if not entry_intents:
+            if settle_active:
                 entry_intents = []
+            else:
+                entry_intents = store.pop_due_entry_intents(now_ts)
+                if not entry_intents:
+                    entry_intents = []
         intent_projection = []
         for intent in entry_intents:
             intent_projection.append(
@@ -1728,7 +1863,7 @@ def main() -> None:
             slack_alert("execution_v2: --run-once enabled; exiting after single cycle.")
             break
         
-        time.sleep(cfg.poll_seconds)
+        time.sleep(resolve_poll_seconds(cfg))
 
 
 if __name__ == "__main__":

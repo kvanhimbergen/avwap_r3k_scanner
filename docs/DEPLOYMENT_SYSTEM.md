@@ -191,6 +191,27 @@ observability and deterministic audits:
 
 ALPACA_PAPER credential checks are fail-closed: missing `APCA_API_KEY_ID`,
 `APCA_API_SECRET_KEY`, or `APCA_API_BASE_URL` will raise an error and skip all artifact writes.
+
+### Execution Tuning Knobs
+
+Execution polling and entry throttles are deterministic and configurable via environment variables:
+
+- `EXECUTION_POLL_SECONDS` (base poll interval)
+- `EXECUTION_POLL_TIGHT_SECONDS` (default: `15`)
+- `EXECUTION_POLL_TIGHT_START_ET` (default: `09:30`)
+- `EXECUTION_POLL_TIGHT_END_ET` (default: `10:05`)
+- `EXECUTION_POLL_MARKET_SECONDS` (default: `min(EXECUTION_POLL_SECONDS, 60)`)
+
+During market hours, polling uses the tight window first, otherwise the market window.
+Outside market hours it falls back to the base poll interval. Invalid values fall back
+to defaults with a single warning at startup.
+
+Optional settle gate:
+
+- `MARKET_SETTLE_MINUTES` (default: `0`, disabled)
+
+When enabled, new entry creation/submission is blocked for the first N minutes after
+the open, while exits and position management continue to run.
 Process Verification (Sanity Check)
 At any time, this should show exactly one execution process:
 
