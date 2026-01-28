@@ -605,9 +605,32 @@ def resolve_poll_seconds(cfg, now_et: datetime | None = None) -> int:
         return tight_seconds
     return market_seconds
 
+def _market_open(cfg, trading_client, repo_root):
+    """Resolve market-open status deterministically and provide a stable seam for tests.
+
+    Returns:
+      (market_is_open: bool, now_et: datetime|None, clock_source: str, ledger_path: str|None)
+    """
+    ledger_path = None
+    if cfg.execution_mode in {"PAPER_SIM", "DRY_RUN", "SCHWAB_401K_MANUAL"}:
+        clock_snapshot = clocks.now_snapshot()
+        market_is_open = clock_snapshot.market_open
+        now_et = getattr(clock_snapshot, "now_et", None)
+        return market_is_open, now_et, "clock_snapshot", ledger_path
+
+    # Live modes (incl ALPACA_PAPER) use broker clock snapshot.
+    if cfg.execution_mode == "ALPACA_PAPER":
+        date_ny = paper_sim.resolve_date_ny(datetime.now(timezone.utc))
+        ledger_path = str(alpaca_paper.ledger_path(repo_root, date_ny))
+        _log(f"ALPACA_PAPER ledger_path={ledger_path} (date_ny={date_ny})")
+
+    market_is_open, now_et = _alpaca_clock_snapshot(trading_client)
+    return market_is_open, now_et, "alpaca_clock", ledger_path
+
 
 def _resolve_market_settle_minutes() -> int:
     return _parse_int_env("MARKET_SETTLE_MINUTES", 0, min_value=0)
+
 
 
 def _market_settle_gate_active(
@@ -719,61 +742,20 @@ def run_once(cfg) -> None:
         except Exception:
             pass
         
-        if cfg.execution_mode == "PAPER_SIM":
-            clock_snapshot = clocks.now_snapshot()
-            market_is_open = clock_snapshot.market_open
-            now_et = getattr(clock_snapshot, "now_et", None)
-            decision_record["gates"]["market"]["is_open"] = market_is_open
-            decision_record["gates"]["market"]["clock_source"] = "clock_snapshot"
-            maybe_send_heartbeat(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
-            maybe_send_daily_summary(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
-        elif cfg.execution_mode == "DRY_RUN":
-            clock_snapshot = clocks.now_snapshot()
-            market_is_open = clock_snapshot.market_open
-            now_et = getattr(clock_snapshot, "now_et", None)
-            decision_record["gates"]["market"]["is_open"] = market_is_open
-            decision_record["gates"]["market"]["clock_source"] = "clock_snapshot"
-            maybe_send_heartbeat(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
-            maybe_send_daily_summary(dry_run=True, market_open=market_is_open, execution_mode=cfg.execution_mode)
-        elif cfg.execution_mode == "SCHWAB_401K_MANUAL":
-            clock_snapshot = clocks.now_snapshot()
-            market_is_open = clock_snapshot.market_open
-            now_et = getattr(clock_snapshot, "now_et", None)
-            decision_record["gates"]["market"]["is_open"] = market_is_open
-            decision_record["gates"]["market"]["clock_source"] = "clock_snapshot"
-            maybe_send_heartbeat(
-                dry_run=cfg.dry_run,
-                market_open=market_is_open,
-                execution_mode=cfg.execution_mode,
-            )
-            maybe_send_daily_summary(
-                dry_run=cfg.dry_run,
-                market_open=market_is_open,
-                execution_mode=cfg.execution_mode,
-            )
-        else:
-            ledger_path = None
-            if cfg.execution_mode == "ALPACA_PAPER":
-                date_ny = paper_sim.resolve_date_ny(datetime.now(timezone.utc))
-                ledger_path = str(alpaca_paper.ledger_path(repo_root, date_ny))
-                _log(
-                    f"ALPACA_PAPER ledger_path={ledger_path} "
-                    f"(date_ny={date_ny})"
-                )
-            market_is_open, now_et = _alpaca_clock_snapshot(trading_client)
-            decision_record["gates"]["market"]["is_open"] = market_is_open
-            decision_record["gates"]["market"]["clock_source"] = "alpaca_clock"
-            maybe_send_heartbeat(
-                dry_run=cfg.dry_run,
-                market_open=market_is_open,
-                execution_mode=cfg.execution_mode,
-            )
-            maybe_send_daily_summary(
-                dry_run=cfg.dry_run,
-                market_open=market_is_open,
-                execution_mode=cfg.execution_mode,
-                ledger_path=ledger_path,
-            )
+        market_is_open, now_et, clock_source, ledger_path = _market_open(cfg, trading_client, repo_root)
+        decision_record["gates"]["market"]["is_open"] = market_is_open
+        decision_record["gates"]["market"]["clock_source"] = clock_source
+        maybe_send_heartbeat(
+            dry_run=(cfg.dry_run if cfg.execution_mode != "PAPER_SIM" else True),
+            market_open=market_is_open,
+            execution_mode=cfg.execution_mode,
+        )
+        maybe_send_daily_summary(
+            dry_run=(cfg.dry_run if cfg.execution_mode != "PAPER_SIM" else True),
+            market_open=market_is_open,
+            execution_mode=cfg.execution_mode,
+            ledger_path=ledger_path,
+        )
 
         if cfg.execution_mode == "SCHWAB_401K_MANUAL" and not market_is_open:
             _log("Market closed; skipping manual cycle.")

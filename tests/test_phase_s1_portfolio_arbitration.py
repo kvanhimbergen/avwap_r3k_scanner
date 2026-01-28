@@ -169,8 +169,8 @@ def test_no_decision_no_orders_fail_closed(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("DRY_RUN", "1")
 
     monkeypatch.setattr(execution_main.book_router, "select_trading_client", lambda *_: SimpleNamespace())
-    monkeypatch.setattr(execution_main, "_market_open", lambda *_: True)
-    monkeypatch.setattr(execution_main.buy_loop, "evaluate_and_create_entry_intents", lambda *_: 0)
+    monkeypatch.setattr(execution_main, "_market_open", lambda *_: (True, None, "clock_snapshot", None))
+    monkeypatch.setattr(execution_main.buy_loop, "evaluate_and_create_entry_intents", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(execution_main.exits, "manage_positions", lambda **_: None)
     import execution_v2.schwab_manual_adapter as schwab_manual_adapter
 
