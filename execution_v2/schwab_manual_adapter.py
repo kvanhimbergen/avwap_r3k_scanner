@@ -273,6 +273,95 @@ def send_manual_tickets(
     )
 
 
+def _extract_summary_intent(intent: Any) -> tuple[str, dict]:
+    intent_id = _get_field(intent, "intent_id")
+    if not intent_id:
+        raise ValueError("intent_id missing for summary ticket")
+    payload = {
+        "symbol": _normalize_symbol(_get_field(intent, "symbol", "")) or "N/A",
+        "side": str(_get_field(intent, "side", "INFO")).strip().upper(),
+        "target_pct": _get_field(intent, "target_pct"),
+        "current_pct": _get_field(intent, "current_pct"),
+        "delta_pct": _get_field(intent, "delta_pct"),
+        "strategy_id": _get_field(intent, "strategy_id"),
+    }
+    return str(intent_id), payload
+
+
+def send_manual_summary_ticket(
+    intents: Iterable[Any],
+    *,
+    message: str,
+    ny_date: str,
+    repo_root: Path,
+    now_utc: datetime | None = None,
+    slack_sender: Callable[[dict], dict] | None = None,
+    post_enabled: bool | None = None,
+) -> ManualTicketResult:
+    resolved_now = now_utc or datetime.now(timezone.utc)
+    enabled = slack_post_enabled() if post_enabled is None else post_enabled
+    book_id = book_ids.SCHWAB_401K_MANUAL
+    ledger_path = _ledger_path(repo_root, ny_date)
+    sent_ids = _load_sent_intent_ids(ledger_path)
+
+    pending_payloads: list[tuple[str, dict]] = []
+    all_ids: list[str] = []
+    for intent in intents:
+        intent_id, payload = _extract_summary_intent(intent)
+        all_ids.append(intent_id)
+        if intent_id not in sent_ids:
+            pending_payloads.append((intent_id, payload))
+
+    if not pending_payloads:
+        return ManualTicketResult(
+            ny_date=ny_date,
+            ledger_path=str(ledger_path),
+            sent=0,
+            skipped=len(all_ids),
+            intent_ids=[],
+            posting_enabled=enabled,
+        )
+
+    if not enabled:
+        return ManualTicketResult(
+            ny_date=ny_date,
+            ledger_path=None,
+            sent=0,
+            skipped=len(all_ids),
+            intent_ids=[intent_id for intent_id, _ in pending_payloads],
+            posting_enabled=enabled,
+        )
+
+    sender = slack_sender or _default_slack_sender
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = build_slack_payload(message)
+    slack_meta = _normalize_slack_meta(sender(payload), payload)
+    recorded_ids: list[str] = []
+    with ledger_path.open("a") as handle:
+        for intent_id, intent_payload in pending_payloads:
+            event = {
+                "ts_utc": resolved_now.astimezone(timezone.utc).isoformat(),
+                "ny_date": ny_date,
+                "book_id": book_id,
+                "event": MANUAL_EVENT_TYPE,
+                "intent_id": intent_id,
+                **{k: v for k, v in intent_payload.items() if v is not None},
+                "slack": slack_meta,
+            }
+            handle.write(json.dumps(event, sort_keys=True) + "\n")
+            recorded_ids.append(intent_id)
+
+    return ManualTicketResult(
+        ny_date=ny_date,
+        ledger_path=str(ledger_path),
+        sent=len(recorded_ids),
+        skipped=len(all_ids) - len(recorded_ids),
+        intent_ids=recorded_ids,
+        posting_enabled=enabled,
+    )
+
+
 class SchwabManualAdapter:
     book_id = book_ids.SCHWAB_401K_MANUAL
 
@@ -288,6 +377,27 @@ class SchwabManualAdapter:
     ) -> ManualTicketResult:
         return send_manual_tickets(
             intents,
+            ny_date=ny_date,
+            repo_root=repo_root,
+            now_utc=now_utc,
+            slack_sender=slack_sender,
+            post_enabled=post_enabled,
+        )
+
+    def send_summary_ticket(
+        self,
+        intents: Iterable[Any],
+        *,
+        message: str,
+        ny_date: str,
+        repo_root: Path,
+        now_utc: datetime | None = None,
+        slack_sender: Callable[[dict], dict] | None = None,
+        post_enabled: bool | None = None,
+    ) -> ManualTicketResult:
+        return send_manual_summary_ticket(
+            intents,
+            message=message,
             ny_date=ny_date,
             repo_root=repo_root,
             now_utc=now_utc,
