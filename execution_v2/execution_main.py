@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import socket
 import time
@@ -89,6 +90,7 @@ def _write_portfolio_decision_latest(
 
 PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 DEFAULT_STATE_DIR = "/root/avwap_r3k_scanner/state"
+HEARTBEAT_FILENAME = "execution_heartbeat.json"
 
 
 def _state_dir() -> Path:
@@ -162,9 +164,9 @@ def _get_alpaca_paper_trading_client() -> TradingClient:
     if os.getenv("DRY_RUN", "0") == "1":
         _log("DRY_RUN=1; skipping ALPACA_PAPER client construction.")
         raise RuntimeError("DRY_RUN=1 set; ALPACA_PAPER disabled")
-    api_key = os.getenv("APCA_API_KEY_ID") or ""
-    api_secret = os.getenv("APCA_API_SECRET_KEY") or ""
-    base_url = os.getenv("APCA_API_BASE_URL") or ""
+    api_key = (os.getenv("APCA_API_KEY_ID") or "").strip()
+    api_secret = (os.getenv("APCA_API_SECRET_KEY") or "").strip()
+    base_url = (os.getenv("APCA_API_BASE_URL") or "").strip()
     missing = [
         name
         for name, value in (
@@ -175,11 +177,7 @@ def _get_alpaca_paper_trading_client() -> TradingClient:
         if not value
     ]
     if missing:
-        _log(f"ALPACA_PAPER config missing: {', '.join(missing)}")
-        raise RuntimeError(
-            "Missing Alpaca paper credentials in environment "
-            f"({', '.join(missing)})"
-        )
+        raise RuntimeError("Missing Alpaca API credentials in environment")
     normalized = _normalize_base_url(base_url)
     if normalized != PAPER_BASE_URL:
         _log(f"ALPACA_PAPER base URL invalid: {base_url}")
@@ -460,6 +458,75 @@ def _update_intents_meta(
         meta.setdefault("drop_reason_counts", {})
 
 
+def _build_execution_heartbeat(
+    *,
+    cfg,
+    decision_record: dict,
+    candidates_snapshot: dict,
+) -> dict:
+    now_utc = datetime.now(timezone.utc)
+    ny_date = now_utc.astimezone(clocks.ET).date().isoformat()
+    blocks = decision_record.get("gates", {}).get("blocks", [])
+    block_codes = [block.get("code") for block in blocks if isinstance(block, dict)]
+    intents = decision_record.get("intents", {})
+    actions = decision_record.get("actions", {})
+    errors = actions.get("errors", [])
+    submitted_orders = actions.get("submitted_orders", [])
+    market_is_open = decision_record.get("gates", {}).get("market", {}).get("is_open")
+    return {
+        "ts_utc": now_utc.isoformat(),
+        "ny_date": ny_date,
+        "pid": os.getpid(),
+        "hostname": socket.gethostname(),
+        "execution_mode": cfg.execution_mode,
+        "dry_run": bool(getattr(cfg, "dry_run", False)),
+        "poll_seconds": int(getattr(cfg, "poll_seconds", 0) or 0),
+        "market_is_open": market_is_open,
+        "blocks": block_codes,
+        "errors_count": len(errors),
+        "intents_count": max(
+            int(intents.get("intent_count", 0) or 0),
+            len(intents.get("intents") or []),
+        ),
+        "orders_submitted_count": len(submitted_orders),
+        "candidates_csv": {
+            "path": candidates_snapshot.get("path"),
+            "mtime_utc": candidates_snapshot.get("mtime_utc"),
+            "row_count": candidates_snapshot.get("row_count"),
+        },
+    }
+
+
+def _write_execution_heartbeat(cfg, decision_record: dict, candidates_snapshot: dict) -> None:
+    heartbeat_path = _state_dir() / HEARTBEAT_FILENAME
+    heartbeat = _build_execution_heartbeat(
+        cfg=cfg, decision_record=decision_record, candidates_snapshot=candidates_snapshot
+    )
+    try:
+        payload = json.dumps(heartbeat, sort_keys=True, separators=(",", ":")) + "\n"
+        heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(heartbeat_path, payload)
+    except Exception as exc:
+        _log(f"WARNING: failed to write execution heartbeat: {exc}")
+
+
+def _is_material_cycle(decision_record: dict, cfg, market_is_open: bool | None) -> bool:
+    if market_is_open or getattr(cfg, "ignore_market_hours", False):
+        return True
+    actions = decision_record.get("actions", {})
+    intents = decision_record.get("intents", {})
+    errors = actions.get("errors") or []
+    if errors:
+        return True
+    intent_count = int(intents.get("intent_count", 0) or 0)
+    if intent_count > 0 or (intents.get("intents") or []):
+        return True
+    submitted_orders = actions.get("submitted_orders") or []
+    if submitted_orders:
+        return True
+    return False
+
+
 def _finalize_portfolio_enforcement(
     *,
     records: list[dict],
@@ -480,6 +547,13 @@ def _finalize_portfolio_enforcement(
 
 
 def run_once(cfg) -> None:
+    if cfg.execution_mode == "ALPACA_PAPER":
+        api_key = (os.getenv("APCA_API_KEY_ID") or "").strip()
+        api_secret = (os.getenv("APCA_API_SECRET_KEY") or "").strip()
+        base_url = (os.getenv("APCA_API_BASE_URL") or "").strip()
+        if not api_key or not api_secret or not base_url:
+            _log("ERROR: Missing Alpaca API credentials in environment")
+            raise RuntimeError("Missing Alpaca API credentials in environment")
     decision_ts_utc = datetime.now(timezone.utc)
     candidates_snapshot = _snapshot_candidates_csv(cfg.candidates_csv)
     decision_record = _init_decision_record(cfg, candidates_snapshot, decision_ts_utc)
@@ -491,7 +565,6 @@ def run_once(cfg) -> None:
     ledgers_written = decision_record["artifacts"]["ledgers_written"]
     positions_count: int | None = None
     entry_intents_created: list = []
-    latest_write_failed = False
 
     try:
         store = StateStore(cfg.db_path)
@@ -604,16 +677,6 @@ def run_once(cfg) -> None:
                 execution_mode=cfg.execution_mode,
                 ledger_path=ledger_path,
             )
-
-        latest_write_failed = not _write_portfolio_decision_latest(
-            decision_record=decision_record,
-            latest_path=latest_path,
-            errors=errors,
-            blocks=blocks,
-            record_error=True,
-        )
-        if latest_write_failed:
-            return
 
         if cfg.execution_mode == "SCHWAB_401K_MANUAL" and not market_is_open:
             _log("Market closed; skipping manual cycle.")
@@ -1576,16 +1639,19 @@ def run_once(cfg) -> None:
         )
         raise
     finally:
-        if not _write_portfolio_decision_latest(
-            decision_record=decision_record,
-            latest_path=latest_path,
-            errors=errors,
-            blocks=blocks,
-            record_error=not latest_write_failed,
-        ):
-            latest_write_failed = True
-        portfolio_decisions.write_portfolio_decision(decision_record, decision_path)
-        _log(f"Portfolio decision recorded: {decision_path}")
+        market_is_open = decision_record.get("gates", {}).get("market", {}).get("is_open")
+        is_material = _is_material_cycle(decision_record, cfg, market_is_open)
+        if is_material:
+            _write_portfolio_decision_latest(
+                decision_record=decision_record,
+                latest_path=latest_path,
+                errors=errors,
+                blocks=blocks,
+                record_error=True,
+            )
+            portfolio_decisions.write_portfolio_decision(decision_record, decision_path)
+            _log(f"Portfolio decision recorded: {decision_path}")
+        _write_execution_heartbeat(cfg, decision_record, candidates_snapshot)
 
 
 def _parse_args() -> argparse.Namespace:
