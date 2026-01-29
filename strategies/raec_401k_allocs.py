@@ -212,12 +212,16 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("Provide exactly one of --set, --from-json, or --from-csv")
 
     allocations: dict[str, float]
-    if args.from_csv:
-        allocations = parse_schwab_positions_csv(Path(args.from_csv))
-    elif args.from_json:
-        allocations = _load_allocations_from_json(Path(args.from_json))
-    else:
-        allocations = _parse_allocations(args.set or [])
+    try:
+        if args.from_csv:
+            allocations = parse_schwab_positions_csv(Path(args.from_csv))
+        elif args.from_json:
+            allocations = _load_allocations_from_json(Path(args.from_json))
+        else:
+            allocations = _parse_allocations(args.set or [])
+    except (ValueError, KeyError, FileNotFoundError) as exc:
+        # Fail closed with a single actionable line for systemd/journalctl.
+        raise SystemExit(f"FAIL: {exc}") from None
 
     allocations = _filter_universe(allocations)
     repo_root = Path(__file__).resolve().parents[1]
