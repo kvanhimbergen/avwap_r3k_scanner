@@ -29,6 +29,17 @@ Alternatively, provide a JSON file containing `{ "VTI": 40, "QUAL": 25, ... }`:
 python -m strategies.raec_401k_allocs --from-json /path/to/allocations.json
 ```
 
+### Updating allocations from Schwab CSV export
+Download the Schwab “Positions” CSV export from the workplace portal and ingest it directly:
+
+```bash
+python -m strategies.raec_401k_allocs --from-csv /path/to/Schwab-Positions.csv
+```
+
+If a row lacks a ticker symbol, update the `DEFAULT_DESCRIPTION_MAPPING` in
+`strategies/raec_401k_allocs.py` to map Schwab fund descriptions to tickers before re-running
+the command.
+
 If no current allocations are known, the ticket will include a **notice** and **omit all
 order lines**.
 
