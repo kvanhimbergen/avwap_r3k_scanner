@@ -252,6 +252,15 @@ def _build_intents(
 ) -> list[dict]:
     symbols = sorted(set(targets) | set(current))
     deltas = {symbol: targets.get(symbol, 0.0) - current.get(symbol, 0.0) for symbol in symbols}
+
+    # Non-target holdings (present in current but not in targets) default to target=0.
+    # Do NOT automatically liquidate them unless the drift is material.
+    non_target_symbols = set(current) - set(targets)
+    deltas = {
+        symbol: delta
+        for symbol, delta in deltas.items()
+        if (symbol not in non_target_symbols) or (delta >= 0) or (abs(delta) >= DRIFT_THRESHOLD_PCT)
+    }
     deltas = {symbol: delta for symbol, delta in deltas.items() if abs(delta) >= min_trade_pct}
     deltas = _apply_turnover_cap(deltas, max_weekly_turnover=max_weekly_turnover)
     deltas = {symbol: delta for symbol, delta in deltas.items() if abs(delta) >= min_trade_pct}
