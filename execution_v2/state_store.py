@@ -12,7 +12,7 @@ from typing import Optional, List
 
 from execution_v2.config_types import EntryIntent, PositionState, StopMode
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 class StateStore:
     def __init__(self, db_path: str) -> None:
@@ -39,6 +39,9 @@ class StateStore:
             self._create_schema_v1()
         else:
             v = int(row["value"])
+            if v < 6:
+                self._migrate_to_v6()
+                v = 6
             if v != SCHEMA_VERSION:
                 self._reset_schema()
                 self._create_schema_v1()
@@ -50,6 +53,7 @@ class StateStore:
         cur.execute("DROP TABLE IF EXISTS positions;")
         cur.execute("DROP TABLE IF EXISTS order_ledger;")
         cur.execute("DROP TABLE IF EXISTS trim_intents;")
+        cur.execute("DROP TABLE IF EXISTS entry_fills;")
         cur.execute("DELETE FROM meta WHERE key='schema_version';")
         cur.execute("INSERT INTO meta(key,value) VALUES('schema_version', ?);", (str(SCHEMA_VERSION),))
 
@@ -123,9 +127,38 @@ class StateStore:
             created_ts REAL NOT NULL
         );
         """)
+        # Entry fills (one-shot suppression)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS entry_fills (
+            date_ny TEXT NOT NULL,
+            strategy_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            filled_ts REAL NOT NULL,
+            source TEXT,
+            created_ts REAL NOT NULL,
+            PRIMARY KEY (date_ny, strategy_id, symbol)
+        );
+        """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_trim_intents_sym ON trim_intents(symbol);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_candidates_expires ON candidates(expires_ts);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_intents_sched ON entry_intents(scheduled_entry_at);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_entry_fills_symbol ON entry_fills(symbol);")
+
+    def _migrate_to_v6(self) -> None:
+        cur = self.conn.cursor()
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS entry_fills (
+            date_ny TEXT NOT NULL,
+            strategy_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            filled_ts REAL NOT NULL,
+            source TEXT,
+            created_ts REAL NOT NULL,
+            PRIMARY KEY (date_ny, strategy_id, symbol)
+        );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_entry_fills_symbol ON entry_fills(symbol);")
+        cur.execute("UPDATE meta SET value=? WHERE key='schema_version';", (str(SCHEMA_VERSION),))
 
     # -------------------------
     # Candidates
@@ -336,3 +369,36 @@ class StateStore:
     def update_external_order_id(self, idempotency_key: str, external_order_id: str) -> None:
         cur = self.conn.cursor()
         cur.execute("UPDATE order_ledger SET external_order_id=? WHERE idempotency_key=?;", (external_order_id, idempotency_key))
+
+    # -------------------------
+    # Entry fills (one-shot suppression)
+    # -------------------------
+    def record_entry_fill(
+        self,
+        *,
+        date_ny: str,
+        strategy_id: str,
+        symbol: str,
+        filled_ts: float,
+        source: str | None = None,
+    ) -> bool:
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                """
+                INSERT INTO entry_fills(date_ny, strategy_id, symbol, filled_ts, source, created_ts)
+                VALUES(?,?,?,?,?,?);
+                """,
+                (date_ny, strategy_id, symbol, filled_ts, source, time.time()),
+            )
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def get_entry_fill(self, date_ny: str, strategy_id: str, symbol: str) -> Optional[sqlite3.Row]:
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT * FROM entry_fills WHERE date_ny=? AND strategy_id=? AND symbol=?;",
+            (date_ny, strategy_id, symbol),
+        )
+        return cur.fetchone()
