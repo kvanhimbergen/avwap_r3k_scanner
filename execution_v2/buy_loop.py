@@ -367,9 +367,14 @@ def evaluate_and_create_entry_intents(
 def _is_near_pivot(bar, pivot_level: float, proximity_pct: float) -> bool:
     if pivot_level <= 0:
         return False
+
     try:
-        close = float(getattr(bar, "close", bar["close"]))
+        close = float(getattr(bar, "close"))
     except Exception:
-        return False
+        try:
+            close = float(bar["close"])
+        except Exception:
+            return False
+
     distance = abs(close - pivot_level) / pivot_level
     return distance <= max(proximity_pct, 0.0)
