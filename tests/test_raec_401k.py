@@ -8,6 +8,7 @@ import pytest
 
 from data.prices import FixturePriceProvider
 from strategies import raec_401k
+from strategies.raec_401k_allocs import parse_schwab_positions_csv
 
 
 def _make_series(start: date, values: list[float]) -> list[tuple[date, float]]:
@@ -161,3 +162,80 @@ def test_runner_dry_run_no_slack(tmp_path: Path) -> None:
     assert result.should_rebalance
     assert result.posted is False
     assert json.loads(state_path.read_text())["last_eval_date"] == "2025-01-31"
+
+
+def _write_csv(tmp_path: Path, content: str) -> Path:
+    path = tmp_path / "positions.csv"
+    path.write_text(content)
+    return path
+
+
+def test_parse_schwab_positions_csv_basic(tmp_path: Path) -> None:
+    content = "\n".join(
+        [
+            "Positions for account 123 as of 03/01/2025",
+            "Symbol,Description,Security Type,Mkt Val (Market Value)",
+            "VTI,Vanguard Total Stock Market ETF,ETF,$12,345.67",
+            "QUAL,iShares MSCI USA Quality Factor ETF,ETF,$2,000.00",
+            "Account Total,,, $14,345.67",
+            "Cash & Cash Investments,Cash & Cash Investments,Cash and Money Market,$0.00",
+        ]
+    )
+    path = _write_csv(tmp_path, content)
+    allocations = parse_schwab_positions_csv(path)
+    total_mv = 12345.67 + 2000.00
+    assert allocations["VTI"] == pytest.approx(round(12345.67 / total_mv * 100, 1))
+    assert allocations["QUAL"] == pytest.approx(round(2000.00 / total_mv * 100, 1))
+
+
+def test_parse_schwab_positions_csv_description_mapping(tmp_path: Path) -> None:
+    content = "\n".join(
+        [
+            "Positions for account 456 as of 03/01/2025",
+            "Symbol,Description,Security Type,Mkt Val (Market Value)",
+            ",Vanguard Total Stock Market Index Fund,Mutual Fund,$1,000.00",
+        ]
+    )
+    path = _write_csv(tmp_path, content)
+    allocations = parse_schwab_positions_csv(path)
+    assert allocations == {"VTI": 100.0}
+
+
+def test_parse_schwab_positions_csv_cash_security_type(tmp_path: Path) -> None:
+    content = "\n".join(
+        [
+            "Positions for account 789 as of 03/01/2025",
+            "Symbol,Description,Security Type,Mkt Val (Market Value)",
+            ",Cash & Cash Investments,Cash and Money Market,$500.00",
+        ]
+    )
+    path = _write_csv(tmp_path, content)
+    allocations = parse_schwab_positions_csv(path)
+    assert allocations == {"BIL": 100.0}
+
+
+def test_parse_schwab_positions_csv_unmappable_row(tmp_path: Path) -> None:
+    content = "\n".join(
+        [
+            "Positions for account 999 as of 03/01/2025",
+            "Symbol,Description,Security Type,Mkt Val (Market Value)",
+            ",Unknown Fund,Mutual Fund,$500.00",
+        ]
+    )
+    path = _write_csv(tmp_path, content)
+    with pytest.raises(ValueError, match="Unknown Fund"):
+        parse_schwab_positions_csv(path)
+
+
+def test_parse_schwab_positions_csv_rounding_stable(tmp_path: Path) -> None:
+    content = "\n".join(
+        [
+            "Positions for account 111 as of 03/01/2025",
+            "Symbol,Description,Security Type,Mkt Val (Market Value)",
+            "AAA,Alpha Fund,ETF,$2.00",
+            "BBB,Bravo Fund,ETF,$1.00",
+        ]
+    )
+    path = _write_csv(tmp_path, content)
+    allocations = parse_schwab_positions_csv(path)
+    assert allocations == {"AAA": 66.7, "BBB": 33.3}
