@@ -120,6 +120,23 @@ def test_turnover_scaling_and_min_trade_filter() -> None:
     assert intents[1]["delta_pct"] == pytest.approx(5.0, abs=0.01)
 
 
+def test_non_target_sell_is_gated_by_drift_threshold() -> None:
+    targets = {"VTI": 50.0, "BIL": 50.0}
+    # SPY is a non-target holding at 2% (below DRIFT_THRESHOLD_PCT=3.0)
+    current = {"VTI": 48.0, "BIL": 50.0, "SPY": 2.0}
+    intents = raec_401k._build_intents(
+        asof_date="2025-02-07",
+        targets=targets,
+        current=current,
+        min_trade_pct=0.5,
+        max_weekly_turnover=10.0,
+    )
+    # Expect no SPY SELL intent due to drift gate; only VTI BUY should appear.
+    assert [intent["symbol"] for intent in intents] == ["VTI"]
+    assert intents[0]["side"] == "BUY"
+    assert intents[0]["delta_pct"] == pytest.approx(2.0, abs=0.01)
+
+
 def test_intent_id_deterministic() -> None:
     intent_id = raec_401k._intent_id(
         asof_date="2025-02-07",
