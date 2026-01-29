@@ -33,20 +33,55 @@ class _YFinancePriceProvider:
 
         logging.getLogger("yfinance").setLevel(logging.CRITICAL)
         data = yf.download(
-            tickers=[symbol],
+
+            tickers=symbol,
+
             period=self.period,
+
             interval="1d",
+
             auto_adjust=False,
+
             progress=False,
+
         )
-        if data is None or data.empty:
+
+        if data is None or getattr(data, "empty", False):
+
             return []
+
         column = "Adj Close" if "Adj Close" in data.columns else "Close"
+
         closes = data[column].dropna()
+
+
+        # yfinance can yield a Series (single ticker) or a DataFrame; normalize to a Series.
+
+        if hasattr(closes, "columns"):
+
+            if symbol in list(getattr(closes, "columns", [])):
+
+                closes_series = closes[symbol]
+
+            else:
+
+                closes_series = closes.iloc[:, 0]
+
+        else:
+
+            closes_series = closes
+
+
         series: list[tuple[date, float]] = []
-        for idx, value in closes.items():
-            series.append((idx.date(), float(value)))
+
+        for idx, value in closes_series.items():
+
+            d = idx.date() if hasattr(idx, "date") else date.fromisoformat(str(idx)[:10])
+
+            series.append((d, float(value)))
+
         return series
+
 
 
 def get_default_price_provider(repo_root: str) -> PriceProvider:
