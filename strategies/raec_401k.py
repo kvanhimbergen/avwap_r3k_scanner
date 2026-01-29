@@ -250,14 +250,15 @@ def _build_intents(
     min_trade_pct: float = MIN_TRADE_PCT,
     max_weekly_turnover: float = MAX_WEEKLY_TURNOVER_PCT,
 ) -> list[dict]:
-    deltas = {symbol: targets[symbol] - current.get(symbol, 0.0) for symbol in targets}
+    symbols = sorted(set(targets) | set(current))
+    deltas = {symbol: targets.get(symbol, 0.0) - current.get(symbol, 0.0) for symbol in symbols}
     deltas = {symbol: delta for symbol, delta in deltas.items() if abs(delta) >= min_trade_pct}
     deltas = _apply_turnover_cap(deltas, max_weekly_turnover=max_weekly_turnover)
     deltas = {symbol: delta for symbol, delta in deltas.items() if abs(delta) >= min_trade_pct}
     intents = []
     for symbol, delta in deltas.items():
         side = "BUY" if delta > 0 else "SELL"
-        target_pct = targets[symbol]
+        target_pct = targets.get(symbol, 0.0)
         current_pct = current.get(symbol, 0.0)
         intents.append(
             {
