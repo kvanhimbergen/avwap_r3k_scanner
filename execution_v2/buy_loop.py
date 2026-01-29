@@ -5,11 +5,11 @@ Schedules entry intents from scan candidates using BOH + regime gating.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import importlib
 import os
 from pathlib import Path
-from time import time
+import time
 from typing import Iterable
 import random
 
@@ -59,6 +59,62 @@ class BuyLoopConfig:
         self.entry_delay_max_sec = entry_delay_max_sec
         self.candidate_ttl_sec = candidate_ttl_sec
         self.sizing_cfg = sizing_cfg or SizingConfig()
+
+
+@dataclass(frozen=True)
+class EdgeWindowConfig:
+    enabled: bool = False
+    rechecks: int = 3
+    delay_sec: float = 5.0
+    proximity_pct: float = 0.002
+
+    @classmethod
+    def from_env(cls) -> "EdgeWindowConfig":
+        return cls(
+            enabled=os.getenv("EDGE_WINDOW_ENABLED", "0").strip() in {"1", "true", "TRUE", "yes", "YES"},
+            rechecks=int(os.getenv("EDGE_WINDOW_RECHECKS", "3")),
+            delay_sec=float(os.getenv("EDGE_WINDOW_RECHECK_DELAY_SEC", "5")),
+            proximity_pct=float(os.getenv("EDGE_WINDOW_PROXIMITY_PCT", "0.002")),
+        )
+
+
+@dataclass
+class EdgeWindowReport:
+    enabled: bool = False
+    engaged_symbols: list[str] = field(default_factory=list)
+    rechecks_attempted: int = 0
+    confirmed_symbols: list[str] = field(default_factory=list)
+
+    def mark_engaged(self, symbol: str) -> None:
+        if symbol not in self.engaged_symbols:
+            self.engaged_symbols.append(symbol)
+
+    def mark_recheck(self) -> None:
+        self.rechecks_attempted += 1
+
+    def mark_confirmed(self, symbol: str) -> None:
+        if symbol not in self.confirmed_symbols:
+            self.confirmed_symbols.append(symbol)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "engaged_count": len(self.engaged_symbols),
+            "engaged_symbols_sample": self.engaged_symbols[:10],
+            "rechecks_attempted": self.rechecks_attempted,
+            "confirmed_count": len(self.confirmed_symbols),
+            "confirmed_symbols_sample": self.confirmed_symbols[:10],
+        }
+
+
+@dataclass(frozen=True)
+class EdgeWindowClock:
+    now: callable
+    sleep: callable
+
+
+def _default_edge_clock() -> EdgeWindowClock:
+    return EdgeWindowClock(now=time.time, sleep=time.sleep)
 
 
 def _load_candidates(path: str) -> list[Candidate]:
@@ -124,7 +180,7 @@ def ingest_watchlist_as_candidates(store, cfg: BuyLoopConfig) -> list[Candidate]
     """
     Inserts scan candidates into the candidates table.
     """
-    now_ts = time()
+    now_ts = time.time()
     candidates = _load_candidates(cfg.candidates_csv)
     for cand in candidates:
         store.upsert_candidate(
@@ -149,11 +205,21 @@ def evaluate_and_create_entry_intents(
     cfg: BuyLoopConfig,
     account_equity: float,
     created_intents: list[EntryIntent] | None = None,
+    *,
+    edge_window: EdgeWindowConfig | None = None,
+    edge_report: EdgeWindowReport | None = None,
+    edge_clock: EdgeWindowClock | None = None,
 ) -> int:
     """
     Evaluate scan candidates and create entry intents for BOH-confirmed names.
     """
-    now_ts = time()
+    now_ts = time.time()
+    if edge_window is None:
+        edge_window = EdgeWindowConfig()
+    if edge_report is not None:
+        edge_report.enabled = edge_window.enabled
+    if edge_clock is None:
+        edge_clock = _default_edge_clock()
     exit_cfg = exits.ExitConfig.from_env()
     risk_controls = None
     risk_controls_result = None
@@ -189,6 +255,23 @@ def evaluate_and_create_entry_intents(
             continue
 
         boh = boh_confirmed_option2(bars, cand.entry_level)
+        if not boh.confirmed and edge_window.enabled:
+            if _is_near_pivot(bars[-1], cand.entry_level, edge_window.proximity_pct):
+                if edge_report is not None:
+                    edge_report.mark_engaged(cand.symbol)
+                for _ in range(max(edge_window.rechecks, 0)):
+                    if edge_report is not None:
+                        edge_report.mark_recheck()
+                    if edge_window.delay_sec > 0:
+                        edge_clock.sleep(edge_window.delay_sec)
+                    bars = md.get_last_two_closed_10m(cand.symbol)
+                    if len(bars) != 2:
+                        continue
+                    boh = boh_confirmed_option2(bars, cand.entry_level)
+                    if boh.confirmed:
+                        if edge_report is not None:
+                            edge_report.mark_confirmed(cand.symbol)
+                        break
         if not boh.confirmed:
             continue
 
@@ -279,3 +362,14 @@ def evaluate_and_create_entry_intents(
         created += 1
 
     return created
+
+
+def _is_near_pivot(bar, pivot_level: float, proximity_pct: float) -> bool:
+    if pivot_level <= 0:
+        return False
+    try:
+        close = float(getattr(bar, "close", bar["close"]))
+    except Exception:
+        return False
+    distance = abs(close - pivot_level) / pivot_level
+    return distance <= max(proximity_pct, 0.0)

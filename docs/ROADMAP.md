@@ -538,6 +538,9 @@ Introduce **strategy-scoped risk budgets** inside a unified portfolio.
   - PnL by strategy
   - drawdown by strategy
   - exposure by strategy
+- [x] Execution quality controls (opt-in):
+  - edge-window rechecks for near-trigger entries
+  - one-shot per symbol per session (cooldown reset v1)
 
 **Exit Criteria**
 - Strategies cannot crowd capital implicitly

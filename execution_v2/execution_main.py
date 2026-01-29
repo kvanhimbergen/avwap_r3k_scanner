@@ -40,6 +40,7 @@ from execution_v2 import portfolio_intents
 from execution_v2 import shadow_strategies
 from execution_v2 import portfolio_s2_enforcement
 from execution_v2 import strategy_sleeves
+from execution_v2 import entry_suppression
 from execution_v2.orders import generate_idempotency_key
 from execution_v2.state_store import StateStore
 from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
@@ -439,6 +440,51 @@ def _record_created_intents_meta(
     ]
 
 
+def _record_edge_window_meta(decision_record: dict, edge_report: buy_loop.EdgeWindowReport) -> None:
+    decision_record.setdefault("intents_meta", {})["edge_window"] = edge_report.to_dict()
+
+
+def _record_one_shot_meta(decision_record: dict, config: entry_suppression.OneShotConfig) -> None:
+    decision_record.setdefault("intents_meta", {})["one_shot"] = {
+        "enabled": config.enabled,
+        "reset_mode": config.reset_mode,
+        "cooldown_minutes": config.cooldown_minutes,
+    }
+
+
+def _apply_one_shot_suppression(
+    *,
+    intents: list,
+    store: StateStore,
+    date_ny: str,
+    now_ts: float,
+    config: entry_suppression.OneShotConfig,
+    decision_record: dict,
+) -> list:
+    if not config.enabled:
+        return intents
+    allowed: list = []
+    for intent in intents:
+        decision = entry_suppression.evaluate_one_shot(
+            store=store,
+            date_ny=date_ny,
+            strategy_id=intent.strategy_id,
+            symbol=intent.symbol,
+            now_ts=now_ts,
+            config=config,
+        )
+        if decision.blocked:
+            decision_record["actions"]["skipped"].append(
+                {
+                    "symbol": intent.symbol,
+                    "reason": decision.reason or "one_shot_blocked",
+                }
+            )
+            continue
+        allowed.append(intent)
+    return allowed
+
+
 def _update_intents_meta(
     decision_record: dict,
     *,
@@ -707,6 +753,12 @@ def run_once(cfg) -> None:
             entry_delay_min_sec=cfg.entry_delay_min_sec,
             entry_delay_max_sec=cfg.entry_delay_max_sec,
         )
+        edge_window_cfg = buy_loop.EdgeWindowConfig.from_env()
+        edge_report = buy_loop.EdgeWindowReport()
+        edge_report.enabled = edge_window_cfg.enabled
+        one_shot_cfg = entry_suppression.OneShotConfig.from_env()
+        _record_edge_window_meta(decision_record, edge_report)
+        _record_one_shot_meta(decision_record, one_shot_cfg)
         repo_root = Path(__file__).resolve().parents[1]
         decision_record["build"] = {
             "git_sha": build_info.get_git_sha_short(repo_root),
@@ -809,6 +861,8 @@ def run_once(cfg) -> None:
                     buy_cfg,
                     account_equity,
                     created_intents=entry_intents_created,
+                    edge_window=edge_window_cfg,
+                    edge_report=edge_report,
                 )
                 if created:
                     _log(f"Created {created} entry intents.")
@@ -839,6 +893,8 @@ def run_once(cfg) -> None:
                     buy_cfg,
                     account_equity,
                     created_intents=entry_intents_created,
+                    edge_window=edge_window_cfg,
+                    edge_report=edge_report,
                 )
                 if created:
                     _log(f"Created {created} entry intents.")
@@ -885,6 +941,8 @@ def run_once(cfg) -> None:
                     buy_cfg,
                     account_equity,
                     created_intents=entry_intents_created,
+                    edge_window=edge_window_cfg,
+                    edge_report=edge_report,
                 )
                 if created:
                     _log(f"Created {created} entry intents.")
@@ -954,6 +1012,8 @@ def run_once(cfg) -> None:
                     buy_cfg,
                     account_equity,
                     created_intents=entry_intents_created,
+                    edge_window=edge_window_cfg,
+                    edge_report=edge_report,
                 )
                 if created:
                     _log(f"Created {created} entry intents.")
@@ -1208,6 +1268,8 @@ def run_once(cfg) -> None:
             approved_intents=approved_intents,
             s2_snapshot=decision_record.get("s2_enforcement"),
         )
+        _record_edge_window_meta(decision_record, edge_report)
+        _record_one_shot_meta(decision_record, one_shot_cfg)
         if portfolio_decision is not None:
             decision_state_path = _state_dir() / "portfolio_decision_latest.json"
             portfolio_decision_contract.write_portfolio_decision(
@@ -1223,6 +1285,15 @@ def run_once(cfg) -> None:
         entries_blocked = (
             portfolio_decision is None and bool(entry_intents)
         ) or s2_blocked
+        if not entries_blocked:
+            intents = _apply_one_shot_suppression(
+                intents=intents,
+                store=store,
+                date_ny=decision_record["ny_date"],
+                now_ts=decision_ts_utc.timestamp(),
+                config=one_shot_cfg,
+                decision_record=decision_record,
+            )
         enforcement_context = None
         enforcement_records: list[dict] = []
         if portfolio_decision_enforce.enforcement_enabled():
@@ -1247,12 +1318,28 @@ def run_once(cfg) -> None:
                 return
             now_utc = datetime.now(timezone.utc)
             date_ny = paper_sim.resolve_date_ny(now_utc)
+            intent_by_symbol = {intent.symbol: intent for intent in intents}
             fills = paper_sim.simulate_fills(
                 intents,
                 date_ny=date_ny,
                 now_utc=now_utc,
                 repo_root=repo_root,
             )
+            for fill in fills:
+                if str(fill.get("side", "")).lower() != "buy":
+                    continue
+                symbol = str(fill.get("symbol", "")).upper()
+                if not symbol:
+                    continue
+                matched_intent = intent_by_symbol.get(symbol)
+                strategy_id = matched_intent.strategy_id if matched_intent else DEFAULT_STRATEGY_ID
+                store.record_entry_fill(
+                    date_ny=date_ny,
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    filled_ts=now_utc.timestamp(),
+                    source="paper_sim",
+                )
             skipped = max(0, len(intents) - len(fills))
             ledger_rel = Path("ledger") / "PAPER_SIM" / f"{date_ny}.jsonl"
             for fill in fills:
@@ -1474,6 +1561,13 @@ def run_once(cfg) -> None:
                         try:
                             if float(event["filled_qty"]) > 0:
                                 fills += 1
+                                store.record_entry_fill(
+                                    date_ny=date_ny,
+                                    strategy_id=intent.strategy_id,
+                                    symbol=intent.symbol,
+                                    filled_ts=now_utc.timestamp(),
+                                    source="alpaca_paper",
+                                )
                         except Exception:
                             pass
                     if skipped:
