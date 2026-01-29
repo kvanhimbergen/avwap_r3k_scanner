@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -82,8 +81,8 @@ def test_run_id_stable_for_identical_inputs() -> None:
 
 def test_run_tests_entrypoint_covers_all_tests() -> None:
     tests_root = Path("tests")
-    run_tests_path = tests_root / "run_tests.py"
-    content = run_tests_path.read_text(encoding="utf-8")
-    declared = set(re.findall(r"test_[a-zA-Z0-9_]+\.py", content))
+    from tests import run_tests
+
+    declared = {path.name for path in run_tests.iter_test_files()}
     expected = {path.name for path in tests_root.glob("test_*.py")}
     assert declared == expected

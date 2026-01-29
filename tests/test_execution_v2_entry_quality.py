@@ -51,7 +51,10 @@ def _daily_bars_for_entry() -> list[dict]:
     ]
 
 
-def test_edge_window_rechecks_confirm_once(tmp_path) -> None:
+def test_edge_window_rechecks_confirm_once(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MAX_RISK_PER_SHARE_DOLLARS", "100.0")
+    monkeypatch.setenv("STOP_BUFFER_DOLLARS", "0.0")
+
     db_path = tmp_path / "state.sqlite"
     store = StateStore(str(db_path))
     candidates_path = tmp_path / "candidates.csv"
