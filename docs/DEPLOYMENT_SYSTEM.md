@@ -188,6 +188,9 @@ observability and deterministic audits:
 - `state/portfolio_decision_latest.json` and `ledger/PORTFOLIO_DECISIONS/<date>.jsonl` are now
   **material-only** artifacts. They only update when the cycle is material (market open, intents,
   orders, or errors). Market-closed "no-op" cycles intentionally do **not** update these files.
+- `state/symbol_execution_state_<NYDATE>.json` captures per-symbol execution lifecycle state
+  (FLAT/ENTERING/OPEN/EXITING) for restart-safe gating.
+- `state/consumed_entries_<NYDATE>.json` records one-entry-per-symbol-per-day consumption.
 
 ALPACA_PAPER credential checks are fail-closed: missing `APCA_API_KEY_ID`,
 `APCA_API_SECRET_KEY`, or `APCA_API_BASE_URL` will raise an error and skip all artifact writes.
@@ -198,6 +201,8 @@ Execution polling and entry throttles are deterministic and configurable via env
 
 - `EXECUTION_POLL_SECONDS` (base poll interval)
 - `EXECUTION_POLL_TIGHT_SECONDS` (default: `15`)
+- `ENTRY_DELAY_AFTER_OPEN_MINUTES` (default: `20`, entry orders blocked until after open + delay)
+- `MIN_EXIT_ARMING_SECONDS` (default: `120`, exit orders blocked until after entry fill delay)
 - `EXECUTION_POLL_TIGHT_START_ET` (default: `09:30`)
 - `EXECUTION_POLL_TIGHT_END_ET` (default: `10:05`)
 - `EXECUTION_POLL_MARKET_SECONDS` (default: `min(EXECUTION_POLL_SECONDS, 60)`)
