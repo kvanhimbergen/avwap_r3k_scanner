@@ -575,24 +575,35 @@ def _write_execution_heartbeat(cfg, decision_record: dict, candidates_snapshot: 
 
 
 def _is_material_cycle(decision_record: dict, cfg, market_is_open: bool | None) -> bool:
+    # If the market is open (or we're explicitly running closed-market cycles),
+    # portfolio decisions are material by definition.
     if market_is_open or getattr(cfg, "ignore_market_hours", False):
         return True
-    # Preserve DRY_RUN behavior: when market is closed, heartbeat-only is expected by tests.
-    if getattr(cfg, "execution_mode", "") != "DRY_RUN":
-        blocks = (decision_record.get("gates") or {}).get("blocks") or []
-        if blocks:
-            return True
-    actions = decision_record.get("actions", {})
-    intents = decision_record.get("intents", {})
+
+    # Market is closed: only write portfolio decision artifacts if something actually happened.
+    actions = decision_record.get("actions", {}) or {}
+    intents = decision_record.get("intents", {}) or {}
+
     errors = actions.get("errors") or []
     if errors:
         return True
-    intent_count = int(intents.get("intent_count", 0) or 0)
-    if intent_count > 0 or (intents.get("intents") or []):
+
+    # Some codepaths store intents as {"intent_count":..., "intents":[...]}.
+    if isinstance(intents, dict):
+        intent_count = int(intents.get("intent_count", 0) or 0)
+        intent_list = intents.get("intents") or []
+    else:
+        intent_count = 0
+        intent_list = intents or []
+
+    if intent_count > 0 or intent_list:
         return True
+
     submitted_orders = actions.get("submitted_orders") or []
     if submitted_orders:
         return True
+
+    # Otherwise: heartbeat-only cycle when market is closed.
     return False
 
 
