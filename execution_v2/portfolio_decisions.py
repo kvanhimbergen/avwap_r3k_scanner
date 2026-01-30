@@ -20,12 +20,15 @@ from utils.atomic_write import atomic_append_line, atomic_write_text
 LEDGER_DIR = Path("ledger") / "PORTFOLIO_DECISIONS"
 
 
-def resolve_portfolio_decisions_path(now_ny: datetime) -> Path:
-    """Resolve the NY-date decision ledger path for the provided NY timestamp."""
+def resolve_portfolio_decisions_path(repo_root: Path, now_ny: datetime) -> Path:
+    """Resolve the NY-date decision ledger path for the provided NY timestamp.
+
+    IMPORTANT: repo_root is required to avoid cwd-relative writes (pytest safety).
+    """
     if now_ny.tzinfo is None:
         raise ValueError("now_ny must be timezone-aware")
     date_ny = now_ny.astimezone(ET).date().isoformat()
-    return LEDGER_DIR / f"{date_ny}.jsonl"
+    return repo_root / LEDGER_DIR / f"{date_ny}.jsonl"
 
 
 def build_decision_id(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -53,7 +54,7 @@ def _sample_record() -> dict:
 def test_portfolio_decision_path_uses_ny_date() -> None:
     ny_tz = ZoneInfo("America/New_York")
     now_ny = datetime(2024, 2, 3, 9, 30, tzinfo=ny_tz)
-    path = portfolio_decisions.resolve_portfolio_decisions_path(now_ny)
+    path = portfolio_decisions.resolve_portfolio_decisions_path(Path("/x"), now_ny)
     assert str(path).endswith("ledger/PORTFOLIO_DECISIONS/2024-02-03.jsonl")
 
 

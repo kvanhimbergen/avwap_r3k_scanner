@@ -348,13 +348,13 @@ def _decision_cycle_info(cfg) -> dict:
     }
 
 
-def _init_decision_record(cfg, candidates_snapshot: dict, now_utc: datetime) -> dict:
+def _init_decision_record(cfg, candidates_snapshot: dict, now_utc: datetime, repo_root: Path) -> dict:
     now_ny = now_utc.astimezone(clocks.ET)
     dry_run_env = os.getenv("DRY_RUN", "0") == "1"
     exec_env = os.getenv("EXECUTION_MODE")
     dry_run_forced = dry_run_env and bool(exec_env and exec_env.strip().upper() != "DRY_RUN")
     ny_date = now_ny.date().isoformat()
-    decisions_path = portfolio_decisions.resolve_portfolio_decisions_path(now_ny)
+    decisions_path = portfolio_decisions.resolve_portfolio_decisions_path(repo_root, now_ny)
     record = {
         "schema_version": "1.0",
         "decision_id": "",
@@ -768,7 +768,8 @@ def run_once(cfg) -> None:
             raise RuntimeError("Missing Alpaca API credentials in environment")
     decision_ts_utc = datetime.now(timezone.utc)
     candidates_snapshot = _snapshot_candidates_csv(cfg.candidates_csv)
-    decision_record = _init_decision_record(cfg, candidates_snapshot, decision_ts_utc)
+    repo_root = Path(getattr(cfg, "base_dir", "") or os.getenv("AVWAP_REPO_ROOT", "") or Path(__file__).resolve().parents[1]).resolve()
+    decision_record = _init_decision_record(cfg, candidates_snapshot, decision_ts_utc, repo_root)
     decision_path = Path(decision_record["artifacts"]["portfolio_decisions_path"])
     latest_path = _state_dir() / "portfolio_decision_latest.json"
     decision_record["artifacts"]["portfolio_decision_latest_path"] = str(latest_path.resolve())
@@ -798,7 +799,7 @@ def run_once(cfg) -> None:
         one_shot_cfg = entry_suppression.OneShotConfig.from_env()
         _record_edge_window_meta(decision_record, edge_report)
         _record_one_shot_meta(decision_record, one_shot_cfg)
-        repo_root = Path(getattr(cfg, "base_dir", "") or os.getenv("AVWAP_REPO_ROOT", "") or Path(__file__).resolve().parents[1]).resolve()
+        # repo_root already resolved near top of run_once
         decision_record["build"] = {
             "git_sha": build_info.get_git_sha_short(repo_root),
             "git_dirty": build_info.is_git_dirty(repo_root),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from datetime import datetime, timezone
 from types import SimpleNamespace
 import sys
@@ -53,7 +54,7 @@ def _build_decision_record() -> dict:
     cfg = SimpleNamespace(execution_mode="DRY_RUN", poll_seconds=1)
     now_utc = datetime.now(timezone.utc)
     candidates_snapshot = {"path": "candidates.csv", "mtime_utc": now_utc.isoformat()}
-    return execution_main._init_decision_record(cfg, candidates_snapshot, now_utc)
+    return execution_main._init_decision_record(cfg, candidates_snapshot, now_utc, repo_root=Path('.').resolve())
 
 
 def test_s2_daily_pnl_present_pass(monkeypatch) -> None:

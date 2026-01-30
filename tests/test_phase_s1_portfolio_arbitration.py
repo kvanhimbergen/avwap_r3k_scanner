@@ -165,6 +165,8 @@ def test_no_decision_no_orders_fail_closed(tmp_path, monkeypatch) -> None:
 
     from execution_v2 import execution_main
 
+    monkeypatch.setenv("AVWAP_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("EXECUTION_MODE", "SCHWAB_401K_MANUAL")
     monkeypatch.setenv("DRY_RUN", "1")
 
