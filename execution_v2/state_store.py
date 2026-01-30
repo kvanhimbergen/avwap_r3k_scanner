@@ -12,7 +12,7 @@ from typing import Optional, List
 
 from execution_v2.config_types import EntryIntent, PositionState, StopMode
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 class StateStore:
     def __init__(self, db_path: str) -> None:
@@ -42,6 +42,9 @@ class StateStore:
             if v < 6:
                 self._migrate_to_v6()
                 v = 6
+            if v < 7:
+                self._migrate_to_v7()
+                v = 7
             if v != SCHEMA_VERSION:
                 self._reset_schema()
                 self._create_schema_v1()
@@ -52,6 +55,7 @@ class StateStore:
         cur.execute("DROP TABLE IF EXISTS entry_intents;")
         cur.execute("DROP TABLE IF EXISTS positions;")
         cur.execute("DROP TABLE IF EXISTS order_ledger;")
+        cur.execute("DROP TABLE IF EXISTS order_submissions;")
         cur.execute("DROP TABLE IF EXISTS trim_intents;")
         cur.execute("DROP TABLE IF EXISTS entry_fills;")
         cur.execute("DELETE FROM meta WHERE key='schema_version';")
@@ -117,6 +121,19 @@ class StateStore:
             external_order_id TEXT
         );
         """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS order_submissions (
+            decision_id TEXT NOT NULL,
+            intent_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            side TEXT NOT NULL,
+            qty INTEGER NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            external_order_id TEXT,
+            created_ts REAL NOT NULL,
+            PRIMARY KEY (decision_id, intent_id, symbol, side)
+        );
+        """)
         # Trim intents
         cur.execute("""
         CREATE TABLE IF NOT EXISTS trim_intents (
@@ -158,7 +175,24 @@ class StateStore:
         );
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_entry_fills_symbol ON entry_fills(symbol);")
-        cur.execute("UPDATE meta SET value=? WHERE key='schema_version';", (str(SCHEMA_VERSION),))
+        cur.execute("UPDATE meta SET value=? WHERE key='schema_version';", ("6",))
+
+    def _migrate_to_v7(self) -> None:
+        cur = self.conn.cursor()
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS order_submissions (
+            decision_id TEXT NOT NULL,
+            intent_id TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            side TEXT NOT NULL,
+            qty INTEGER NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            external_order_id TEXT,
+            created_ts REAL NOT NULL,
+            PRIMARY KEY (decision_id, intent_id, symbol, side)
+        );
+        """)
+        cur.execute("UPDATE meta SET value=? WHERE key='schema_version';", ("7",))
 
     # -------------------------
     # Candidates
@@ -357,6 +391,11 @@ class StateStore:
     # -------------------------
     # Order idempotency
     # -------------------------
+    def has_order_idempotency_key(self, idempotency_key: str) -> bool:
+        cur = self.conn.cursor()
+        cur.execute("SELECT 1 FROM order_ledger WHERE idempotency_key=?;", (idempotency_key,))
+        return cur.fetchone() is not None
+
     def record_order_once(self, idempotency_key: str, strategy_id: str, symbol: str, side: str, qty: int, external_order_id: Optional[str]=None) -> bool:
         cur = self.conn.cursor()
         try:
@@ -369,6 +408,47 @@ class StateStore:
     def update_external_order_id(self, idempotency_key: str, external_order_id: str) -> None:
         cur = self.conn.cursor()
         cur.execute("UPDATE order_ledger SET external_order_id=? WHERE idempotency_key=?;", (external_order_id, idempotency_key))
+
+    def record_order_submission(
+        self,
+        *,
+        decision_id: str,
+        intent_id: str,
+        symbol: str,
+        side: str,
+        qty: int,
+        idempotency_key: str,
+        external_order_id: Optional[str],
+    ) -> bool:
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                """
+                INSERT INTO order_submissions(
+                    decision_id,
+                    intent_id,
+                    symbol,
+                    side,
+                    qty,
+                    idempotency_key,
+                    external_order_id,
+                    created_ts
+                ) VALUES(?,?,?,?,?,?,?,?);
+                """,
+                (
+                    decision_id,
+                    intent_id,
+                    symbol,
+                    side,
+                    qty,
+                    idempotency_key,
+                    external_order_id,
+                    time.time(),
+                ),
+            )
+            return True
+        except sqlite3.IntegrityError:
+            return False
 
     # -------------------------
     # Entry fills (one-shot suppression)

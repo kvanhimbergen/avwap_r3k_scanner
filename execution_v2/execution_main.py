@@ -23,7 +23,7 @@ from alerts.slack import (
     maybe_send_heartbeat,
     maybe_send_daily_summary,
 )
-from execution_v2 import buy_loop, exits
+from execution_v2 import buy_loop, exits, state_machine
 from execution_v2 import live_gate
 from execution_v2 import config_check as _config_check
 from execution_v2 import alpaca_paper
@@ -683,6 +683,30 @@ def _resolve_market_settle_minutes() -> int:
     return _parse_int_env("MARKET_SETTLE_MINUTES", 0, min_value=0)
 
 
+def _resolve_entry_delay_after_open_minutes() -> int:
+    return _parse_int_env("ENTRY_DELAY_AFTER_OPEN_MINUTES", 20, min_value=0)
+
+
+def _entry_delay_after_open_active(
+    delay_minutes: int,
+    *,
+    market_is_open: bool,
+    now_et: datetime | None,
+) -> tuple[bool, str | None]:
+    if delay_minutes <= 0 or not market_is_open or now_et is None:
+        return False, None
+    now_et = now_et.astimezone(clocks.ET)
+    open_dt = datetime.combine(now_et.date(), clocks.REG_OPEN, tzinfo=clocks.ET)
+    delta_minutes = (now_et - open_dt).total_seconds() / 60.0
+    if 0 <= delta_minutes < delay_minutes:
+        msg = (
+            f"entry delay after open active for {delay_minutes}m "
+            f"(now {now_et.strftime('%H:%M:%S %Z')})"
+        )
+        return True, msg
+    return False, None
+
+
 
 def _market_settle_gate_active(
     settle_minutes: int,
@@ -743,6 +767,10 @@ def run_once(cfg) -> None:
     positions_count: int | None = None
     entry_intents_created: list = []
     now_et: datetime | None = None
+    entry_delay_after_open_active = False
+    entry_delay_after_open_message: str | None = None
+    symbol_state_store: state_machine.SymbolExecutionStateStore | None = None
+    consumed_entries_store: state_machine.ConsumedEntriesStore | None = None
 
     try:
         store = StateStore(cfg.db_path)
@@ -802,6 +830,17 @@ def run_once(cfg) -> None:
         market_is_open, now_et, clock_source, ledger_path = _market_open(cfg, trading_client, repo_root)
         decision_record["gates"]["market"]["is_open"] = market_is_open
         decision_record["gates"]["market"]["clock_source"] = clock_source
+        entry_delay_minutes = _resolve_entry_delay_after_open_minutes()
+        entry_delay_after_open_active, entry_delay_after_open_message = _entry_delay_after_open_active(
+            entry_delay_minutes,
+            market_is_open=market_is_open,
+            now_et=now_et,
+        )
+        if entry_delay_after_open_active and entry_delay_after_open_message:
+            blocks.append(
+                {"code": "entry_delay_after_open", "message": entry_delay_after_open_message}
+            )
+            _log(f"Gate entry_delay_after_open active ({entry_delay_minutes}m).")
         maybe_send_heartbeat(
             dry_run=(cfg.dry_run if cfg.execution_mode != "PAPER_SIM" else True),
             market_open=market_is_open,
@@ -854,7 +893,7 @@ def run_once(cfg) -> None:
                         return []
 
                 md = _NoMarketData()
-            if not settle_active:
+            if not settle_active and not entry_delay_after_open_active:
                 created = buy_loop.evaluate_and_create_entry_intents(
                     store,
                     md,
@@ -868,7 +907,10 @@ def run_once(cfg) -> None:
                     _log(f"Created {created} entry intents.")
                     _record_created_intents_meta(decision_record, entry_intents_created, created)
             else:
-                _log("PAPER_SIM: settle delay active; skipping entry intent creation.")
+                if settle_active:
+                    _log("PAPER_SIM: settle delay active; skipping entry intent creation.")
+                if entry_delay_after_open_active:
+                    _log("PAPER_SIM: entry delay active; skipping entry intent creation.")
             _log("PAPER_SIM: skipping live gate checks and broker position lookups.")
         elif cfg.execution_mode == "SCHWAB_401K_MANUAL":
             allowlist = live_gate.parse_allowlist()
@@ -886,7 +928,7 @@ def run_once(cfg) -> None:
                 md = _NoMarketData()
             account_equity = float(os.getenv("MANUAL_ACCOUNT_EQUITY", "0") or 0.0)
             decision_record["inputs"]["account"]["equity"] = account_equity
-            if not settle_active:
+            if not settle_active and not entry_delay_after_open_active:
                 created = buy_loop.evaluate_and_create_entry_intents(
                     store,
                     md,
@@ -900,7 +942,10 @@ def run_once(cfg) -> None:
                     _log(f"Created {created} entry intents.")
                     _record_created_intents_meta(decision_record, entry_intents_created, created)
             else:
-                _log("SCHWAB_401K_MANUAL: settle delay active; skipping entry intent creation.")
+                if settle_active:
+                    _log("SCHWAB_401K_MANUAL: settle delay active; skipping entry intent creation.")
+                if entry_delay_after_open_active:
+                    _log("SCHWAB_401K_MANUAL: entry delay active; skipping entry intent creation.")
         elif cfg.execution_mode == "ALPACA_PAPER":
             decision_record["gates"]["live_gate_applied"] = True
             allowlist = live_gate.parse_allowlist()
@@ -934,7 +979,7 @@ def run_once(cfg) -> None:
                     }
                 )
             account_equity = _get_account_equity(trading_client)
-            if not settle_active:
+            if not settle_active and not entry_delay_after_open_active:
                 created = buy_loop.evaluate_and_create_entry_intents(
                     store,
                     md,
@@ -948,7 +993,10 @@ def run_once(cfg) -> None:
                     _log(f"Created {created} entry intents.")
                     _record_created_intents_meta(decision_record, entry_intents_created, created)
             else:
-                _log("ALPACA_PAPER: settle delay active; skipping entry intent creation.")
+                if settle_active:
+                    _log("ALPACA_PAPER: settle delay active; skipping entry intent creation.")
+                if entry_delay_after_open_active:
+                    _log("ALPACA_PAPER: entry delay active; skipping entry intent creation.")
             exits.manage_positions(
                 trading_client=trading_client,
                 md=md,
@@ -1005,7 +1053,7 @@ def run_once(cfg) -> None:
                     }
                 )
             account_equity = _get_account_equity(trading_client)
-            if not settle_active:
+            if not settle_active and not entry_delay_after_open_active:
                 created = buy_loop.evaluate_and_create_entry_intents(
                     store,
                     md,
@@ -1019,7 +1067,10 @@ def run_once(cfg) -> None:
                     _log(f"Created {created} entry intents.")
                     _record_created_intents_meta(decision_record, entry_intents_created, created)
             else:
-                _log("LIVE: settle delay active; skipping entry intent creation.")
+                if settle_active:
+                    _log("LIVE: settle delay active; skipping entry intent creation.")
+                if entry_delay_after_open_active:
+                    _log("LIVE: entry delay active; skipping entry intent creation.")
             exits.manage_positions(
                 trading_client=trading_client,
                 md=md,
@@ -1038,7 +1089,7 @@ def run_once(cfg) -> None:
         ):
             entry_intents = []
         else:
-            if settle_active:
+            if settle_active or entry_delay_after_open_active:
                 entry_intents = []
             else:
                 entry_intents = store.pop_due_entry_intents(now_ts)
@@ -1312,6 +1363,44 @@ def run_once(cfg) -> None:
                 caps, "max_notional_per_symbol", None
             )
 
+        symbol_state_store = state_machine.SymbolExecutionStateStore(
+            date_ny=decision_record["ny_date"],
+            state_dir=_state_dir(),
+        )
+        consumed_entries_store = state_machine.ConsumedEntriesStore(
+            date_ny=decision_record["ny_date"],
+            state_dir=_state_dir(),
+        )
+        if trading_client is not None:
+            try:
+                open_positions = trading_client.get_all_positions()
+                open_symbols = [getattr(pos, "symbol", "") for pos in open_positions]
+                entry_fill_ts = {}
+                for pos in open_positions:
+                    symbol = str(getattr(pos, "symbol", "")).upper()
+                    if not symbol:
+                        continue
+                    strategy_id = DEFAULT_STRATEGY_ID
+                    pos_state = store.get_position(symbol)
+                    if pos_state is not None:
+                        strategy_id = pos_state.strategy_id
+                    record = store.get_entry_fill(
+                        decision_record["ny_date"],
+                        strategy_id,
+                        symbol,
+                    )
+                    entry_fill_ts_value = state_machine.resolve_entry_fill_ts_utc(record)
+                    if entry_fill_ts_value:
+                        entry_fill_ts[symbol] = entry_fill_ts_value
+                symbol_state_store.apply_open_positions(
+                    open_symbols,
+                    now_utc=decision_ts_utc,
+                    entry_fill_ts_utc=entry_fill_ts,
+                )
+            except Exception:
+                pass
+        symbol_state_store.save()
+
         if cfg.execution_mode == "PAPER_SIM":
             if entries_blocked:
                 _log("PAPER_SIM: portfolio decision unavailable; skipping entry simulation.")
@@ -1351,6 +1440,8 @@ def run_once(cfg) -> None:
                         "order_type": "paper_sim",
                         "client_order_id": fill.get("intent_id"),
                         "broker_order_id": None,
+                        "idempotency_key": fill.get("intent_id"),
+                        "intent_id": fill.get("intent_id"),
                         "status": "submitted",
                     }
                 )
@@ -1385,6 +1476,8 @@ def run_once(cfg) -> None:
                         "order_type": "manual_ticket",
                         "client_order_id": intent_id,
                         "broker_order_id": None,
+                        "idempotency_key": intent_id,
+                        "intent_id": intent_id,
                         "status": "submitted" if result.posting_enabled else "skipped",
                     }
                 )
@@ -1418,6 +1511,12 @@ def run_once(cfg) -> None:
                     _log(f"ALPACA_PAPER disabled; skipping {intent.symbol} ({paper_reason})")
                     decision_record["actions"]["skipped"].append(
                         {"symbol": intent.symbol, "reason": paper_reason}
+                    )
+                    continue
+                if entry_delay_after_open_active:
+                    _log(f"SKIP {intent.symbol}: entry delay after open active")
+                    decision_record["actions"]["skipped"].append(
+                        {"symbol": intent.symbol, "reason": "entry_delay_after_open"}
                     )
                     continue
                 if enforcement_context:
@@ -1461,6 +1560,22 @@ def run_once(cfg) -> None:
                         {"symbol": intent.symbol, "reason": "open_order_or_position"}
                     )
                     continue
+                if consumed_entries_store and consumed_entries_store.is_consumed(intent.symbol):
+                    _log(f"SKIP {intent.symbol}: already consumed today")
+                    decision_record["actions"]["skipped"].append(
+                        {"symbol": intent.symbol, "reason": "already_consumed_today"}
+                    )
+                    continue
+                if symbol_state_store:
+                    symbol_state = symbol_state_store.get(intent.symbol)
+                    if symbol_state.state != "FLAT":
+                        _log(
+                            f"SKIP {intent.symbol}: symbol state {symbol_state.state} not flat"
+                        )
+                        decision_record["actions"]["skipped"].append(
+                            {"symbol": intent.symbol, "reason": "symbol_state_not_flat"}
+                        )
+                        continue
 
                 key = generate_idempotency_key(
                     intent.strategy_id,
@@ -1469,13 +1584,7 @@ def run_once(cfg) -> None:
                     "buy",
                     intent.size_shares,
                 )
-                if not store.record_order_once(
-                    key,
-                    intent.strategy_id,
-                    intent.symbol,
-                    "buy",
-                    intent.size_shares,
-                ):
+                if store.has_order_idempotency_key(key):
                     _log(f"SKIP {intent.symbol}: idempotency key already used")
                     decision_record["actions"]["skipped"].append(
                         {"symbol": intent.symbol, "reason": "idempotency_key_used"}
@@ -1500,6 +1609,23 @@ def run_once(cfg) -> None:
                 try:
                     order_id = _submit_market_entry(trading_client, intent, dry_run=False)
                     order_id_str = str(order_id) if order_id is not None else None
+                    store.record_order_once(
+                        key,
+                        intent.strategy_id,
+                        intent.symbol,
+                        "buy",
+                        intent.size_shares,
+                        external_order_id=order_id_str,
+                    )
+                    store.record_order_submission(
+                        decision_id=decision_record["decision_id"],
+                        intent_id=key,
+                        symbol=intent.symbol,
+                        side="buy",
+                        qty=intent.size_shares,
+                        idempotency_key=key,
+                        external_order_id=order_id_str,
+                    )
                     submitted += 1
                     _log(f"SUBMITTED {intent.symbol}: qty={intent.size_shares} order_id={order_id}")
                     decision_record["actions"]["submitted_orders"].append(
@@ -1510,9 +1636,22 @@ def run_once(cfg) -> None:
                             "order_type": "market",
                             "client_order_id": key,
                             "broker_order_id": order_id_str,
+                            "idempotency_key": key,
+                            "intent_id": key,
                             "status": "submitted",
                         }
                     )
+                    if symbol_state_store:
+                        symbol_state_store.transition(
+                            intent.symbol,
+                            "ENTERING",
+                            now_utc=now_utc,
+                            entry_intent_id=key,
+                            entry_order_id=order_id_str or key,
+                        )
+                        symbol_state_store.save()
+                    if consumed_entries_store:
+                        consumed_entries_store.mark(intent.symbol, now_utc)
                     candidate_notes = store.get_candidate_notes(intent.symbol) or "scan:n/a"
                     send_verbose_alert(
                         "TRADE",
@@ -1568,6 +1707,14 @@ def run_once(cfg) -> None:
                                     filled_ts=now_utc.timestamp(),
                                     source="alpaca_paper",
                                 )
+                                if symbol_state_store:
+                                    symbol_state_store.transition(
+                                        intent.symbol,
+                                        "OPEN",
+                                        now_utc=now_utc,
+                                        entry_fill_ts_utc=now_utc.isoformat(),
+                                    )
+                                    symbol_state_store.save()
                         except Exception:
                             pass
                     if skipped:
@@ -1646,6 +1793,28 @@ def run_once(cfg) -> None:
                     {"symbol": intent.symbol, "reason": "open_order_or_position"}
                 )
                 continue
+            if entry_delay_after_open_active:
+                _log(f"SKIP {intent.symbol}: entry delay after open active")
+                decision_record["actions"]["skipped"].append(
+                    {"symbol": intent.symbol, "reason": "entry_delay_after_open"}
+                )
+                continue
+            if consumed_entries_store and consumed_entries_store.is_consumed(intent.symbol):
+                _log(f"SKIP {intent.symbol}: already consumed today")
+                decision_record["actions"]["skipped"].append(
+                    {"symbol": intent.symbol, "reason": "already_consumed_today"}
+                )
+                continue
+            if symbol_state_store:
+                symbol_state = symbol_state_store.get(intent.symbol)
+                if symbol_state.state != "FLAT":
+                    _log(
+                        f"SKIP {intent.symbol}: symbol state {symbol_state.state} not flat"
+                    )
+                    decision_record["actions"]["skipped"].append(
+                        {"symbol": intent.symbol, "reason": "symbol_state_not_flat"}
+                    )
+                    continue
 
             key = generate_idempotency_key(
                 intent.strategy_id,
@@ -1655,13 +1824,7 @@ def run_once(cfg) -> None:
                 intent.size_shares,
             )
             if not effective_dry_run:
-                if not store.record_order_once(
-                    key,
-                    intent.strategy_id,
-                    intent.symbol,
-                    "buy",
-                    intent.size_shares,
-                ):
+                if store.has_order_idempotency_key(key):
                     _log(f"SKIP {intent.symbol}: idempotency key already used")
                     decision_record["actions"]["skipped"].append(
                         {"symbol": intent.symbol, "reason": "idempotency_key_used"}
@@ -1693,6 +1856,24 @@ def run_once(cfg) -> None:
                         {"symbol": intent.symbol, "reason": "dry_run_ledger_duplicate"}
                     )
                 else:
+                    if not effective_dry_run:
+                        store.record_order_once(
+                            key,
+                            intent.strategy_id,
+                            intent.symbol,
+                            "buy",
+                            intent.size_shares,
+                            external_order_id=order_id_str,
+                        )
+                        store.record_order_submission(
+                            decision_id=decision_record["decision_id"],
+                            intent_id=key,
+                            symbol=intent.symbol,
+                            side="buy",
+                            qty=intent.size_shares,
+                            idempotency_key=key,
+                            external_order_id=order_id_str,
+                        )
                     decision_record["actions"]["submitted_orders"].append(
                         {
                             "symbol": intent.symbol,
@@ -1701,9 +1882,22 @@ def run_once(cfg) -> None:
                             "order_type": "market",
                             "client_order_id": key,
                             "broker_order_id": order_id_str,
+                            "idempotency_key": key,
+                            "intent_id": key,
                             "status": "submitted",
                         }
                     )
+                    if symbol_state_store:
+                        symbol_state_store.transition(
+                            intent.symbol,
+                            "ENTERING",
+                            now_utc=datetime.now(timezone.utc),
+                            entry_intent_id=key,
+                            entry_order_id=order_id_str or key,
+                        )
+                        symbol_state_store.save()
+                    if consumed_entries_store:
+                        consumed_entries_store.mark(intent.symbol, datetime.now(timezone.utc))
                     if effective_dry_run:
                         ledgers_written.append("/root/avwap_r3k_scanner/state/dry_run_ledger.json")
                 candidate_notes = store.get_candidate_notes(intent.symbol) or "scan:n/a"
@@ -1765,6 +1959,27 @@ def run_once(cfg) -> None:
 
         for intent in trim_intents:
             symbol = str(intent["symbol"]).upper()
+            if symbol_state_store:
+                symbol_state = symbol_state_store.get(symbol)
+                entry_fill_ts = symbol_state.entry_fill_ts_utc
+                closed_bars = None
+                if md is not None:
+                    try:
+                        closed_bars = md.get_last_two_closed_10m(symbol)
+                    except Exception:
+                        closed_bars = None
+                min_exit_seconds = _parse_int_env("MIN_EXIT_ARMING_SECONDS", 120, min_value=0)
+                if not state_machine.is_exit_armed(
+                    entry_fill_ts_utc=entry_fill_ts,
+                    now_utc=datetime.now(timezone.utc),
+                    min_seconds=min_exit_seconds,
+                    closed_10m_bars=closed_bars,
+                ):
+                    _log(f"SKIP {symbol}: exit not armed yet")
+                    decision_record["actions"]["skipped"].append(
+                        {"symbol": symbol, "reason": "exit_not_armed_yet"}
+                    )
+                    continue
             try:
                 position = trading_client.get_open_position(symbol)
             except Exception:
@@ -1823,8 +2038,11 @@ def run_once(cfg) -> None:
                 qty,
             )
             if live_active:
-                strategy_id = state.strategy_id if state is not None else DEFAULT_STRATEGY_ID
-                if not store.record_order_once(key, strategy_id, symbol, "sell", qty):
+                if store.has_order_idempotency_key(key):
+                    _log(f"SKIP {symbol}: idempotency key already used")
+                    decision_record["actions"]["skipped"].append(
+                        {"symbol": symbol, "reason": "idempotency_key_used"}
+                    )
                     continue
 
             if not live_active:
@@ -1843,7 +2061,45 @@ def run_once(cfg) -> None:
             response = trading_client.submit_order(order)
             order_id = getattr(response, "id", None)
             if order_id:
+                store.record_order_once(
+                    key,
+                    state.strategy_id if state is not None else DEFAULT_STRATEGY_ID,
+                    symbol,
+                    "sell",
+                    qty,
+                    external_order_id=str(order_id),
+                )
                 store.update_external_order_id(key, order_id)
+                store.record_order_submission(
+                    decision_id=decision_record["decision_id"],
+                    intent_id=key,
+                    symbol=symbol,
+                    side="sell",
+                    qty=qty,
+                    idempotency_key=key,
+                    external_order_id=str(order_id),
+                )
+            decision_record["actions"]["submitted_orders"].append(
+                {
+                    "symbol": symbol,
+                    "side": "sell",
+                    "qty": qty,
+                    "order_type": "market",
+                    "client_order_id": key,
+                    "broker_order_id": str(order_id) if order_id else None,
+                    "idempotency_key": key,
+                    "intent_id": key,
+                    "status": "submitted",
+                }
+            )
+            if symbol_state_store:
+                symbol_state_store.transition(
+                    symbol,
+                    "EXITING",
+                    now_utc=datetime.now(timezone.utc),
+                    exit_order_id=str(order_id) if order_id else key,
+                )
+                symbol_state_store.save()
             send_verbose_alert(
                 "TRADE",
                 f"TRIM {symbol}",
