@@ -787,7 +787,7 @@ def run_once(cfg) -> None:
         one_shot_cfg = entry_suppression.OneShotConfig.from_env()
         _record_edge_window_meta(decision_record, edge_report)
         _record_one_shot_meta(decision_record, one_shot_cfg)
-        repo_root = Path(__file__).resolve().parents[1]
+        repo_root = Path(getattr(cfg, "base_dir", "") or os.getenv("AVWAP_REPO_ROOT", "") or Path(__file__).resolve().parents[1]).resolve()
         decision_record["build"] = {
             "git_sha": build_info.get_git_sha_short(repo_root),
             "git_dirty": build_info.is_git_dirty(repo_root),

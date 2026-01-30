@@ -188,6 +188,7 @@ def _base_cfg(tmp_path):
     candidates_path = tmp_path / "daily_candidates.csv"
     candidates_path.write_text("symbol\n", encoding="utf-8")
     return SimpleNamespace(
+        base_dir=str(tmp_path),
         candidates_csv=str(candidates_path),
         entry_delay_min_sec=0,
         entry_delay_max_sec=0,
