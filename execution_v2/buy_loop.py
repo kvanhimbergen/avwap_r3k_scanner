@@ -6,6 +6,7 @@ Schedules entry intents from scan candidates using BOH + regime gating.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import importlib
 import os
 from pathlib import Path
@@ -115,6 +116,22 @@ class EdgeWindowClock:
 
 def _default_edge_clock() -> EdgeWindowClock:
     return EdgeWindowClock(now=time.time, sleep=time.sleep)
+
+
+def _deterministic_delay(
+    *,
+    ny_date: str,
+    symbol: str,
+    min_sec: float,
+    max_sec: float,
+) -> float:
+    if max_sec <= min_sec:
+        return float(min_sec)
+    payload = f"{ny_date}|{symbol.upper()}|{min_sec}|{max_sec}"
+    digest = hashlib.sha256(payload.encode("utf-8")).digest()
+    value = int.from_bytes(digest, "big")
+    u = value / float(2**256)
+    return float(min_sec) + u * (float(max_sec) - float(min_sec))
 
 
 def _load_candidates(path: str) -> list[Candidate]:
@@ -275,9 +292,26 @@ def evaluate_and_create_entry_intents(
         if not boh.confirmed:
             continue
 
+        bar_close = None
+        try:
+            bar_close = float(bars[-1].close)
+        except Exception:
+            bar_close = None
+        price_for_sizing = cand.price
+        if bar_close is not None and bar_close > 0:
+            price_for_sizing = bar_close
+            if cand.price > 0:
+                pct_diff = abs(bar_close - cand.price) / cand.price
+                if pct_diff >= 0.03:
+                    print(
+                        "SIZING_PRICE_DRIFT "
+                        f"symbol={cand.symbol} csv_price={cand.price} "
+                        f"bar_close={bar_close} pct={pct_diff:.4f}"
+                    )
+
         base_size = compute_size_shares(
             account_equity=account_equity,
-            price=cand.price,
+            price=price_for_sizing,
             dist_pct=abs(cand.dist_pct),
             cfg=cfg.sizing_cfg,
         )
@@ -287,7 +321,7 @@ def evaluate_and_create_entry_intents(
         if risk_controls is not None:
             size = adjust_order_quantity(
                 base_qty=base_size,
-                price=cand.price,
+                price=price_for_sizing,
                 account_equity=account_equity,
                 risk_controls=risk_controls,
                 gross_exposure=None,
@@ -332,7 +366,6 @@ def evaluate_and_create_entry_intents(
             continue
 
         daily_bars = md.get_daily_bars(cand.symbol)
-        entry_day = exits.entry_day_from_ts(now_ts)
         stop_price = exits.compute_stop_price(
             daily_bars,
             entry_day=entry_day,
@@ -343,7 +376,19 @@ def evaluate_and_create_entry_intents(
         if not exits.validate_risk(cand.price, stop_price, exit_cfg.max_risk_per_share):
             continue
 
-        delay = random.uniform(cfg.entry_delay_min_sec, cfg.entry_delay_max_sec)
+        deterministic_delay = (
+            os.getenv("DRY_RUN", "0").strip() == "1"
+            or os.getenv("EXECUTION_V2_DETERMINISTIC_DELAY", "0").strip() == "1"
+        )
+        if deterministic_delay:
+            delay = _deterministic_delay(
+                ny_date=entry_day,
+                symbol=cand.symbol,
+                min_sec=cfg.entry_delay_min_sec,
+                max_sec=cfg.entry_delay_max_sec,
+            )
+        else:
+            delay = random.uniform(cfg.entry_delay_min_sec, cfg.entry_delay_max_sec)
         intent = EntryIntent(
             strategy_id=DEFAULT_STRATEGY_ID,
             symbol=cand.symbol,

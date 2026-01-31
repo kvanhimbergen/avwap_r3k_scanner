@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import importlib.util
+import os
 from typing import Callable, Optional
 from zoneinfo import ZoneInfo
 
@@ -269,6 +270,50 @@ def _order_stop_price(order) -> Optional[float]:
         return None
 
 
+def _order_timestamp(order) -> Optional[float]:
+    raw = _order_attr(order, "submitted_at", None) or _order_attr(order, "created_at", None)
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw.timestamp()
+    try:
+        value = str(raw).replace("Z", "+00:00")
+        return datetime.fromisoformat(value).timestamp()
+    except Exception:
+        return None
+
+
+def _stop_selection_enabled() -> bool:
+    return os.getenv("EXIT_STOP_SELECTION_V2", "0").strip() == "1"
+
+
+def _select_preferred_stop_order(
+    orders: list,
+    *,
+    desired_qty: Optional[int],
+    desired_stop: Optional[float],
+):
+    if not orders:
+        return None
+
+    def _key(order) -> tuple[float, float, float]:
+        qty = _order_qty(order)
+        if desired_qty is None:
+            qty_diff = float("inf")
+        else:
+            qty_diff = abs(qty - int(desired_qty))
+        ts = _order_timestamp(order)
+        ts_rank = -ts if ts is not None else float("inf")
+        stop_price = _order_stop_price(order)
+        if desired_stop is None or stop_price is None:
+            stop_diff = float("inf")
+        else:
+            stop_diff = abs(stop_price - float(desired_stop))
+        return (qty_diff, ts_rank, stop_diff)
+
+    return sorted(orders, key=_key)[0]
+
+
 def _is_open_status(status: str) -> bool:
     return status in {"open", "accepted", "new"}
 
@@ -330,10 +375,21 @@ def reconcile_stop_order(
     open_orders = list(trading_client.get_orders())
     sell_orders = [o for o in open_orders if _order_side(o) == "sell" and _is_open_status(_order_status(o)) and _order_symbol(o) == state.symbol.upper()]
 
-    for order in sell_orders:
-        if _matching_stop_order(order, state.symbol, desired_qty, desired_stop):
-            state.stop_order_id = str(_order_attr(order, "id", "")) or state.stop_order_id
-            return state
+    matching_orders = [
+        order
+        for order in sell_orders
+        if _matching_stop_order(order, state.symbol, desired_qty, desired_stop)
+    ]
+    if matching_orders:
+        preferred = matching_orders[0]
+        if _stop_selection_enabled() and len(matching_orders) > 1:
+            preferred = _select_preferred_stop_order(
+                matching_orders,
+                desired_qty=desired_qty,
+                desired_stop=desired_stop,
+            ) or preferred
+        state.stop_order_id = str(_order_attr(preferred, "id", "")) or state.stop_order_id
+        return state
 
     mismatched_stops = [
         o
@@ -383,10 +439,16 @@ def reconcile_stop_order(
                 "related_orders": related,
             }
         )
-        for order in holding_orders:
-            if _order_type(order) in {"stop", "stop_limit"}:
-                state.stop_order_id = str(_order_attr(order, "id", "")) or state.stop_order_id
-                break
+        stop_holding_orders = [o for o in holding_orders if _order_type(o) in {"stop", "stop_limit"}]
+        if stop_holding_orders:
+            preferred = stop_holding_orders[0]
+            if _stop_selection_enabled() and len(stop_holding_orders) > 1:
+                preferred = _select_preferred_stop_order(
+                    stop_holding_orders,
+                    desired_qty=desired_qty,
+                    desired_stop=desired_stop,
+                ) or preferred
+            state.stop_order_id = str(_order_attr(preferred, "id", "")) or state.stop_order_id
         return state
 
     try:
@@ -422,11 +484,18 @@ def reconcile_stop_order(
     return state
 
 
-def _read_existing_stop(trading_client, symbol: str) -> Optional[float]:
+def _read_existing_stop(
+    trading_client,
+    symbol: str,
+    *,
+    desired_qty: Optional[int] = None,
+    desired_stop: Optional[float] = None,
+) -> Optional[float]:
     try:
         orders = trading_client.get_orders()
     except Exception:
         return None
+    stop_orders = []
     for order in orders:
         if _order_side(order) != "sell":
             continue
@@ -436,8 +505,19 @@ def _read_existing_stop(trading_client, symbol: str) -> Optional[float]:
             continue
         if str(_order_attr(order, "symbol", "")).upper() != symbol.upper():
             continue
-        return _order_stop_price(order)
-    return None
+        stop_orders.append(order)
+    if not stop_orders:
+        return None
+    if _stop_selection_enabled() and len(stop_orders) > 1:
+        preferred = _select_preferred_stop_order(
+            stop_orders,
+            desired_qty=desired_qty,
+            desired_stop=desired_stop,
+        )
+        if preferred is None:
+            return None
+        return _order_stop_price(preferred)
+    return _order_stop_price(stop_orders[0])
 
 
 def manage_positions(
@@ -486,7 +566,12 @@ def manage_positions(
             min_intraday_bars=cfg.min_intraday_bars,
         )
 
-        existing_stop = _read_existing_stop(trading_client, symbol)
+        existing_stop = _read_existing_stop(
+            trading_client,
+            symbol,
+            desired_qty=qty,
+            desired_stop=candidate_stop,
+        )
         desired_stop = apply_trailing_stop(existing_stop, candidate_stop)
         if desired_stop is None:
             continue
