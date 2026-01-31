@@ -243,6 +243,10 @@ def _order_side(order) -> str:
     return str(_order_attr(order, "side", "") or "").lower()
 
 
+def _order_symbol(order) -> str:
+    return str(_order_attr(order, "symbol", "") or "").upper()
+
+
 def _order_type(order) -> str:
     return str(_order_attr(order, "order_type", _order_attr(order, "type", "")) or "").lower()
 
@@ -269,7 +273,9 @@ def _is_open_status(status: str) -> bool:
     return status in {"open", "accepted", "new"}
 
 
-def _matching_stop_order(order, desired_qty: int, desired_stop: float) -> bool:
+def _matching_stop_order(order, desired_symbol: str, desired_qty: int, desired_stop: float) -> bool:
+    if _order_symbol(order) != str(desired_symbol or "").upper():
+        return False
     if _order_side(order) != "sell":
         return False
     if not _is_open_status(_order_status(order)):
@@ -297,19 +303,17 @@ def _api_error_is_insufficient_qty(exc: APIError) -> bool:
 
 def _submit_stop_order(trading_client, symbol: str, qty: int, stop_price: float):
     from alpaca.trading.enums import OrderSide, TimeInForce
-    from alpaca.trading.requests import StopLossRequest, MarketOrderRequest
+    from alpaca.trading.requests import StopOrderRequest
 
     return trading_client.submit_order(
-        MarketOrderRequest(
+        StopOrderRequest(
             symbol=symbol,
             qty=qty,
             side=OrderSide.SELL,
             time_in_force=TimeInForce.DAY,
-            order_class=None,
-            stop_loss=StopLossRequest(stop_price=round(float(stop_price), 2)),
+            stop_price=round(float(stop_price), 2),
         )
     )
-
 
 def reconcile_stop_order(
     *,
@@ -324,10 +328,10 @@ def reconcile_stop_order(
     append_event = append_event or (lambda event: None)
 
     open_orders = list(trading_client.get_orders())
-    sell_orders = [o for o in open_orders if _order_side(o) == "sell" and _is_open_status(_order_status(o))]
+    sell_orders = [o for o in open_orders if _order_side(o) == "sell" and _is_open_status(_order_status(o)) and _order_symbol(o) == state.symbol.upper()]
 
     for order in sell_orders:
-        if _matching_stop_order(order, desired_qty, desired_stop):
+        if _matching_stop_order(order, state.symbol, desired_qty, desired_stop):
             state.stop_order_id = str(_order_attr(order, "id", "")) or state.stop_order_id
             return state
 
@@ -335,7 +339,7 @@ def reconcile_stop_order(
         o
         for o in sell_orders
         if _order_type(o) in {"stop", "stop_limit"}
-        and not _matching_stop_order(o, desired_qty, desired_stop)
+        and not _matching_stop_order(o, state.symbol, desired_qty, desired_stop)
     ]
     for order in mismatched_stops:
         order_id = _order_attr(order, "id", None)
@@ -348,10 +352,10 @@ def reconcile_stop_order(
 
     if mismatched_stops:
         open_orders = list(trading_client.get_orders())
-        sell_orders = [o for o in open_orders if _order_side(o) == "sell" and _is_open_status(_order_status(o))]
+        sell_orders = [o for o in open_orders if _order_side(o) == "sell" and _is_open_status(_order_status(o)) and _order_symbol(o) == state.symbol.upper()]
 
     for order in sell_orders:
-        if _matching_stop_order(order, desired_qty, desired_stop):
+        if _matching_stop_order(order, state.symbol, desired_qty, desired_stop):
             state.stop_order_id = str(_order_attr(order, "id", "")) or state.stop_order_id
             return state
 

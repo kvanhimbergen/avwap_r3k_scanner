@@ -21,7 +21,12 @@ def ledger_path(repo_root: Path, date_ny: str) -> Path:
     return book_ids.ledger_path(repo_root, book_ids.ALPACA_PAPER, date_ny)
 
 
-def _load_existing_intent_ids(path: Path) -> set[str]:
+def _load_existing_event_keys(path: Path) -> set[str]:
+    """Return dedupe keys for events already written.
+
+    Prefer alpaca_order_id so BUY/SELL for same intent are both recorded.
+    Fallback to intent_id only if no order id exists.
+    """
     existing: set[str] = set()
     if not path.exists():
         return existing
@@ -35,9 +40,13 @@ def _load_existing_intent_ids(path: Path) -> set[str]:
                     data = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                order_id = data.get("alpaca_order_id")
+                if order_id:
+                    existing.add(f"order:{order_id}")
+                    continue
                 intent_id = data.get("intent_id")
                 if intent_id:
-                    existing.add(str(intent_id))
+                    existing.add(f"intent:{intent_id}")
     except Exception:
         return existing
     return existing
@@ -123,20 +132,28 @@ def build_order_event(
 
 def append_events(path: Path, events: Iterable[dict]) -> tuple[int, int]:
     path.parent.mkdir(parents=True, exist_ok=True)
-    existing = _load_existing_intent_ids(path)
+    existing = _load_existing_event_keys(path)
     written = 0
     skipped = 0
     with path.open("a") as handle:
         for event in events:
+            order_id = event.get("alpaca_order_id")
             intent_id = event.get("intent_id")
-            if not intent_id:
+            key = None
+            if order_id:
+                key = f"order:{order_id}"
+            elif intent_id:
+                key = f"intent:{intent_id}"
+
+            if not key:
                 skipped += 1
                 continue
-            if intent_id in existing:
+            if key in existing:
                 skipped += 1
                 continue
+
             handle.write(json.dumps(event, sort_keys=True, default=str) + "\n")
-            existing.add(str(intent_id))
+            existing.add(key)
             written += 1
     return written, skipped
 

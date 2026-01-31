@@ -810,6 +810,22 @@ def run_once(cfg) -> None:
             _log(f"DRY_RUN=1 active; execution_mode={cfg.execution_mode}")
         else:
             _log(f"Execution mode={cfg.execution_mode}")
+
+
+        # ---- Alpaca runtime context (non-secret) ----
+        try:
+            alpaca_env = {
+                "EXECUTION_MODE": cfg.execution_mode,
+                "ALPACA_PAPER": os.getenv("ALPACA_PAPER"),
+                "APCA_API_BASE_URL": os.getenv("APCA_API_BASE_URL"),
+                "HAS_APCA_API_KEY_ID": bool(os.getenv("APCA_API_KEY_ID")),
+                "HAS_APCA_API_SECRET_KEY": bool(os.getenv("APCA_API_SECRET_KEY")),
+            }
+            _log("Alpaca env: " + " ".join(f"{k}={v}" for k, v in alpaca_env.items()))
+        except Exception as exc:
+            _log(f"WARNING: failed to log Alpaca env ({type(exc).__name__}: {exc})")
+        # --------------------------------------------
+
         if cfg.execution_mode not in {"PAPER_SIM", "DRY_RUN"}:
             book_id = book_ids.resolve_book_id(cfg.execution_mode)
             if book_id == book_ids.SCHWAB_401K_MANUAL:
@@ -2072,6 +2088,36 @@ def run_once(cfg) -> None:
             )
             response = trading_client.submit_order(order)
             order_id = getattr(response, "id", None)
+            # ALPACA_PAPER observability: record SELL submissions to the paper ledger.
+            # (BUY path already records; without this, SELLs can appear broker-side with no repo trace.)
+            if cfg.execution_mode == "ALPACA_PAPER":
+                try:
+                    from types import SimpleNamespace
+                    now_utc = datetime.now(timezone.utc)
+                    order_info = None
+                    if order_id:
+                        try:
+                            order_info = trading_client.get_order_by_id(order_id)
+                        except Exception as exc:
+                            _log(f"WARNING: failed to fetch Alpaca order {order_id}: {exc}")
+                    if order_info is None:
+                        order_info = SimpleNamespace(id=order_id)
+                    event = alpaca_paper.build_order_event(
+                        intent_id=key,
+                        symbol=symbol,
+                        qty=qty,
+                        ref_price=float(ref_price),
+                        order=order_info,
+                        now_utc=now_utc,
+                    )
+                    written, skipped = alpaca_paper.append_events(ledger_path, [event])
+                    if written:
+                        lp = str(ledger_path.resolve())
+                        if lp not in ledgers_written:
+                            ledgers_written.append(lp)
+                        _log(f"ALPACA_PAPER: wrote SELL event for {symbol} order_id={order_id}")
+                except Exception as exc:
+                    _log(f"WARNING: failed to write ALPACA_PAPER SELL ledger event for {symbol}: {exc}")
             if order_id:
                 store.record_order_once(
                     key,

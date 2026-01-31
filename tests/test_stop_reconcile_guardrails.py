@@ -6,6 +6,7 @@ from execution_v2.exits import ExitPositionState, reconcile_stop_order
 @dataclass
 class FakeOrder:
     id: str
+    symbol: str
     side: str
     status: str
     order_type: str
@@ -35,6 +36,7 @@ def test_reconcile_stop_order_matches_existing_stop():
     orders = [
         FakeOrder(
             id="stop-1",
+            symbol="AAA",
             side="sell",
             status="open",
             order_type="stop",
@@ -64,6 +66,7 @@ def test_reconcile_stop_order_skips_when_sell_order_holds_qty():
     orders = [
         FakeOrder(
             id="sell-1",
+            symbol="BBB",
             side="sell",
             status="open",
             order_type="market",
