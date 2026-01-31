@@ -1122,14 +1122,17 @@ def run_once(cfg) -> None:
                     _log("LIVE: settle delay active; skipping entry intent creation.")
                 if entry_delay_after_open_active:
                     _log("LIVE: entry delay active; skipping entry intent creation.")
-            exits.manage_positions(
-                trading_client=trading_client,
-                md=md,
-                cfg=exits.ExitConfig.from_env(),
-                repo_root=repo_root,
-                dry_run=cfg.dry_run,
-                log=_log,
-            )
+            if trading_client is None:
+                _log("EXIT: skipping (no trading_client)")
+            else:
+                exits.manage_positions(
+                    trading_client=trading_client,
+                    md=md,
+                    cfg=exits.ExitConfig.from_env(),
+                    repo_root=repo_root,
+                    dry_run=cfg.dry_run,
+                    log=_log,
+                )
 
         now_ts = time.time()
 
