@@ -855,6 +855,15 @@ def run_once(cfg) -> None:
         else:
             trading_client = None
             md = None
+        if md is None:
+            class _NoMarketData:
+                def get_last_two_closed_10m(self, symbol: str) -> list:
+                    return []
+
+                def get_daily_bars(self, symbol: str) -> list:
+                    return []
+
+            md = _NoMarketData()
         # Diagnostics: confirm which candidates CSV execution will use (observability only).
         try:
             p = candidates_snapshot.get("path", cfg.candidates_csv)
