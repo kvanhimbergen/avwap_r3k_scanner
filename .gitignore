@@ -53,3 +53,6 @@ tradingview_watchlist.txt
 _local_backups/
 ledger/
 backtests/
+
+# local patch backups
+*.bak.*
