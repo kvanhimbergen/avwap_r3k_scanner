@@ -1043,14 +1043,18 @@ def run_once(cfg) -> None:
                     _log("ALPACA_PAPER: settle delay active; skipping entry intent creation.")
                 if entry_delay_after_open_active:
                     _log("ALPACA_PAPER: entry delay active; skipping entry intent creation.")
-            exits.manage_positions(
-                trading_client=trading_client,
-                md=md,
-                cfg=exits.ExitConfig.from_env(),
-                repo_root=repo_root,
-                dry_run=cfg.dry_run,
-                log=_log,
-            )
+            if trading_client is None:
+                _log("EXIT: skipping (no trading_client)")
+            else:
+                exits.manage_positions(
+                    trading_client=trading_client,
+                    md=md,
+                    cfg=exits.ExitConfig.from_env(),
+                    repo_root=repo_root,
+                    dry_run=cfg.dry_run,
+                    log=_log,
+                )
+
         else:
             decision_record["gates"]["live_gate_applied"] = True
             gate_result = live_gate.resolve_live_mode(cfg.dry_run)
