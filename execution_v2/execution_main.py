@@ -2217,6 +2217,16 @@ def run_once(cfg) -> None:
             )
             portfolio_decisions.write_portfolio_decision(decision_record, decision_path)
             _log(f"Portfolio decision recorded: {decision_path}")
+        else:
+            # Non-material (e.g., market-closed) cycles should still refresh the operator-facing
+            # "latest decision" artifact for observability, but MUST NOT append a ledger row.
+            _write_portfolio_decision_latest(
+                decision_record=decision_record,
+                latest_path=latest_path,
+                errors=errors,
+                blocks=blocks,
+                record_error=False,
+            )
         _write_execution_heartbeat(cfg, decision_record, candidates_snapshot)
 
 

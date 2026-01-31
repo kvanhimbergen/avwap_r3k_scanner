@@ -51,8 +51,15 @@ def test_market_closed_cycle_writes_only_heartbeat(tmp_path, monkeypatch) -> Non
 
     heartbeat_path = state_dir / "execution_heartbeat.json"
     assert heartbeat_path.exists()
-    assert not (state_dir / "portfolio_decision_latest.json").exists()
-    assert not (tmp_path / "ledger" / "PORTFOLIO_DECISIONS").exists()
+
+    latest_path = state_dir / "portfolio_decision_latest.json"
+    assert latest_path.exists()
+    payload = json.loads(latest_path.read_text(encoding="utf-8"))
+    blocks = payload.get("gates", {}).get("blocks", []) or []
+    assert any(isinstance(b, dict) and b.get("code") == "market_closed" for b in blocks)
+
+    decisions_dir = tmp_path / "ledger" / "PORTFOLIO_DECISIONS"
+    assert (not decisions_dir.exists()) or (not any(decisions_dir.glob("*.jsonl")))
 
     heartbeat = json.loads(heartbeat_path.read_text(encoding="utf-8"))
     assert heartbeat["market_is_open"] is False
