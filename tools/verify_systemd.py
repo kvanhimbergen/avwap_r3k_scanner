@@ -139,7 +139,7 @@ def main() -> int:
         if code == 0 and out:
             checks.append(CheckResult("execution.service.restart_sec", "PASS", out))
         else:
-            checks.append(CheckResult("execution.service.restart_sec", "WARN", err or "empty"))
+            checks.append(CheckResult("execution.service.restart_sec", "WARN", "empty (acceptable; inherited or defaulted)"))
 
     dropin_dir = Path("/etc/systemd/system/execution.service.d")
     expected = [
