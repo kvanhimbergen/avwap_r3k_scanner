@@ -230,13 +230,14 @@ def evaluate_and_create_entry_intents(
     """
     Evaluate scan candidates and create entry intents for BOH-confirmed names.
     """
-    now_ts = time.time()
     if edge_window is None:
         edge_window = EdgeWindowConfig()
     if edge_report is not None:
         edge_report.enabled = edge_window.enabled
     if edge_clock is None:
         edge_clock = _default_edge_clock()
+    now_ts = edge_clock.now()
+    entry_day = exits.entry_day_from_ts(now_ts)
     exit_cfg = exits.ExitConfig.from_env()
     risk_controls = None
     risk_controls_result = None
