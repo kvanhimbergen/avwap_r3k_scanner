@@ -13,7 +13,7 @@ import time
 import traceback
 from datetime import datetime, timezone, time as dt_time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -308,9 +308,18 @@ def _submit_market_entry(trading_client: TradingClient, intent, dry_run: bool) -
     return getattr(response, "id", None)
 
 
-def _get_account_equity(trading_client: TradingClient) -> float:
+def _get_account_equity(trading_client: Optional["TradingClient"]) -> float:
+    """
+    Return account equity for sizing.
+
+    In DRY_RUN / offline validation flows, trading_client may be None.
+    In that case, return a deterministic stub equity so the pipeline can execute.
+    """
+    if trading_client is None:
+        return float(os.getenv("DRY_RUN_EQUITY", "25000"))
     account = trading_client.get_account()
     return float(account.equity)
+
 
 def _format_ts(ts: float) -> str:
     try:
@@ -1067,19 +1076,20 @@ def run_once(cfg) -> None:
             _log(f"Gate {live_gate.allowlist_summary(allowlist)}")
             _log(f"Gate {caps.summary()}")
 
-            try:
-                account = trading_client.get_account()
-                decision_record["inputs"]["account"]["equity"] = float(account.equity)
-                decision_record["inputs"]["account"]["buying_power"] = float(account.buying_power)
-                decision_record["inputs"]["account"]["source"] = "alpaca"
-            except Exception as exc:
-                errors.append(
-                    {
-                        "where": "alpaca_account",
-                        "message": str(exc),
-                        "exception_type": type(exc).__name__,
-                    }
-                )
+            if trading_client is not None:
+                try:
+                    account = trading_client.get_account()
+                    decision_record["inputs"]["account"]["equity"] = float(account.equity)
+                    decision_record["inputs"]["account"]["buying_power"] = float(account.buying_power)
+                    decision_record["inputs"]["account"]["source"] = "alpaca"
+                except Exception as exc:
+                    errors.append(
+                        {
+                            "where": "alpaca_account",
+                            "message": str(exc),
+                            "exception_type": type(exc).__name__,
+                        }
+                    )
             account_equity = _get_account_equity(trading_client)
             if not settle_active and not entry_delay_after_open_active:
                 created = buy_loop.evaluate_and_create_entry_intents(
