@@ -44,8 +44,10 @@ def main() -> int:
     checks: List[Check] = []
 
     repo_root = Path(os.environ.get("AVWAP_BASE_DIR", ".")).resolve()
-    py = os.environ.get("AVWAP_PYTHON", sys.executable)
-
+    py = os.environ.get("AVWAP_PYTHON")
+    if not py:
+        venv_py = repo_root / "venv" / "bin" / "python"
+        py = str(venv_py) if venv_py.exists() else sys.executable
     now_ny = datetime.now(tz=ZoneInfo("America/New_York"))
     ny_date = now_ny.date().isoformat()
 
