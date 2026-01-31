@@ -1,0 +1,23 @@
+[Unit]
+Description=AVWAP Bot - Execution V2 (orders/positions)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/avwap_r3k_scanner
+
+# Note: behavior is defined by drop-ins in deploy/systemd/execution.service.d/
+# This base unit is intentionally minimal.
+
+StandardOutput=journal
+StandardError=journal
+
+# Hardening (match droplet defaults as needed)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target
