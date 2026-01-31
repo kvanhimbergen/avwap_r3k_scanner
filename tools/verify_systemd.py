@@ -92,18 +92,30 @@ def main() -> int:
         else:
             checks.append(CheckResult("execution.service.load_state", "FAIL", err or "unable to read"))
 
-        code, out, err = systemctl_show("execution.service", "ExecStartPre")
+        # New steady-state: gating lives inside ExecStart (zzzz-exec-python.conf), ExecStartPre is cleared.
+        code, out, err = systemctl_show("execution.service", "ExecStart")
         if code == 0 and out:
-            gate_ok = "check_watchlist_today.sh" in out
+            has_gate = "check_watchlist_today.sh" in out
+            has_flock = "flock" in out
             checks.append(
                 CheckResult(
-                    "execution.service.execstartpre",
-                    "PASS" if gate_ok else "WARN",
+                    "execution.service.execstart",
+                    "PASS" if (has_gate and has_flock) else "FAIL",
                     out,
                 )
             )
         else:
-            checks.append(CheckResult("execution.service.execstartpre", "FAIL", err or "unable to read"))
+            checks.append(CheckResult("execution.service.execstart", "FAIL", err or "unable to read"))
+
+        code, out, err = systemctl_show("execution.service", "ExecStartPre")
+        if code == 0:
+            # Empty is expected because drop-in clears it via ExecStartPre=
+            if not out:
+                checks.append(CheckResult("execution.service.execstartpre", "PASS", "cleared (expected)"))
+            else:
+                checks.append(CheckResult("execution.service.execstartpre", "WARN", out))
+        else:
+            checks.append(CheckResult("execution.service.execstartpre", "WARN", err or "unable to read"))
 
         code, out, err = systemctl_show("execution.service", "Restart")
         if code == 0 and out:
@@ -130,11 +142,23 @@ def main() -> int:
             checks.append(CheckResult("execution.service.restart_sec", "WARN", err or "empty"))
 
     dropin_dir = Path("/etc/systemd/system/execution.service.d")
-    watchlist_dropin = dropin_dir / "10-watchlist-gate.conf"
-    restart_dropin = dropin_dir / "20-restart-policy.conf"
-    for path in (watchlist_dropin, restart_dropin):
-        status = "PASS" if path.exists() else "FAIL"
-        checks.append(CheckResult(f"dropin.{path.name}", status, str(path)))
+    expected = [
+        "10-runtime-dir.conf",
+        "11-runtime-dir-preserve.conf",
+        "99-execution-mode.conf",
+        "zzzz-exec-python.conf",
+    ]
+    optional = [
+        "override.conf",  # local-only convenience; not required for correctness
+    ]
+    for name in expected:
+        p = dropin_dir / name
+        status = "PASS" if p.exists() else "FAIL"
+        checks.append(CheckResult(f"dropin.{name}", status, str(p)))
+    for name in optional:
+        p = dropin_dir / name
+        status = "PASS" if p.exists() else "WARN"
+        checks.append(CheckResult(f"dropin.{name}", status, str(p)))
 
     for rel in ("state", "ledger", "cache"):
         status, detail = check_path_writable(base_dir / rel)
