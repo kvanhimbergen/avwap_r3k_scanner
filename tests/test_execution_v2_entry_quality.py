@@ -162,3 +162,183 @@ def test_one_shot_cooldown_persists_across_restart(tmp_path) -> None:
         config=config,
     )
     assert decision.blocked is False
+
+
+def test_entry_delay_deterministic_in_dry_run(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DRY_RUN", "1")
+    monkeypatch.setenv("MAX_RISK_PER_SHARE_DOLLARS", "100.0")
+    monkeypatch.setenv("STOP_BUFFER_DOLLARS", "0.0")
+
+    now_ts = 1700000000.0
+    monkeypatch.setattr(buy_loop.time, "time", lambda: now_ts)
+    monkeypatch.setattr(buy_loop.random, "uniform", lambda *_: (_ for _ in ()).throw(AssertionError("random used")))
+    monkeypatch.setattr(buy_loop, "boh_confirmed_option2", lambda *_: type("B", (), {"confirmed": True, "confirm_bar_ts": None})())
+    monkeypatch.setattr(buy_loop, "compute_size_shares", lambda **_: 10)
+    monkeypatch.setattr(buy_loop, "adjust_order_quantity", lambda **_: 10)
+    monkeypatch.setattr(buy_loop.exits, "compute_stop_price", lambda *_a, **_k: 95.0)
+    monkeypatch.setattr(buy_loop.exits, "validate_risk", lambda *_: True)
+
+    db_path = tmp_path / "state.sqlite"
+    store = StateStore(str(db_path))
+    candidates_path = tmp_path / "candidates.csv"
+    _write_candidates(str(candidates_path))
+
+    bar_sets = [
+        [
+            Bar10m(ts=1, open=100.1, high=100.5, low=100.0, close=100.2),
+            Bar10m(ts=2, open=100.2, high=100.4, low=100.1, close=100.3),
+        ]
+    ]
+    md = FakeMarketData(bar_sets=bar_sets, daily_bars=_daily_bars_for_entry())
+    cfg = buy_loop.BuyLoopConfig(candidates_csv=str(candidates_path), entry_delay_min_sec=10, entry_delay_max_sec=20)
+
+    created_intents: list = []
+    created = buy_loop.evaluate_and_create_entry_intents(
+        store,
+        md,
+        cfg,
+        account_equity=100000,
+        created_intents=created_intents,
+    )
+
+    assert created == 1
+    assert len(created_intents) == 1
+    first_delay = created_intents[0].scheduled_entry_at - now_ts
+
+    store = StateStore(str(tmp_path / "state2.sqlite"))
+    created_intents = []
+    created = buy_loop.evaluate_and_create_entry_intents(
+        store,
+        md,
+        cfg,
+        account_equity=100000,
+        created_intents=created_intents,
+    )
+    assert created == 1
+    assert created_intents[0].scheduled_entry_at - now_ts == first_delay
+
+
+def test_entry_delay_random_when_enabled(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("DRY_RUN", raising=False)
+    monkeypatch.delenv("EXECUTION_V2_DETERMINISTIC_DELAY", raising=False)
+    monkeypatch.setenv("MAX_RISK_PER_SHARE_DOLLARS", "100.0")
+    monkeypatch.setenv("STOP_BUFFER_DOLLARS", "0.0")
+
+    now_ts = 1700000000.0
+    monkeypatch.setattr(buy_loop.time, "time", lambda: now_ts)
+    monkeypatch.setattr(buy_loop.random, "uniform", lambda *_: 12.5)
+    monkeypatch.setattr(buy_loop, "boh_confirmed_option2", lambda *_: type("B", (), {"confirmed": True, "confirm_bar_ts": None})())
+    monkeypatch.setattr(buy_loop, "compute_size_shares", lambda **_: 10)
+    monkeypatch.setattr(buy_loop, "adjust_order_quantity", lambda **_: 10)
+    monkeypatch.setattr(buy_loop.exits, "compute_stop_price", lambda *_a, **_k: 95.0)
+    monkeypatch.setattr(buy_loop.exits, "validate_risk", lambda *_: True)
+
+    db_path = tmp_path / "state.sqlite"
+    store = StateStore(str(db_path))
+    candidates_path = tmp_path / "candidates.csv"
+    _write_candidates(str(candidates_path))
+
+    bar_sets = [
+        [
+            Bar10m(ts=1, open=100.1, high=100.5, low=100.0, close=100.2),
+            Bar10m(ts=2, open=100.2, high=100.4, low=100.1, close=100.3),
+        ]
+    ]
+    md = FakeMarketData(bar_sets=bar_sets, daily_bars=_daily_bars_for_entry())
+    cfg = buy_loop.BuyLoopConfig(candidates_csv=str(candidates_path), entry_delay_min_sec=10, entry_delay_max_sec=20)
+
+    created_intents: list = []
+    created = buy_loop.evaluate_and_create_entry_intents(
+        store,
+        md,
+        cfg,
+        account_equity=100000,
+        created_intents=created_intents,
+    )
+
+    assert created == 1
+    assert created_intents[0].scheduled_entry_at - now_ts == 12.5
+
+
+def test_sizing_uses_bar_close_when_available(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MAX_RISK_PER_SHARE_DOLLARS", "100.0")
+    monkeypatch.setenv("STOP_BUFFER_DOLLARS", "0.0")
+    monkeypatch.setattr(buy_loop, "boh_confirmed_option2", lambda *_: type("B", (), {"confirmed": True, "confirm_bar_ts": None})())
+    monkeypatch.setattr(buy_loop, "adjust_order_quantity", lambda **_: 10)
+    monkeypatch.setattr(buy_loop.exits, "compute_stop_price", lambda *_a, **_k: 95.0)
+    monkeypatch.setattr(buy_loop.exits, "validate_risk", lambda *_: True)
+
+    captured = {}
+
+    def _capture_size(**kwargs):
+        captured["price"] = kwargs["price"]
+        return 10
+
+    monkeypatch.setattr(buy_loop, "compute_size_shares", _capture_size)
+
+    db_path = tmp_path / "state.sqlite"
+    store = StateStore(str(db_path))
+    candidates_path = tmp_path / "candidates.csv"
+    _write_candidates(str(candidates_path))
+
+    bar_sets = [
+        [
+            Bar10m(ts=1, open=100.1, high=100.5, low=100.0, close=105.0),
+            Bar10m(ts=2, open=100.2, high=100.4, low=100.1, close=106.0),
+        ]
+    ]
+    md = FakeMarketData(bar_sets=bar_sets, daily_bars=_daily_bars_for_entry())
+    cfg = buy_loop.BuyLoopConfig(candidates_csv=str(candidates_path))
+
+    created = buy_loop.evaluate_and_create_entry_intents(
+        store,
+        md,
+        cfg,
+        account_equity=100000,
+        created_intents=[],
+    )
+
+    assert created == 1
+    assert captured["price"] == 106.0
+
+
+def test_sizing_falls_back_to_csv_price_on_invalid_close(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MAX_RISK_PER_SHARE_DOLLARS", "100.0")
+    monkeypatch.setenv("STOP_BUFFER_DOLLARS", "0.0")
+    monkeypatch.setattr(buy_loop, "boh_confirmed_option2", lambda *_: type("B", (), {"confirmed": True, "confirm_bar_ts": None})())
+    monkeypatch.setattr(buy_loop, "adjust_order_quantity", lambda **_: 10)
+    monkeypatch.setattr(buy_loop.exits, "compute_stop_price", lambda *_a, **_k: 95.0)
+    monkeypatch.setattr(buy_loop.exits, "validate_risk", lambda *_: True)
+
+    captured = {}
+
+    def _capture_size(**kwargs):
+        captured["price"] = kwargs["price"]
+        return 10
+
+    monkeypatch.setattr(buy_loop, "compute_size_shares", _capture_size)
+
+    db_path = tmp_path / "state.sqlite"
+    store = StateStore(str(db_path))
+    candidates_path = tmp_path / "candidates.csv"
+    _write_candidates(str(candidates_path))
+
+    bar_sets = [
+        [
+            Bar10m(ts=1, open=100.1, high=100.5, low=100.0, close=0.0),
+            Bar10m(ts=2, open=100.2, high=100.4, low=100.1, close=0.0),
+        ]
+    ]
+    md = FakeMarketData(bar_sets=bar_sets, daily_bars=_daily_bars_for_entry())
+    cfg = buy_loop.BuyLoopConfig(candidates_csv=str(candidates_path))
+
+    created = buy_loop.evaluate_and_create_entry_intents(
+        store,
+        md,
+        cfg,
+        account_equity=100000,
+        created_intents=[],
+    )
+
+    assert created == 1
+    assert captured["price"] == 100.0
