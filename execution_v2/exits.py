@@ -575,6 +575,60 @@ def manage_positions(
         desired_stop = apply_trailing_stop(existing_stop, candidate_stop)
         if desired_stop is None:
             continue
+        # --- Guardrails: never place a sell stop at/above the tape; initial stop must be below entry ---
+        try:
+            current_price = float(getattr(pos, "current_price", 0) or 0)
+        except Exception:
+            current_price = 0.0
+
+        # Guardrail A: stop must be strictly below current market price (or it will trigger immediately)
+        if current_price > 0 and float(desired_stop) >= current_price:
+            event = build_exit_event(
+                event_type="STOP_INVALID_SKIPPED",
+                symbol=symbol,
+                qty=float(qty),
+                stop_price=desired_stop,
+                stop_basis=stop_basis,
+                stop_action="skip>=current",
+                entry_price=avg_entry,
+                source=cfg.telemetry_source,
+            )
+            try:
+                append_exit_event(repo_root, event)
+            except Exception as exc:
+                log(f"EXIT: telemetry append failed ({type(exc).__name__}: {exc})")
+            log(
+                f"EXIT: skip invalid stop {symbol} qty={qty} "
+                f"stop={desired_stop} >= current={current_price} basis={stop_basis}"
+            )
+            continue
+
+        # Guardrail B: if we're creating the initial stop, it must be below entry
+        if existing_stop is None and avg_entry is not None:
+            try:
+                if float(desired_stop) >= float(avg_entry):
+                    event = build_exit_event(
+                        event_type="STOP_INVALID_SKIPPED",
+                        symbol=symbol,
+                        qty=float(qty),
+                        stop_price=desired_stop,
+                        stop_basis=stop_basis,
+                        stop_action="skip>=entry",
+                        entry_price=avg_entry,
+                        source=cfg.telemetry_source,
+                    )
+                    try:
+                        append_exit_event(repo_root, event)
+                    except Exception as exc:
+                        log(f"EXIT: telemetry append failed ({type(exc).__name__}: {exc})")
+                    log(
+                        f"EXIT: skip invalid initial stop {symbol} qty={qty} "
+                        f"stop={desired_stop} >= entry={avg_entry} basis={stop_basis}"
+                    )
+                    continue
+            except Exception:
+                pass
+
 
         context = ExitEventContext(
             symbol=symbol,
