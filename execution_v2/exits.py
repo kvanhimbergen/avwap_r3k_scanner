@@ -177,10 +177,23 @@ def compute_intraday_higher_low_stop(
         if curr_low > prev_low:
             higher_low = curr_low
 
+    
     if higher_low is None:
         return None
 
+    # Sanity: an intraday higher-low stop must be BELOW the most recent tape.
+    # If price has already pulled back below the computed stop, submitting it would trigger immediately.
+    try:
+        last_close = float(_get_value(bars[-1], "close", None))
+    except Exception:
+        last_close = None
+
+    stop = round(float(higher_low) - float(stop_buffer_dollars), 2)
+    if last_close is not None and stop >= float(last_close):
+        return None
+
     return round(float(higher_low) - float(stop_buffer_dollars), 2)
+
 
 
 def compute_daily_swing_low_stop(
