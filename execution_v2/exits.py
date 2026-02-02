@@ -393,7 +393,7 @@ def _get_open_orders_for_symbol(trading_client, symbol: str):
         from alpaca.trading.enums import QueryOrderStatus
 
         # limit is important to avoid missing older-but-still-open orders
-        req = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[sym], limit=500)
+        req = GetOrdersRequest(status=QueryOrderStatus.ALL, symbols=[sym], limit=500)
         try:
             return list(trading_client.get_orders(filter=req))
         except TypeError:
