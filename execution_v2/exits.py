@@ -328,7 +328,12 @@ def _select_preferred_stop_order(
 
 
 def _is_open_status(status: str) -> bool:
-    return status in {"open", "accepted", "new"}
+    s = str(status or "").strip().lower()
+    # normalize enum-ish strings: "OrderStatus.NEW" -> "new"
+    if "." in s:
+        s = s.split(".")[-1]
+    # alpaca sometimes uses variants like "pending_new"
+    return s in {"open", "accepted", "new", "pending_new", "partially_filled"}
 
 
 def _matching_stop_order(order, desired_symbol: str, desired_qty: int, desired_stop: float) -> bool:
@@ -373,6 +378,45 @@ def _submit_stop_order(trading_client, symbol: str, qty: int, stop_price: float)
         )
     )
 
+
+def _get_open_orders_for_symbol(trading_client, symbol: str):
+    """Best-effort: fetch OPEN orders for a single symbol.
+
+    Critical: Alpaca get_orders() can be limited/paginated when unfiltered,
+    which can cause us to miss the stop order that is holding shares.
+    """
+    sym = str(symbol or "").upper()
+    if not sym:
+        return []
+    try:
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+
+        # limit is important to avoid missing older-but-still-open orders
+        req = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[sym], limit=500)
+        try:
+            return list(trading_client.get_orders(filter=req))
+        except TypeError:
+            # some client versions accept request directly
+            return list(trading_client.get_orders(req))
+    except Exception:
+        # Fallback: local filtering (may still be limited by API defaults)
+        try:
+            orders = list(trading_client.get_orders())
+        except Exception:
+            return []
+        out = []
+        for o in orders:
+            try:
+                if _order_symbol(o) != sym:
+                    continue
+                if not _is_open_status(_order_status(o)):
+                    continue
+                out.append(o)
+            except Exception:
+                continue
+        return out
+
 def reconcile_stop_order(
     *,
     trading_client,
@@ -385,7 +429,7 @@ def reconcile_stop_order(
     log = log or (lambda msg: None)
     append_event = append_event or (lambda event: None)
 
-    open_orders = list(trading_client.get_orders())
+    open_orders = _get_open_orders_for_symbol(trading_client, state.symbol)
     sell_orders = [o for o in open_orders if _order_side(o) == "sell" and _is_open_status(_order_status(o)) and _order_symbol(o) == state.symbol.upper()]
 
     matching_orders = [
@@ -420,7 +464,7 @@ def reconcile_stop_order(
             continue
 
     if mismatched_stops:
-        open_orders = list(trading_client.get_orders())
+        open_orders = _get_open_orders_for_symbol(trading_client, state.symbol)
         sell_orders = [o for o in open_orders if _order_side(o) == "sell" and _is_open_status(_order_status(o)) and _order_symbol(o) == state.symbol.upper()]
 
     for order in sell_orders:
@@ -505,7 +549,7 @@ def _read_existing_stop(
     desired_stop: Optional[float] = None,
 ) -> Optional[float]:
     try:
-        orders = trading_client.get_orders()
+        orders = _get_open_orders_for_symbol(trading_client, symbol)
     except Exception:
         return None
     stop_orders = []
