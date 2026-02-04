@@ -7,7 +7,8 @@ Provides structural stop calculations and stop order reconciliation utilities.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
+from enum import Enum
 import importlib.util
 import os
 from typing import Callable, Optional
@@ -60,6 +61,9 @@ class ExitConfig:
     intraday_minutes: int = 5
     intraday_lookback_days: int = 3
     daily_lookback_days: int = 320
+    min_stop_delay_seconds: int = 20 * 60
+    min_bars_since_entry: int = 4
+    min_stop_pct: float = 0.015
     telemetry_source: str = "execution_v2"
 
     @classmethod
@@ -73,8 +77,34 @@ class ExitConfig:
             intraday_minutes=int(os.getenv("EXIT_INTRADAY_MINUTES", "5")),
             intraday_lookback_days=int(os.getenv("EXIT_INTRADAY_LOOKBACK_DAYS", "3")),
             daily_lookback_days=int(os.getenv("EXIT_DAILY_LOOKBACK_DAYS", "320")),
+            min_stop_delay_seconds=int(os.getenv("EXIT_MIN_STOP_DELAY_SECONDS", "1200")),
+            min_bars_since_entry=int(os.getenv("EXIT_MIN_BARS_SINCE_ENTRY", "4")),
+            min_stop_pct=float(os.getenv("EXIT_MIN_STOP_PCT", "0.015")),
             telemetry_source=os.getenv("EXIT_TELEMETRY_SOURCE", "execution_v2"),
         )
+
+
+class SessionPhase(str, Enum):
+    OPEN_NOISE = "OPEN_NOISE"
+    EARLY_TREND = "EARLY_TREND"
+    NORMAL_SESSION = "NORMAL_SESSION"
+    CLOSE_PROTECT = "CLOSE_PROTECT"
+
+
+def classify_session_phase(ts: datetime) -> SessionPhase:
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=NY_TZ)
+    ts_ny = ts.astimezone(NY_TZ)
+    clock = ts_ny.time()
+    if time(9, 30) <= clock < time(9, 45):
+        return SessionPhase.OPEN_NOISE
+    if time(9, 45) <= clock < time(10, 30):
+        return SessionPhase.EARLY_TREND
+    if time(10, 30) <= clock < time(15, 30):
+        return SessionPhase.NORMAL_SESSION
+    if time(15, 30) <= clock < time(16, 0):
+        return SessionPhase.CLOSE_PROTECT
+    return SessionPhase.OPEN_NOISE
 
 
 def entry_day_from_ts(ts: float) -> str:
@@ -130,6 +160,194 @@ def _get_value(bar, key: str, default: float | None = None) -> float | None:
     if isinstance(bar, dict):
         return bar.get(key, default)
     return getattr(bar, key, default)
+
+
+def _coerce_timestamp(value: object | None) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(float(value), tz=timezone.utc)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    return None
+
+
+def _position_entry_ts(position) -> Optional[datetime]:
+    for attr in (
+        "entry_ts_utc",
+        "entry_ts",
+        "entry_time",
+        "entry_timestamp",
+        "filled_at",
+        "created_at",
+    ):
+        if hasattr(position, attr):
+            ts = _coerce_timestamp(getattr(position, attr))
+            if ts is not None:
+                return ts
+    return None
+
+
+def _bars_since_entry(intraday_bars: list, entry_ts: Optional[datetime]) -> Optional[int]:
+    if entry_ts is None:
+        return None
+    count = 0
+    for bar in intraday_bars or []:
+        ts_value = _get_value(bar, "ts")
+        ts = _coerce_timestamp(ts_value)
+        if ts is None:
+            continue
+        if ts > entry_ts:
+            count += 1
+    return count
+
+
+def _stop_distance_pct(entry_price: Optional[float], stop_price: Optional[float]) -> Optional[float]:
+    if entry_price is None or stop_price is None:
+        return None
+    try:
+        entry = float(entry_price)
+        stop = float(stop_price)
+    except Exception:
+        return None
+    if entry <= 0:
+        return None
+    return (entry - stop) / entry
+
+
+def select_stop_candidate(
+    *,
+    intraday_stop: Optional[float],
+    daily_stop: Optional[float],
+    existing_stop: Optional[float],
+    entry_price: Optional[float],
+    entry_ts: Optional[datetime],
+    intraday_bars: list,
+    now_utc: datetime,
+    cfg: ExitConfig,
+    phase: SessionPhase,
+    symbol: str,
+    qty: Optional[float],
+    source: str,
+    emit_event: Optional[Callable[[dict], None]] = None,
+) -> tuple[Optional[float], Optional[str], bool]:
+    emit_event = emit_event or (lambda event: None)
+    seconds_since_entry = None
+    if entry_ts is not None:
+        seconds_since_entry = max(0.0, (now_utc - entry_ts).total_seconds())
+    bars_since_entry = _bars_since_entry(intraday_bars, entry_ts)
+
+    def _emit_guardrail(event_type: str, *, stop_price: Optional[float], basis: str, metadata: dict) -> None:
+        event = build_exit_event(
+            event_type=event_type,
+            symbol=symbol,
+            ts=now_utc,
+            qty=qty,
+            stop_price=stop_price,
+            stop_basis=basis,
+            entry_price=entry_price,
+            source=source,
+            metadata=metadata,
+        )
+        emit_event(event)
+
+    def _min_stop_ok(stop_price: Optional[float], basis: str) -> bool:
+        distance_pct = _stop_distance_pct(entry_price, stop_price)
+        if distance_pct is None or distance_pct < float(cfg.min_stop_pct):
+            _emit_guardrail(
+                "STOP_TOO_CLOSE_SKIPPED",
+                stop_price=stop_price,
+                basis=basis,
+                metadata={
+                    "phase": phase.value,
+                    "entry_price": entry_price,
+                    "candidate_stop": stop_price,
+                    "distance_pct": distance_pct,
+                    "min_stop_pct": cfg.min_stop_pct,
+                },
+            )
+            return False
+        return True
+
+    def _intraday_allowed() -> bool:
+        if phase in {SessionPhase.OPEN_NOISE, SessionPhase.CLOSE_PROTECT}:
+            return False
+        if seconds_since_entry is None or bars_since_entry is None:
+            _emit_guardrail(
+                "STOP_TOO_EARLY_SKIPPED",
+                stop_price=intraday_stop,
+                basis="intraday_hl",
+                metadata={
+                    "phase": phase.value,
+                    "seconds_since_entry": seconds_since_entry,
+                    "bars_since_entry": bars_since_entry,
+                    "min_stop_delay_seconds": cfg.min_stop_delay_seconds,
+                    "min_bars_since_entry": cfg.min_bars_since_entry,
+                    "reason": "entry_time_missing",
+                },
+            )
+            return False
+        if seconds_since_entry < float(cfg.min_stop_delay_seconds) or bars_since_entry < int(
+            cfg.min_bars_since_entry
+        ):
+            _emit_guardrail(
+                "STOP_TOO_EARLY_SKIPPED",
+                stop_price=intraday_stop,
+                basis="intraday_hl",
+                metadata={
+                    "phase": phase.value,
+                    "seconds_since_entry": seconds_since_entry,
+                    "bars_since_entry": bars_since_entry,
+                    "min_stop_delay_seconds": cfg.min_stop_delay_seconds,
+                    "min_bars_since_entry": cfg.min_bars_since_entry,
+                },
+            )
+            return False
+        return True
+
+    allow_trailing = phase not in {SessionPhase.OPEN_NOISE, SessionPhase.CLOSE_PROTECT}
+
+    def _select_from(candidates: list[tuple[str, Optional[float]]]) -> tuple[Optional[float], Optional[str]]:
+        for basis, stop in candidates:
+            if stop is None:
+                continue
+            if not _min_stop_ok(stop, basis):
+                continue
+            return stop, basis
+        return None, None
+
+    if phase == SessionPhase.OPEN_NOISE:
+        return (*_select_from([("daily_swing_low", daily_stop)]), allow_trailing)
+
+    if phase == SessionPhase.CLOSE_PROTECT:
+        return None, None, allow_trailing
+
+    if phase == SessionPhase.EARLY_TREND:
+        stop, basis = _select_from([("daily_swing_low", daily_stop)])
+        if stop is not None:
+            return stop, basis, allow_trailing
+        if intraday_stop is not None and _intraday_allowed() and _min_stop_ok(
+            intraday_stop, "intraday_hl"
+        ):
+            return intraday_stop, "intraday_hl", allow_trailing
+        return None, None, allow_trailing
+
+    if intraday_stop is not None and _intraday_allowed() and _min_stop_ok(
+        intraday_stop, "intraday_hl"
+    ):
+        return intraday_stop, "intraday_hl", allow_trailing
+
+    return (*_select_from([("daily_swing_low", daily_stop)]), allow_trailing)
 
 
 def _find_swing_lows(bars: list, *, low_key: str = "low") -> list[tuple[int, float]]:
@@ -616,11 +834,14 @@ def manage_positions(
             lookback_days=cfg.intraday_lookback_days,
         )
         daily_bars = md.get_daily_bars(symbol, lookback_days=cfg.daily_lookback_days)
-        candidate_stop, stop_basis = resolve_structural_stop(
+        intraday_stop = compute_intraday_higher_low_stop(
             intraday_bars,
+            stop_buffer_dollars=cfg.stop_buffer_dollars,
+            min_bars=cfg.min_intraday_bars,
+        )
+        daily_stop = compute_daily_swing_low_stop(
             daily_bars,
             stop_buffer_dollars=cfg.stop_buffer_dollars,
-            min_intraday_bars=cfg.min_intraday_bars,
         )
 
         existing_stop = _read_existing_stop(
@@ -629,7 +850,36 @@ def manage_positions(
             desired_qty=qty,
             desired_stop=candidate_stop,
         )
-        desired_stop = apply_trailing_stop(existing_stop, candidate_stop)
+        now_utc = datetime.now(timezone.utc)
+        entry_ts = _position_entry_ts(pos)
+        phase = classify_session_phase(now_utc)
+
+        def _safe_append(event: dict) -> None:
+            try:
+                append_exit_event(repo_root, event)
+            except Exception as exc:
+                log(f"EXIT: telemetry append failed ({type(exc).__name__}: {exc})")
+
+        candidate_stop, stop_basis, allow_trailing = select_stop_candidate(
+            intraday_stop=intraday_stop,
+            daily_stop=daily_stop,
+            existing_stop=existing_stop,
+            entry_price=avg_entry,
+            entry_ts=entry_ts,
+            intraday_bars=intraday_bars,
+            now_utc=now_utc,
+            cfg=cfg,
+            phase=phase,
+            symbol=symbol,
+            qty=float(qty),
+            source=cfg.telemetry_source,
+            emit_event=_safe_append,
+        )
+
+        if allow_trailing:
+            desired_stop = apply_trailing_stop(existing_stop, candidate_stop)
+        else:
+            desired_stop = existing_stop if existing_stop is not None else candidate_stop
         if desired_stop is None:
             continue
         # --- Guardrails: never place a sell stop at/above the tape; initial stop must be below entry ---
@@ -692,13 +942,6 @@ def manage_positions(
             qty=float(qty),
             entry_price=avg_entry,
         )
-
-        def _safe_append(event: dict) -> None:
-            try:
-                append_exit_event(repo_root, event)
-            except Exception as exc:
-                log(f"EXIT: telemetry append failed ({type(exc).__name__}: {exc})")
-
         if existing_stop is None:
             event = build_exit_event(
                 event_type="STOP_RESOLVED",
