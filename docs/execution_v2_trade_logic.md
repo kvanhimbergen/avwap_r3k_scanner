@@ -109,6 +109,18 @@ Sizing is evaluated only at entry.
 - The scan provides a structural stop (`Stop_Loss`) and a primary target (`Target_R2`).
 - Behavioral stop escalation is planned but not yet automated.
 
+### Session-phase stop authority
+
+- OPEN_NOISE (09:30–09:45 ET): no intraday HL or new trailing; prefer daily swing low.
+- EARLY_TREND (09:45–10:30 ET): daily swing low first, intraday HL only after guardrails.
+- NORMAL_SESSION (10:30–15:30 ET): intraday HL primary, daily swing low fallback.
+- CLOSE_PROTECT (15:30–16:00 ET): keep existing stop; no new structure-based stops.
+
+### Guardrails
+
+- MIN_STOP_PCT (1.5%) enforces a minimum distance from entry.
+- MIN_STOP_DELAY_SECONDS (20m) and MIN_BARS_SINCE_ENTRY (4) gate intraday HL usage.
+
 ---
 
 ## Partial Exits (Conditional Trims)
