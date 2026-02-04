@@ -24,8 +24,9 @@ def ledger_path(repo_root: Path, date_ny: str) -> Path:
 def _load_existing_event_keys(path: Path) -> set[str]:
     """Return dedupe keys for events already written.
 
-    Prefer alpaca_order_id so BUY/SELL for same intent are both recorded.
-    Fallback to intent_id only if no order id exists.
+    Dedupe is based on an event signature (order_id + status/fill fields),
+    not just order_id, so an order can produce multiple append-only ORDER_STATUS
+    events as it transitions (new -> filled, etc.).
     """
     existing: set[str] = set()
     if not path.exists():
@@ -40,13 +41,9 @@ def _load_existing_event_keys(path: Path) -> set[str]:
                     data = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                order_id = data.get("alpaca_order_id")
-                if order_id:
-                    existing.add(f"order:{order_id}")
-                    continue
-                intent_id = data.get("intent_id")
-                if intent_id:
-                    existing.add(f"intent:{intent_id}")
+                key = _event_dedupe_key(data)
+                if key:
+                    existing.add(key)
     except Exception:
         return existing
     return existing
@@ -63,6 +60,45 @@ def _normalize_ts(value) -> str | None:
         return str(value)
     except Exception:
         return None
+
+def _event_dedupe_key(event: dict) -> str | None:
+    """Return a stable dedupe key for append-only ORDER_STATUS events.
+
+    We want to:
+      - prevent writing exact duplicates
+      - allow multiple events for the same alpaca_order_id when status/fill fields change
+    """
+    order_id = event.get("alpaca_order_id")
+    intent_id = event.get("intent_id")
+    event_type = event.get("event_type")
+    status = event.get("status")
+    filled_qty = event.get("filled_qty")
+    filled_avg_price = event.get("filled_avg_price")
+    updated_at = event.get("updated_at")
+    filled_at = event.get("filled_at")
+
+    try:
+        filled_qty = float(filled_qty or 0.0)
+    except Exception:
+        filled_qty = 0.0
+    try:
+        filled_avg_price = float(filled_avg_price) if filled_avg_price is not None else None
+    except Exception:
+        filled_avg_price = None
+
+    base = None
+    if order_id:
+        base = f"order:{order_id}"
+    elif intent_id:
+        base = f"intent:{intent_id}"
+    else:
+        return None
+
+    return (
+        f"{base}:type:{event_type}:status:{status}:filled_qty:{filled_qty}:"
+        f"filled_avg_price:{filled_avg_price}:updated_at:{updated_at}:filled_at:{filled_at}"
+    )
+
 
 
 def build_order_event(
@@ -137,21 +173,13 @@ def append_events(path: Path, events: Iterable[dict]) -> tuple[int, int]:
     skipped = 0
     with path.open("a") as handle:
         for event in events:
-            order_id = event.get("alpaca_order_id")
-            intent_id = event.get("intent_id")
-            key = None
-            if order_id:
-                key = f"order:{order_id}"
-            elif intent_id:
-                key = f"intent:{intent_id}"
-
+            key = _event_dedupe_key(event)
             if not key:
                 skipped += 1
                 continue
             if key in existing:
                 skipped += 1
                 continue
-
             handle.write(json.dumps(event, sort_keys=True, default=str) + "\n")
             existing.add(key)
             written += 1
