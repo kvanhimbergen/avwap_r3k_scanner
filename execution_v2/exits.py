@@ -472,7 +472,11 @@ def _order_status(order) -> str:
 
 
 def _order_side(order) -> str:
-    return str(_order_attr(order, "side", "") or "").lower()
+    s = str(_order_attr(order, "side", "") or "").strip().lower()
+    # normalize enum-ish strings: "OrderSide.SELL" -> "sell"
+    if "." in s:
+        s = s.split(".")[-1]
+    return s
 
 
 def _order_symbol(order) -> str:
@@ -480,7 +484,11 @@ def _order_symbol(order) -> str:
 
 
 def _order_type(order) -> str:
-    return str(_order_attr(order, "order_type", _order_attr(order, "type", "")) or "").lower()
+    s = str(_order_attr(order, "order_type", _order_attr(order, "type", "")) or "").strip().lower()
+    # normalize enum-ish strings: "OrderType.STOP" -> "stop"
+    if "." in s:
+        s = s.split(".")[-1]
+    return s
 
 
 def _order_qty(order) -> int:
