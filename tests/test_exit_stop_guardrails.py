@@ -126,3 +126,19 @@ def test_intraday_guardrails_delay_and_bars():
     assert candidate == 95.0
     assert basis == "intraday_hl"
     assert not events
+
+
+def test_matching_stop_order_handles_enumish_strings():
+    # Alpaca SDK objects often stringify enums like "OrderSide.SELL", "OrderType.STOP", "OrderStatus.NEW".
+    # Our helpers should normalize these so existing stops are recognized and not re-submitted.
+    from execution_v2.exits import _matching_stop_order
+
+    order = {
+        "symbol": "IMNM",
+        "side": "OrderSide.SELL",
+        "type": "OrderType.STOP",
+        "status": "OrderStatus.NEW",
+        "qty": "32",
+        "stop_price": "23.57",
+    }
+    assert _matching_stop_order(order, "IMNM", 32, 23.57) is True
