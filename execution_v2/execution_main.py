@@ -1737,6 +1737,61 @@ def run_once(cfg) -> None:
                         now_utc=now_utc,
                     )
                     written, skipped = alpaca_paper.append_events(ledger_path, [event])
+                    # ALPACA_PAPER observability: bounded post-submit refresh for near-instant fills
+                    # Append-only: if broker state materially changes (new -> filled), append a second ORDER_STATUS event.
+                    def _evt_sig(evt: dict) -> tuple:
+                        return (
+                            str(evt.get("status")),
+                            float(evt.get("filled_qty") or 0.0),
+                            evt.get("filled_avg_price"),
+                            evt.get("updated_at"),
+                            evt.get("filled_at"),
+                        )
+
+                    _sig0 = _evt_sig(event)
+                    _refresh_sleeps = (0.05, 0.10, 0.15, 0.30, 0.50, 0.70)  # total ~= 1.80s
+                    if order_id_str:
+                        for _sleep_s in _refresh_sleeps:
+                            try:
+                                time.sleep(_sleep_s)
+                                refreshed_order = trading_client.get_order_by_id(order_id)
+                                refreshed_event = alpaca_paper.build_order_event(
+                                    intent_id=key,
+                                    symbol=intent.symbol,
+                                    qty=intent.size_shares,
+                                    ref_price=float(intent.ref_price),
+                                    order=refreshed_order,
+                                    now_utc=datetime.now(timezone.utc),
+                                )
+                                _sig1 = _evt_sig(refreshed_event)
+                                if _sig1 != _sig0:
+                                    alpaca_paper.append_events(ledger_path, [refreshed_event])
+                                    # If filled_qty transitions 0 -> >0, record fill + OPEN transition (best-effort)
+                                    try:
+                                        if float(_sig0[1]) <= 0 and float(refreshed_event.get("filled_qty") or 0) > 0:
+                                            fills += 1
+                                            store.record_entry_fill(
+                                                date_ny=date_ny,
+                                                strategy_id=intent.strategy_id,
+                                                symbol=intent.symbol,
+                                                filled_ts=datetime.now(timezone.utc).timestamp(),
+                                                source="alpaca_paper",
+                                            )
+                                            if symbol_state_store:
+                                                symbol_state_store.transition(
+                                                    intent.symbol,
+                                                    "OPEN",
+                                                    now_utc=datetime.now(timezone.utc),
+                                                    entry_fill_ts_utc=datetime.now(timezone.utc).isoformat(),
+                                                )
+                                                symbol_state_store.save()
+                                    except Exception:
+                                        pass
+                                    break
+                            except Exception as exc:
+                                _log(f"WARNING: post-submit refresh failed for {intent.symbol} order {order_id}: {exc}")
+                                continue
+
                     if written:
                         if not wrote_ledger:
                             ledgers_written.append(str(ledger_path.resolve()))
@@ -2137,6 +2192,43 @@ def run_once(cfg) -> None:
                         now_utc=now_utc,
                     )
                     written, skipped = alpaca_paper.append_events(ledger_path, [event])
+                    # ALPACA_PAPER observability: bounded post-submit refresh for near-instant fills
+                    # Append-only: if broker state materially changes (new -> filled), append a second ORDER_STATUS event.
+                    def _evt_sig(evt: dict) -> tuple:
+                        return (
+                            str(evt.get("status")),
+                            float(evt.get("filled_qty") or 0.0),
+                            evt.get("filled_avg_price"),
+                            evt.get("updated_at"),
+                            evt.get("filled_at"),
+                        )
+
+                    _sig0 = _evt_sig(event)
+                    _refresh_sleeps = (0.05, 0.10, 0.15, 0.30, 0.50, 0.70)  # total ~= 1.80s
+                    if order_id:
+                        for _sleep_s in _refresh_sleeps:
+                            try:
+                                time.sleep(_sleep_s)
+                                refreshed_order = trading_client.get_order_by_id(order_id)
+                                refreshed_event = alpaca_paper.build_order_event(
+                                    intent_id=key,
+                                    symbol=symbol,
+                                    qty=qty,
+                                    ref_price=float(ref_price),
+                                    order=refreshed_order,
+                                    now_utc=datetime.now(timezone.utc),
+                                )
+                                _sig1 = _evt_sig(refreshed_event)
+                                if _sig1 != _sig0:
+                                    alpaca_paper.append_events(ledger_path, [refreshed_event])
+                                    lp = str(ledger_path.resolve())
+                                    if lp not in ledgers_written:
+                                        ledgers_written.append(lp)
+                                    break
+                            except Exception as exc:
+                                _log(f"WARNING: post-submit refresh failed for {symbol} order {order_id}: {exc}")
+                                continue
+
                     if written:
                         lp = str(ledger_path.resolve())
                         if lp not in ledgers_written:
