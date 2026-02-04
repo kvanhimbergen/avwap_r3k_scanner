@@ -848,7 +848,7 @@ def manage_positions(
             trading_client,
             symbol,
             desired_qty=qty,
-            desired_stop=candidate_stop,
+            desired_stop=None,
         )
         now_utc = datetime.now(timezone.utc)
         entry_ts = _position_entry_ts(pos)
@@ -875,6 +875,13 @@ def manage_positions(
             source=cfg.telemetry_source,
             emit_event=_safe_append,
         )
+        if _stop_selection_enabled():
+            existing_stop = _read_existing_stop(
+                trading_client,
+                symbol,
+                desired_qty=qty,
+                desired_stop=candidate_stop,
+            )
 
         if allow_trailing:
             desired_stop = apply_trailing_stop(existing_stop, candidate_stop)
