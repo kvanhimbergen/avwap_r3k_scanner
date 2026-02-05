@@ -1606,8 +1606,6 @@ def run_once(cfg) -> None:
                             }
                         )
                         continue
-                if allowlist and intent.symbol.upper() not in allowlist:
-                    _log(f"Gate ALPACA_PAPER allowlist would block {intent.symbol}")
                 if _has_open_order_or_position(trading_client, intent.symbol):
                     _log(f"SKIP {intent.symbol}: open order/position exists")
                     decision_record["actions"]["skipped"].append(
@@ -1860,9 +1858,6 @@ def run_once(cfg) -> None:
             _log("Portfolio decision unavailable; skipping entry orders.")
         for intent in intents:
             effective_dry_run = not live_active
-            if effective_dry_run and allowlist and intent.symbol.upper() not in allowlist:
-                _log(f"Gate DRY_RUN allowlist would block {intent.symbol}")
-
             if enforcement_context:
                 enforcement_result = portfolio_decision_enforce.evaluate_action(
                     "entry", intent.symbol, enforcement_context
