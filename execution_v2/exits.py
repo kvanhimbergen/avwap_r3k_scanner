@@ -811,6 +811,7 @@ def manage_positions(
     repo_root,
     dry_run: bool,
     log: Callable[[str], None] | None = None,
+    entry_delay_active: bool = False,
 ) -> None:
     log = log or (lambda msg: None)
     try:
@@ -835,13 +836,35 @@ def manage_positions(
             avg_entry = float(getattr(pos, "avg_entry_price", 0))
         except Exception:
             avg_entry = None
-
-        intraday_bars = md.get_intraday_bars(
+        # Read existing stop BEFORE any market data calls.
+        existing_stop = _read_existing_stop(
+            trading_client,
             symbol,
-            minutes=cfg.intraday_minutes,
-            lookback_days=cfg.intraday_lookback_days,
+            desired_qty=qty,
+            desired_stop=None,
         )
-        daily_bars = md.get_daily_bars(symbol, lookback_days=cfg.daily_lookback_days)
+
+        # If we're in the post-open entry-delay window and a stop already exists for full qty,
+        # do not fetch market data or attempt ratchets. Keep cycle quiet.
+        if entry_delay_active and existing_stop is not None:
+            log(
+                f"EXIT: entry_delay active; stop exists for {symbol} qty={qty} stop={existing_stop}; skipping MD + stop updates"
+            )
+            continue
+
+        try:
+            intraday_bars = md.get_intraday_bars(
+                symbol,
+                minutes=cfg.intraday_minutes,
+                lookback_days=cfg.intraday_lookback_days,
+            )
+            daily_bars = md.get_daily_bars(symbol, lookback_days=cfg.daily_lookback_days)
+        except Exception as exc:
+            log(
+                f"EXIT: market data unavailable for {symbol} ({type(exc).__name__}: {exc}); skipping stop eval"
+            )
+            continue
+
         intraday_stop = compute_intraday_higher_low_stop(
             intraday_bars,
             stop_buffer_dollars=cfg.stop_buffer_dollars,
@@ -850,13 +873,6 @@ def manage_positions(
         daily_stop = compute_daily_swing_low_stop(
             daily_bars,
             stop_buffer_dollars=cfg.stop_buffer_dollars,
-        )
-
-        existing_stop = _read_existing_stop(
-            trading_client,
-            symbol,
-            desired_qty=qty,
-            desired_stop=None,
         )
         now_utc = datetime.now(timezone.utc)
         entry_ts = _position_entry_ts(pos)

@@ -1053,6 +1053,7 @@ def run_once(cfg) -> None:
                     repo_root=repo_root,
                     dry_run=cfg.dry_run,
                     log=_log,
+                    entry_delay_active=entry_delay_after_open_active,
                 )
 
         else:
@@ -1132,6 +1133,7 @@ def run_once(cfg) -> None:
                     repo_root=repo_root,
                     dry_run=cfg.dry_run,
                     log=_log,
+                    entry_delay_active=entry_delay_after_open_active,
                 )
 
         now_ts = time.time()
