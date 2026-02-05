@@ -1721,7 +1721,7 @@ def run_once(cfg) -> None:
                         throttle_seconds=60,
                     )
                     order_info = None
-                    if order_id_str:
+                    if order_id:
                         try:
                             order_info = trading_client.get_order_by_id(order_id)
                         except Exception as exc:
@@ -1749,8 +1749,8 @@ def run_once(cfg) -> None:
                         )
 
                     _sig0 = _evt_sig(event)
-                    _refresh_sleeps = (0.05, 0.10, 0.15, 0.30, 0.50, 0.70)  # total ~= 1.80s
-                    if order_id_str:
+                    _refresh_sleeps = (0.05, 0.10, 0.15, 0.30, 0.50, 0.70, 1.00, 1.00)  # total ~= 3.80s
+                    if order_id:
                         for _sleep_s in _refresh_sleeps:
                             try:
                                 time.sleep(_sleep_s)
@@ -2204,7 +2204,7 @@ def run_once(cfg) -> None:
                         )
 
                     _sig0 = _evt_sig(event)
-                    _refresh_sleeps = (0.05, 0.10, 0.15, 0.30, 0.50, 0.70)  # total ~= 1.80s
+                    _refresh_sleeps = (0.05, 0.10, 0.15, 0.30, 0.50, 0.70, 1.00, 1.00)  # total ~= 3.80s
                     if order_id:
                         for _sleep_s in _refresh_sleeps:
                             try:

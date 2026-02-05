@@ -121,6 +121,53 @@ def test_alpaca_paper_idempotent_ledger(tmp_path) -> None:
     assert len(path.read_text().strip().splitlines()) == 1
 
 
+
+
+def test_alpaca_paper_allows_status_transition_for_same_order_id(tmp_path) -> None:
+    """
+    Append-only semantics:
+      - allow multiple ORDER_STATUS rows for the same alpaca_order_id when material fields change
+        (e.g. new -> filled)
+      - still dedupe exact duplicates
+    """
+    date_ny = "2024-01-02"
+    ledger = tmp_path / "ledger.jsonl"
+    oid = "order-123"
+
+    evt_new = {
+        "alpaca_order_id": oid,
+        "intent_id": "intent-1",
+        "date_ny": date_ny,
+        "execution_mode": "ALPACA_PAPER",
+        "event_type": "ORDER_STATUS",
+        "status": "new",
+        "filled_qty": 0,
+        "filled_avg_price": None,
+        "updated_at": "2024-01-02T15:04:00+00:00",
+        "filled_at": None,
+    }
+
+    evt_filled = {
+        **evt_new,
+        "status": "filled",
+        "filled_qty": 10,
+        "filled_avg_price": 12.34,
+        "updated_at": "2024-01-02T15:04:02+00:00",
+        "filled_at": "2024-01-02T15:04:02+00:00",
+    }
+
+    w1, s1 = alpaca_paper.append_events(ledger, [evt_new])
+    w2, s2 = alpaca_paper.append_events(ledger, [evt_filled])
+    w3, s3 = alpaca_paper.append_events(ledger, [evt_filled])  # exact dup
+
+    assert (w1, s1) == (1, 0)
+    assert (w2, s2) == (1, 0)  # material change => new row allowed
+    assert (w3, s3) == (0, 1)  # exact duplicate => skipped
+
+    lines = ledger.read_text().strip().splitlines()
+    assert len(lines) == 2
+
+
 def test_alpaca_paper_ledger_location(tmp_path) -> None:
     date_ny = "2024-01-02"
     path = alpaca_paper.ledger_path(tmp_path, date_ny)
