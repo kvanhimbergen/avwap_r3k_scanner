@@ -245,6 +245,37 @@ python /root/avwap_r3k_scanner/tools/verify_systemd.py
 
 ---
 
+### 18) Verify execution DB path pin and active runtime DB
+**Command**
+```bash
+systemctl show execution.service -p WorkingDirectory -p Environment
+```
+**Expected**
+- `WorkingDirectory=/root/avwap_r3k_scanner` (or your deployment path).
+- `Environment=... EXECUTION_V2_DB=/root/avwap_r3k_scanner/data/execution_v2.sqlite ...` is present when pinned.
+
+**If not expected then…**
+- Add/update a systemd drop-in with:
+  - `[Service]`
+  - `Environment=EXECUTION_V2_DB=/root/avwap_r3k_scanner/data/execution_v2.sqlite`
+- Reload and restart: `systemctl daemon-reload && systemctl restart execution.service`.
+
+**Command**
+```bash
+journalctl -u execution.service -n 100 --no-pager | grep "Execution DB:"
+```
+**Expected**
+- Log line shows the resolved DB path used by the running cycle.
+
+**Command**
+```bash
+grep -n "\"db_path\\|db_path_abs\\|db_exists\\|db_mtime_utc\\|db_size_bytes\"" /root/avwap_r3k_scanner/state/portfolio_decision_latest.json
+```
+**Expected**
+- DB metadata fields are present in `inputs` and match the pinned DB path.
+
+---
+
 ## Journalctl troubleshooting snippets
 
 - Execution logs (today):
