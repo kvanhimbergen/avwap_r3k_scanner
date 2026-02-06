@@ -429,6 +429,16 @@ def _summarize_skip_reasons(skipped_actions: list[dict]) -> dict[str, int]:
     return counts
 
 
+def _increment_lifecycle_reason_count(decision_record: dict, reason: str, count: int) -> None:
+    if count <= 0:
+        return
+    counts = (
+        decision_record.setdefault("intents_meta", {})
+        .setdefault("entry_intent_lifecycle_reason_counts", {})
+    )
+    counts[reason] = int(counts.get(reason, 0)) + int(count)
+
+
 def _decision_cycle_info(cfg) -> dict:
     service_name = os.getenv("SYSTEMD_UNIT") or None
     return {
@@ -463,6 +473,9 @@ def _init_decision_record(cfg, candidates_snapshot: dict, now_utc: datetime, rep
             "db_exists": None,
             "db_mtime_utc": None,
             "db_size_bytes": None,
+            "entry_intent_lifecycle": {
+                "ttl_sec": None,
+            },
             "account": {
                 "equity": None,
                 "buying_power": None,
@@ -483,6 +496,8 @@ def _init_decision_record(cfg, candidates_snapshot: dict, now_utc: datetime, rep
             "entry_intents_pre_s2_count": 0,
             "entry_intents_post_s2_count": 0,
             "drop_reason_counts": {},
+            "entry_intent_lifecycle": {},
+            "entry_intent_lifecycle_reason_counts": {},
         },
         "sleeves": {},
         "s2_enforcement": {},
@@ -803,6 +818,10 @@ def _resolve_entry_delay_after_open_minutes() -> int:
     return _parse_int_env("ENTRY_DELAY_AFTER_OPEN_MINUTES", 20, min_value=0)
 
 
+def _resolve_entry_intent_ttl_sec() -> int:
+    return _parse_int_env("ENTRY_INTENT_TTL_SEC", 3600, min_value=0)
+
+
 def _entry_delay_after_open_active(
     delay_minutes: int,
     *,
@@ -872,6 +891,7 @@ def run_once(cfg) -> None:
             _log("ERROR: Missing Alpaca API credentials in environment")
             raise RuntimeError("Missing Alpaca API credentials in environment")
     decision_ts_utc = datetime.now(timezone.utc)
+    cycle_now_ts = decision_ts_utc.timestamp()
     candidates_snapshot = _snapshot_candidates_csv(cfg.candidates_csv)
     repo_root = Path(getattr(cfg, "base_dir", "") or os.getenv("AVWAP_REPO_ROOT", "") or Path(__file__).resolve().parents[1]).resolve()
     decision_record = _init_decision_record(cfg, candidates_snapshot, decision_ts_utc, repo_root)
@@ -888,6 +908,14 @@ def run_once(cfg) -> None:
     entry_delay_after_open_message: str | None = None
     symbol_state_store: state_machine.SymbolExecutionStateStore | None = None
     consumed_entries_store: state_machine.ConsumedEntriesStore | None = None
+    entry_intent_ttl_sec = _resolve_entry_intent_ttl_sec()
+    decision_record["inputs"]["entry_intent_lifecycle"] = {
+        "ttl_sec": entry_intent_ttl_sec,
+    }
+    lifecycle_meta = decision_record.setdefault("intents_meta", {}).setdefault(
+        "entry_intent_lifecycle", {}
+    )
+    lifecycle_meta.setdefault("purge", {})
     db_debug = _db_debug_enabled()
     db_meta = _resolve_db_path_metadata(cfg.db_path)
     decision_record["inputs"].update(db_meta)
@@ -968,6 +996,51 @@ def run_once(cfg) -> None:
                 f"({type(exc).__name__}: {exc}) path={db_meta['db_path_abs']}"
             )
             return
+        purge_stats: dict[str, Any] = {
+            "purged_count": 0,
+            "oldest_age_sec": 0.0,
+            "min_sched": None,
+            "max_sched": None,
+            "ttl_sec": entry_intent_ttl_sec,
+            "now_ts": cycle_now_ts,
+        }
+        if hasattr(store, "purge_stale_entry_intents"):
+            try:
+                raw = store.purge_stale_entry_intents(cycle_now_ts, entry_intent_ttl_sec)
+                if isinstance(raw, dict):
+                    purge_stats.update(raw)
+            except Exception as exc:
+                errors.append(
+                    {
+                        "where": "entry_intent_lifecycle_purge",
+                        "message": str(exc),
+                        "exception_type": type(exc).__name__,
+                        "db_path": cfg.db_path,
+                    }
+                )
+                blocks.append(
+                    {
+                        "code": "entry_intent_lifecycle_purge_failed",
+                        "message": "entry intent lifecycle purge failed; submissions blocked",
+                    }
+                )
+                _log(
+                    "ERROR: failed to purge stale entry intents "
+                    f"({type(exc).__name__}: {exc})"
+                )
+                return
+        lifecycle_meta["purge"] = purge_stats
+        purged_count = int(purge_stats.get("purged_count", 0) or 0)
+        if purged_count > 0:
+            _log(
+                "ENTRY_INTENTS: purged stale intents "
+                f"count={purged_count} "
+                f"oldest_age_sec={float(purge_stats.get('oldest_age_sec', 0.0)):.1f} "
+                f"ttl_sec={entry_intent_ttl_sec}"
+            )
+            _increment_lifecycle_reason_count(
+                decision_record, "entry_intent_ttl_purged", purged_count
+            )
         if cfg.entry_delay_min_sec > cfg.entry_delay_max_sec:
             cfg.entry_delay_min_sec, cfg.entry_delay_max_sec = cfg.entry_delay_max_sec, cfg.entry_delay_min_sec
         buy_cfg = buy_loop.BuyLoopConfig(
@@ -2520,6 +2593,12 @@ def run_once(cfg) -> None:
     finally:
         skipped_actions = decision_record.get("actions", {}).get("skipped", []) or []
         skip_reason_counts = _summarize_skip_reasons(skipped_actions)
+        lifecycle_reason_counts = (
+            decision_record.get("intents_meta", {})
+            .get("entry_intent_lifecycle_reason_counts", {})
+        )
+        for reason, count in lifecycle_reason_counts.items():
+            skip_reason_counts[reason] = skip_reason_counts.get(reason, 0) + int(count)
         decision_record["actions"]["skipped_reason_counts"] = skip_reason_counts
         decision_record.setdefault("intents_meta", {})["skip_reason_counts"] = skip_reason_counts
         market_is_open = decision_record.get("gates", {}).get("market", {}).get("is_open")

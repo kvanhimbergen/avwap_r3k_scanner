@@ -285,6 +285,48 @@ class StateStore:
             for r in rows
         ]
 
+    def count_due_entry_intents(self, now_ts: float) -> int:
+        cur = self.conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM entry_intents WHERE scheduled_entry_at <= ?;", (now_ts,))
+        row = cur.fetchone()
+        return int(row[0] if row else 0)
+
+    def purge_stale_entry_intents(self, now_ts: float, ttl_sec: int) -> dict:
+        ttl = max(0, int(ttl_sec))
+        cur = self.conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) AS purged_count,
+                MIN(scheduled_entry_at) AS min_sched,
+                MAX(scheduled_entry_at) AS max_sched,
+                MAX(? - scheduled_entry_at) AS oldest_age_sec
+            FROM entry_intents
+            WHERE (? - scheduled_entry_at) > ?;
+            """,
+            (now_ts, now_ts, ttl),
+        )
+        row = cur.fetchone()
+        purged_count = int(row["purged_count"] if row and row["purged_count"] is not None else 0)
+        min_sched = float(row["min_sched"]) if row and row["min_sched"] is not None else None
+        max_sched = float(row["max_sched"]) if row and row["max_sched"] is not None else None
+        oldest_age_sec = (
+            float(row["oldest_age_sec"])
+            if row and row["oldest_age_sec"] is not None
+            else 0.0
+        )
+        if purged_count > 0:
+            cur.execute(
+                "DELETE FROM entry_intents WHERE (? - scheduled_entry_at) > ?;",
+                (now_ts, ttl),
+            )
+        return {
+            "purged_count": purged_count,
+            "oldest_age_sec": oldest_age_sec,
+            "min_sched": min_sched,
+            "max_sched": max_sched,
+        }
+
     # -------------------------
     # Positions
     # -------------------------
