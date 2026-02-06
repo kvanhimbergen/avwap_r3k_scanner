@@ -12,7 +12,7 @@ import sqlite3
 import socket
 import time
 import traceback
-from datetime import datetime, timezone, time as dt_time
+from datetime import datetime, timedelta, timezone, time as dt_time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 from types import SimpleNamespace
@@ -475,6 +475,7 @@ def _init_decision_record(cfg, candidates_snapshot: dict, now_utc: datetime, rep
             "db_size_bytes": None,
             "entry_intent_lifecycle": {
                 "ttl_sec": None,
+                "reschedule_on_gate": None,
             },
             "account": {
                 "equity": None,
@@ -748,6 +749,19 @@ def _parse_int_env(name: str, default: int, *, min_value: int | None = None) -> 
     return value
 
 
+def _parse_bool_env(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    _warn_once(name, f"WARNING: invalid {name}={raw!r}; using default {int(default)}")
+    return default
+
+
 def _parse_time_env(name: str, default_value: str) -> dt_time:
     raw = os.getenv(name)
     value = raw.strip() if raw else ""
@@ -820,6 +834,10 @@ def _resolve_entry_delay_after_open_minutes() -> int:
 
 def _resolve_entry_intent_ttl_sec() -> int:
     return _parse_int_env("ENTRY_INTENT_TTL_SEC", 3600, min_value=0)
+
+
+def _resolve_entry_intent_reschedule_on_gate() -> bool:
+    return _parse_bool_env("ENTRY_INTENT_RESCHEDULE_ON_GATE", False)
 
 
 def _entry_delay_after_open_active(
@@ -909,13 +927,16 @@ def run_once(cfg) -> None:
     symbol_state_store: state_machine.SymbolExecutionStateStore | None = None
     consumed_entries_store: state_machine.ConsumedEntriesStore | None = None
     entry_intent_ttl_sec = _resolve_entry_intent_ttl_sec()
+    entry_intent_reschedule_on_gate = _resolve_entry_intent_reschedule_on_gate()
     decision_record["inputs"]["entry_intent_lifecycle"] = {
         "ttl_sec": entry_intent_ttl_sec,
+        "reschedule_on_gate": entry_intent_reschedule_on_gate,
     }
     lifecycle_meta = decision_record.setdefault("intents_meta", {}).setdefault(
         "entry_intent_lifecycle", {}
     )
     lifecycle_meta.setdefault("purge", {})
+    lifecycle_reschedules = lifecycle_meta.setdefault("reschedules", [])
     db_debug = _db_debug_enabled()
     db_meta = _resolve_db_path_metadata(cfg.db_path)
     decision_record["inputs"].update(db_meta)
@@ -1168,6 +1189,76 @@ def run_once(cfg) -> None:
         if settle_active and settle_message:
             blocks.append({"code": "market_settle_delay", "message": settle_message})
             _log(f"Gate market_settle_delay active ({settle_minutes}m).")
+        if (
+            entry_intent_reschedule_on_gate
+            and market_is_open
+            and (settle_active or entry_delay_after_open_active)
+            and now_et is not None
+            and hasattr(store, "reschedule_due_entry_intents")
+        ):
+            now_et_local = now_et.astimezone(clocks.ET)
+            open_dt = datetime.combine(now_et_local.date(), clocks.REG_OPEN, tzinfo=clocks.ET)
+            reschedule_targets: list[tuple[str, float]] = []
+            if settle_active:
+                reschedule_targets.append(
+                    (
+                        "settle",
+                        (open_dt + timedelta(minutes=settle_minutes)).timestamp(),
+                    )
+                )
+            if entry_delay_after_open_active:
+                reschedule_targets.append(
+                    (
+                        "entry_delay",
+                        (open_dt + timedelta(minutes=entry_delay_minutes)).timestamp(),
+                    )
+                )
+            if reschedule_targets:
+                reason, new_scheduled_at = max(reschedule_targets, key=lambda item: item[1])
+                try:
+                    raw = store.reschedule_due_entry_intents(cycle_now_ts, new_scheduled_at)
+                except Exception as exc:
+                    errors.append(
+                        {
+                            "where": "entry_intent_lifecycle_reschedule",
+                            "message": str(exc),
+                            "exception_type": type(exc).__name__,
+                            "db_path": cfg.db_path,
+                        }
+                    )
+                    blocks.append(
+                        {
+                            "code": "entry_intent_lifecycle_reschedule_failed",
+                            "message": "entry intent lifecycle reschedule failed; submissions blocked",
+                        }
+                    )
+                    _log(
+                        "ERROR: failed to reschedule due entry intents "
+                        f"({type(exc).__name__}: {exc})"
+                    )
+                    return
+                reschedule_stats = {
+                    "reason": reason,
+                    "rescheduled_count": 0,
+                    "new_scheduled_at": new_scheduled_at,
+                }
+                if isinstance(raw, dict):
+                    reschedule_stats.update(raw)
+                    reschedule_stats["reason"] = reason
+                lifecycle_reschedules.append(reschedule_stats)
+                rescheduled_count = int(reschedule_stats.get("rescheduled_count", 0) or 0)
+                if rescheduled_count > 0:
+                    _log(
+                        "ENTRY_INTENTS: rescheduled due intents "
+                        f"count={rescheduled_count} "
+                        f"new_scheduled_at={_iso_utc(float(reschedule_stats['new_scheduled_at']))} "
+                        f"reason={reason}"
+                    )
+                    _increment_lifecycle_reason_count(
+                        decision_record,
+                        f"entry_intent_rescheduled_{reason}",
+                        rescheduled_count,
+                    )
         if settle_active and cfg.execution_mode == "DRY_RUN":
             _log("DRY_RUN: settle delay active; skipping entry workflow.")
             return

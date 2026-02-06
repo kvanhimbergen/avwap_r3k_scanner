@@ -327,6 +327,21 @@ class StateStore:
             "max_sched": max_sched,
         }
 
+    def reschedule_due_entry_intents(self, now_ts: float, new_scheduled_at: float) -> dict:
+        cur = self.conn.cursor()
+        cur.execute("SELECT COUNT(*) AS cnt FROM entry_intents WHERE scheduled_entry_at <= ?;", (now_ts,))
+        row = cur.fetchone()
+        rescheduled_count = int(row["cnt"] if row and row["cnt"] is not None else 0)
+        if rescheduled_count > 0:
+            cur.execute(
+                "UPDATE entry_intents SET scheduled_entry_at = ? WHERE scheduled_entry_at <= ?;",
+                (new_scheduled_at, now_ts),
+            )
+        return {
+            "rescheduled_count": rescheduled_count,
+            "new_scheduled_at": float(new_scheduled_at),
+        }
+
     # -------------------------
     # Positions
     # -------------------------
