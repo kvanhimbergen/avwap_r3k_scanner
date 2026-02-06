@@ -55,4 +55,5 @@ ledger/
 backtests/
 
 # local patch backups
+*.bak
 *.bak.*
