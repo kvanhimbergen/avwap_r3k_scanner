@@ -56,3 +56,17 @@ backtests/
 
 # local patch backups
 *.bak.*
+# --- Execution V2 runtime artifacts ---
+data/
+data/_quarantine/
+
+# SQLite runtime files (never commit)
+execution_v2.sqlite
+execution_v2.sqlite-*
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# --- State / runtime artifacts ---
+state/
+ledger/
