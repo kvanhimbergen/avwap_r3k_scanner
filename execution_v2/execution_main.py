@@ -2630,10 +2630,6 @@ def main() -> None:
                 throttle_key="execution_v2_exception",
                 throttle_seconds=300,
             )
-
-        if cfg.run_once:
-            slack_alert("execution_v2: --run-once enabled; exiting after single cycle.")
-            break
         
         time.sleep(resolve_poll_seconds(cfg))
 
