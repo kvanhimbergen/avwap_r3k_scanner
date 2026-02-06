@@ -8,13 +8,12 @@ import argparse
 import csv
 import json
 import os
-import sqlite3
 import socket
 import time
 import traceback
 from datetime import datetime, timezone, time as dt_time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Optional
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -348,87 +347,6 @@ def _snapshot_candidates_csv(path: str) -> dict:
     return {"path": abs_path, "mtime_utc": mtime_utc, "row_count": row_count}
 
 
-def _iso_utc(ts: float | int | None) -> str | None:
-    if ts is None:
-        return None
-    try:
-        return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
-    except Exception:
-        return None
-
-
-def _resolve_db_path_metadata(db_path: str) -> dict[str, Any]:
-    abs_path = Path(db_path).expanduser().resolve()
-    exists = abs_path.exists()
-    size_bytes = None
-    mtime_utc = None
-    if exists:
-        try:
-            stat = abs_path.stat()
-            size_bytes = int(stat.st_size)
-            mtime_utc = _iso_utc(stat.st_mtime)
-        except Exception:
-            size_bytes = None
-            mtime_utc = None
-    return {
-        "db_path": db_path,
-        "db_path_abs": str(abs_path),
-        "db_exists": bool(exists),
-        "db_mtime_utc": mtime_utc,
-        "db_size_bytes": size_bytes,
-    }
-
-
-def _sqlite_db_snapshot(path: Path, *, now_ts: float | None = None) -> dict[str, Any]:
-    snapshot: dict[str, Any] = {
-        "path": str(path),
-        "exists": path.exists(),
-        "schema_version": None,
-        "entry_intents_total": None,
-        "entry_intents_due_now": None,
-        "error": None,
-    }
-    if not path.exists():
-        return snapshot
-    if now_ts is None:
-        now_ts = time.time()
-    conn: sqlite3.Connection | None = None
-    try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1.0)
-        cur = conn.cursor()
-        cur.execute("SELECT value FROM meta WHERE key='schema_version';")
-        row = cur.fetchone()
-        if row is not None and row[0] is not None:
-            snapshot["schema_version"] = str(row[0])
-        cur.execute("SELECT COUNT(*) FROM entry_intents;")
-        total_row = cur.fetchone()
-        snapshot["entry_intents_total"] = int(total_row[0] if total_row else 0)
-        cur.execute("SELECT COUNT(*) FROM entry_intents WHERE scheduled_entry_at <= ?;", (float(now_ts),))
-        due_row = cur.fetchone()
-        snapshot["entry_intents_due_now"] = int(due_row[0] if due_row else 0)
-    except Exception as exc:
-        snapshot["error"] = f"{type(exc).__name__}: {exc}"
-    finally:
-        if conn is not None:
-            conn.close()
-    return snapshot
-
-
-def _db_debug_enabled() -> bool:
-    raw = (os.getenv("EXECUTION_V2_DB_DEBUG") or "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
-
-
-def _summarize_skip_reasons(skipped_actions: list[dict]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for item in skipped_actions:
-        if not isinstance(item, dict):
-            continue
-        reason = str(item.get("reason") or "unknown")
-        counts[reason] = counts.get(reason, 0) + 1
-    return counts
-
-
 def _decision_cycle_info(cfg) -> dict:
     service_name = os.getenv("SYSTEMD_UNIT") or None
     return {
@@ -458,11 +376,6 @@ def _init_decision_record(cfg, candidates_snapshot: dict, now_utc: datetime, rep
         },
         "inputs": {
             "candidates_csv": candidates_snapshot,
-            "db_path": None,
-            "db_path_abs": None,
-            "db_exists": None,
-            "db_mtime_utc": None,
-            "db_size_bytes": None,
             "account": {
                 "equity": None,
                 "buying_power": None,
@@ -521,15 +434,6 @@ def _slim_entry_intent(intent) -> dict[str, object]:
         "strategy_id": getattr(intent, "strategy_id", ""),
         "side": "buy",
         "qty": getattr(intent, "size_shares", None),
-    }
-
-
-def _slim_popped_entry_intent(intent) -> dict[str, object]:
-    scheduled_entry_at = getattr(intent, "scheduled_entry_at", None)
-    return {
-        "symbol": getattr(intent, "symbol", ""),
-        "scheduled_entry_at": scheduled_entry_at,
-        "scheduled_entry_at_utc": _iso_utc(scheduled_entry_at),
     }
 
 
@@ -888,86 +792,9 @@ def run_once(cfg) -> None:
     entry_delay_after_open_message: str | None = None
     symbol_state_store: state_machine.SymbolExecutionStateStore | None = None
     consumed_entries_store: state_machine.ConsumedEntriesStore | None = None
-    db_debug = _db_debug_enabled()
-    db_meta = _resolve_db_path_metadata(cfg.db_path)
-    decision_record["inputs"].update(db_meta)
-    _log(
-        "Execution DB: "
-        f"configured={db_meta['db_path']} "
-        f"resolved={db_meta['db_path_abs']} "
-        f"exists={db_meta['db_exists']} "
-        f"size_bytes={db_meta['db_size_bytes']} "
-        f"mtime_utc={db_meta['db_mtime_utc']}"
-    )
-    active_db_path = Path(str(db_meta["db_path_abs"]))
-    if active_db_path.as_posix().endswith("/data/execution_v2.sqlite"):
-        alternate_db_path = (repo_root / "execution_v2.sqlite").resolve()
-        if alternate_db_path != active_db_path and alternate_db_path.exists():
-            active_snapshot = _sqlite_db_snapshot(active_db_path, now_ts=decision_ts_utc.timestamp())
-            alternate_snapshot = _sqlite_db_snapshot(
-                alternate_db_path, now_ts=decision_ts_utc.timestamp()
-            )
-            active_due = active_snapshot.get("entry_intents_due_now")
-            alternate_due = alternate_snapshot.get("entry_intents_due_now")
-            active_total = active_snapshot.get("entry_intents_total")
-            alternate_total = alternate_snapshot.get("entry_intents_total")
-            mismatch = False
-            if isinstance(active_due, int) and isinstance(alternate_due, int):
-                mismatch = (active_due > 0 and alternate_due == 0) or (
-                    alternate_due > 0 and active_due == 0
-                )
-            if isinstance(active_total, int) and isinstance(alternate_total, int):
-                mismatch = mismatch or (active_total != alternate_total)
-            if (
-                active_snapshot.get("schema_version") is not None
-                and alternate_snapshot.get("schema_version") is not None
-            ):
-                mismatch = mismatch or (
-                    active_snapshot["schema_version"] != alternate_snapshot["schema_version"]
-                )
-            decision_record["inputs"]["db_sanity_check"] = {
-                "active": active_snapshot,
-                "alternate": alternate_snapshot,
-                "mismatch": mismatch,
-            }
-            if mismatch:
-                _warn_once(
-                    f"db_split_brain:{active_db_path}:{alternate_db_path}",
-                    "WARNING: multiple execution DB files detected with divergent "
-                    f"entry_intent counts; active={active_db_path} alt={alternate_db_path} "
-                    f"active_due={active_due} alt_due={alternate_due}",
-                )
-            elif db_debug:
-                _log(
-                    "DB sanity check passed: "
-                    f"active_due={active_due} alt_due={alternate_due} "
-                    f"active_total={active_total} alt_total={alternate_total}"
-                )
 
     try:
-        try:
-            store = StateStore(cfg.db_path)
-        except Exception as exc:
-            errors.append(
-                {
-                    "where": "state_store_init",
-                    "message": str(exc),
-                    "exception_type": type(exc).__name__,
-                    "db_path": cfg.db_path,
-                    "db_path_abs": db_meta["db_path_abs"],
-                }
-            )
-            blocks.append(
-                {
-                    "code": "state_store_init_failed",
-                    "message": "state store initialization failed; submissions blocked",
-                }
-            )
-            _log(
-                "ERROR: failed to initialize StateStore "
-                f"({type(exc).__name__}: {exc}) path={db_meta['db_path_abs']}"
-            )
-            return
+        store = StateStore(cfg.db_path)
         if cfg.entry_delay_min_sec > cfg.entry_delay_max_sec:
             cfg.entry_delay_min_sec, cfg.entry_delay_max_sec = cfg.entry_delay_max_sec, cfg.entry_delay_min_sec
         buy_cfg = buy_loop.BuyLoopConfig(
@@ -1226,7 +1053,6 @@ def run_once(cfg) -> None:
                     repo_root=repo_root,
                     dry_run=cfg.dry_run,
                     log=_log,
-                    entry_delay_active=entry_delay_after_open_active,
                 )
 
         else:
@@ -1306,26 +1132,9 @@ def run_once(cfg) -> None:
                     repo_root=repo_root,
                     dry_run=cfg.dry_run,
                     log=_log,
-                    entry_delay_active=entry_delay_after_open_active,
                 )
 
         now_ts = time.time()
-        _log(
-            "Entry intent consume gate: "
-            f"settle_active={settle_active} "
-            f"entry_delay_after_open_active={entry_delay_after_open_active} "
-            f"now_ts={now_ts:.3f}"
-        )
-        pop_diag: dict[str, Any] = {
-            "now_ts": now_ts,
-            "now_utc": _iso_utc(now_ts),
-            "settle_active": bool(settle_active),
-            "entry_delay_after_open_active": bool(entry_delay_after_open_active),
-            "popped_count": 0,
-            "popped_sample": [],
-            "gate_blocked": False,
-        }
-        decision_record.setdefault("intents_meta", {})["entry_intent_pop"] = pop_diag
 
         # Defensive guard: never consume entry intents in SCHWAB manual mode while market is closed
         if (
@@ -1333,48 +1142,13 @@ def run_once(cfg) -> None:
             and not decision_record["gates"]["market"]["is_open"]
         ):
             entry_intents = []
-            pop_diag["gate_blocked"] = True
-            pop_diag["block_reason"] = "manual_market_closed"
         else:
             if settle_active or entry_delay_after_open_active:
                 entry_intents = []
-                pop_diag["gate_blocked"] = True
-                pop_diag["block_reason"] = "entry_settle_gate"
             else:
                 entry_intents = store.pop_due_entry_intents(now_ts)
-                popped_count = len(entry_intents)
-                pop_diag["popped_count"] = popped_count
-                pop_diag["popped_sample"] = [
-                    _slim_popped_entry_intent(intent) for intent in entry_intents[:5]
-                ]
-                if popped_count > 0 or db_debug:
-                    _log(
-                        f"Popped due entry intents: count={popped_count} "
-                        f"sample={pop_diag['popped_sample']}"
-                    )
-                if popped_count == 0:
-                    active_snapshot = _sqlite_db_snapshot(active_db_path, now_ts=now_ts)
-                    pop_diag["db_counts_after_pop_attempt"] = {
-                        "entry_intents_total": active_snapshot.get("entry_intents_total"),
-                        "entry_intents_due_now": active_snapshot.get("entry_intents_due_now"),
-                    }
-                    due_now = active_snapshot.get("entry_intents_due_now")
-                    if isinstance(due_now, int) and due_now > 0:
-                        warning_payload = {
-                            "where": "entry_intent_pop_consistency",
-                            "message": "pop_due_entry_intents returned 0 while DB still reports due intents",
-                            "db_path": str(active_db_path),
-                            "entry_intents_due_now": due_now,
-                            "entry_intents_total": active_snapshot.get("entry_intents_total"),
-                            "now_ts": now_ts,
-                        }
-                        errors.append(warning_payload)
-                        pop_diag["mismatch_warning"] = warning_payload
-                        _log(
-                            "WARNING: due entry intents remain after pop attempt; "
-                            "possible DB path mismatch or timebase mismatch "
-                            f"path={active_db_path} due_now={due_now}"
-                        )
+                if not entry_intents:
+                    entry_intents = []
         intent_projection = []
         for intent in entry_intents:
             intent_projection.append(
@@ -2518,10 +2292,6 @@ def run_once(cfg) -> None:
         )
         raise
     finally:
-        skipped_actions = decision_record.get("actions", {}).get("skipped", []) or []
-        skip_reason_counts = _summarize_skip_reasons(skipped_actions)
-        decision_record["actions"]["skipped_reason_counts"] = skip_reason_counts
-        decision_record.setdefault("intents_meta", {})["skip_reason_counts"] = skip_reason_counts
         market_is_open = decision_record.get("gates", {}).get("market", {}).get("is_open")
         is_material = _is_material_cycle(decision_record, cfg, market_is_open)
         if is_material:
@@ -2550,11 +2320,7 @@ def run_once(cfg) -> None:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Execution V2 - Trading Orchestration")
     parser.add_argument("--candidates-csv", default=os.getenv("WATCHLIST_FILE", "daily_candidates.csv"))
-    parser.add_argument(
-        "--db-path",
-        default=os.getenv("EXECUTION_V2_DB", "data/execution_v2.sqlite"),
-        help="SQLite path for execution state (default: EXECUTION_V2_DB or data/execution_v2.sqlite)",
-    )
+    parser.add_argument("--db-path", default=os.getenv("EXECUTION_V2_DB", "data/execution_v2.sqlite"))
     parser.add_argument("--poll-seconds", type=int, default=int(os.getenv("EXECUTION_POLL_SECONDS", "300")))
     parser.add_argument("--ignore-market-hours", action="store_true", default=(os.getenv("EXEC_V2_IGNORE_MARKET_HOURS","0").strip() in ("1","true","TRUE","yes","YES")), help="Test-only: run cycles even when market is closed")
     parser.add_argument(

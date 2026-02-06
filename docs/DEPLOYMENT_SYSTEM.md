@@ -195,6 +195,31 @@ observability and deterministic audits:
 ALPACA_PAPER credential checks are fail-closed: missing `APCA_API_KEY_ID`,
 `APCA_API_SECRET_KEY`, or `APCA_API_BASE_URL` will raise an error and skip all artifact writes.
 
+### Execution DB Path (Pin + Verify)
+
+Execution V2 reads/writes state from `--db-path`, which defaults to:
+
+- `EXECUTION_V2_DB` (if set), otherwise
+- `data/execution_v2.sqlite` (resolved from `execution.service` `WorkingDirectory`)
+
+Recommended production pin (systemd drop-in):
+
+```ini
+[Service]
+Environment=EXECUTION_V2_DB=/root/avwap_r3k_scanner/data/execution_v2.sqlite
+```
+
+Verification commands:
+
+```bash
+systemctl show execution.service -p WorkingDirectory -p Environment
+journalctl -u execution.service -n 100 --no-pager | grep "Execution DB:"
+grep -n "\"db_path\\|db_path_abs\\|db_exists\\|db_mtime_utc\\|db_size_bytes\"" /root/avwap_r3k_scanner/state/portfolio_decision_latest.json
+```
+
+`state/portfolio_decision_latest.json` now records these DB metadata fields under `inputs`
+for each cycle so DB-path mismatches are immediately visible.
+
 ### Execution Tuning Knobs
 
 Execution polling and entry throttles are deterministic and configurable via environment variables:
