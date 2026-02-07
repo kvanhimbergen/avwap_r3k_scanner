@@ -105,6 +105,7 @@ def _write_portfolio_decision_latest(
 PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 DEFAULT_STATE_DIR = "/root/avwap_r3k_scanner/state"
 HEARTBEAT_FILENAME = "execution_heartbeat.json"
+ENTRY_REJECTIONS_MAX_SYMBOLS_DEFAULT = 50
 
 
 def _state_dir() -> Path:
@@ -499,6 +500,13 @@ def _init_decision_record(cfg, candidates_snapshot: dict, now_utc: datetime, rep
             "drop_reason_counts": {},
             "entry_intent_lifecycle": {},
             "entry_intent_lifecycle_reason_counts": {},
+            "entry_rejections": {
+                "candidates_seen": 0,
+                "accepted": 0,
+                "rejected": 0,
+                "reason_counts": {},
+                "rejected_symbols_truncated": 0,
+            },
         },
         "sleeves": {},
         "s2_enforcement": {},
@@ -571,6 +579,51 @@ def _record_one_shot_meta(decision_record: dict, config: entry_suppression.OneSh
         "reset_mode": config.reset_mode,
         "cooldown_minutes": config.cooldown_minutes,
     }
+
+
+def _default_entry_rejections_snapshot() -> dict[str, Any]:
+    return {
+        "candidates_seen": 0,
+        "accepted": 0,
+        "rejected": 0,
+        "reason_counts": {},
+        "rejected_symbols_truncated": 0,
+    }
+
+
+def _record_entry_rejections_meta(
+    decision_record: dict,
+    *,
+    telemetry: buy_loop.EntryRejectionTelemetry,
+    max_rejected_symbols: int,
+    errors: list[dict],
+    include_rejected_symbols: bool,
+) -> None:
+    try:
+        payload = telemetry.to_decision_payload(
+            max_rejected_symbols=max_rejected_symbols,
+            include_rejected_symbols=include_rejected_symbols,
+        )
+        decision_record.setdefault("intents_meta", {})["entry_rejections"] = payload
+        if _parse_bool_env("ENTRY_REJECTION_TELEMETRY_DEBUG", False):
+            _log(
+                "ENTRY_REJECTIONS "
+                f"seen={payload.get('candidates_seen', 0)} "
+                f"accepted={payload.get('accepted', 0)} "
+                f"rejected={payload.get('rejected', 0)} "
+                f"reasons={payload.get('reason_counts', {})}"
+            )
+    except Exception as exc:
+        errors.append(
+            {
+                "where": "entry_rejection_telemetry",
+                "message": str(exc),
+                "exception_type": type(exc).__name__,
+            }
+        )
+        decision_record.setdefault("intents_meta", {})[
+            "entry_rejections"
+        ] = _default_entry_rejections_snapshot()
 
 
 def _apply_one_shot_suppression(
@@ -921,6 +974,12 @@ def run_once(cfg) -> None:
     ledgers_written = decision_record["artifacts"]["ledgers_written"]
     positions_count: int | None = None
     entry_intents_created: list = []
+    entry_rejection_symbol_cap = _parse_int_env(
+        "ENTRY_REJECTION_REJECTED_SYMBOLS_MAX",
+        ENTRY_REJECTIONS_MAX_SYMBOLS_DEFAULT,
+        min_value=1,
+    )
+    entry_rejection_telemetry = buy_loop.EntryRejectionTelemetry()
     now_et: datetime | None = None
     entry_delay_after_open_active = False
     entry_delay_after_open_message: str | None = None
@@ -1075,6 +1134,27 @@ def run_once(cfg) -> None:
         one_shot_cfg = entry_suppression.OneShotConfig.from_env()
         _record_edge_window_meta(decision_record, edge_report)
         _record_one_shot_meta(decision_record, one_shot_cfg)
+
+        def _evaluate_entry_candidates(account_equity: float) -> int:
+            created = buy_loop.evaluate_and_create_entry_intents(
+                store,
+                md,
+                buy_cfg,
+                account_equity,
+                created_intents=entry_intents_created,
+                edge_window=edge_window_cfg,
+                edge_report=edge_report,
+                rejection_telemetry=entry_rejection_telemetry,
+            )
+            _record_entry_rejections_meta(
+                decision_record,
+                telemetry=entry_rejection_telemetry,
+                max_rejected_symbols=entry_rejection_symbol_cap,
+                errors=errors,
+                include_rejected_symbols=True,
+            )
+            return created
+
         # repo_root already resolved near top of run_once
         decision_record["build"] = {
             "git_sha": build_info.get_git_sha_short(repo_root),
@@ -1277,15 +1357,7 @@ def run_once(cfg) -> None:
 
                 md = _NoMarketData()
             if not settle_active and not entry_delay_after_open_active:
-                created = buy_loop.evaluate_and_create_entry_intents(
-                    store,
-                    md,
-                    buy_cfg,
-                    account_equity,
-                    created_intents=entry_intents_created,
-                    edge_window=edge_window_cfg,
-                    edge_report=edge_report,
-                )
+                created = _evaluate_entry_candidates(account_equity)
                 if created:
                     _log(f"Created {created} entry intents.")
                     _record_created_intents_meta(decision_record, entry_intents_created, created)
@@ -1312,15 +1384,7 @@ def run_once(cfg) -> None:
             account_equity = float(os.getenv("MANUAL_ACCOUNT_EQUITY", "0") or 0.0)
             decision_record["inputs"]["account"]["equity"] = account_equity
             if not settle_active and not entry_delay_after_open_active:
-                created = buy_loop.evaluate_and_create_entry_intents(
-                    store,
-                    md,
-                    buy_cfg,
-                    account_equity,
-                    created_intents=entry_intents_created,
-                    edge_window=edge_window_cfg,
-                    edge_report=edge_report,
-                )
+                created = _evaluate_entry_candidates(account_equity)
                 if created:
                     _log(f"Created {created} entry intents.")
                     _record_created_intents_meta(decision_record, entry_intents_created, created)
@@ -1363,15 +1427,7 @@ def run_once(cfg) -> None:
                 )
             account_equity = _get_account_equity(trading_client)
             if not settle_active and not entry_delay_after_open_active:
-                created = buy_loop.evaluate_and_create_entry_intents(
-                    store,
-                    md,
-                    buy_cfg,
-                    account_equity,
-                    created_intents=entry_intents_created,
-                    edge_window=edge_window_cfg,
-                    edge_report=edge_report,
-                )
+                created = _evaluate_entry_candidates(account_equity)
                 if created:
                     _log(f"Created {created} entry intents.")
                     _record_created_intents_meta(decision_record, entry_intents_created, created)
@@ -1443,15 +1499,7 @@ def run_once(cfg) -> None:
                     )
             account_equity = _get_account_equity(trading_client)
             if not settle_active and not entry_delay_after_open_active:
-                created = buy_loop.evaluate_and_create_entry_intents(
-                    store,
-                    md,
-                    buy_cfg,
-                    account_equity,
-                    created_intents=entry_intents_created,
-                    edge_window=edge_window_cfg,
-                    edge_report=edge_report,
-                )
+                created = _evaluate_entry_candidates(account_equity)
                 if created:
                     _log(f"Created {created} entry intents.")
                     _record_created_intents_meta(decision_record, entry_intents_created, created)

@@ -42,6 +42,74 @@ class Candidate:
     anchor: str | None = None
 
 
+REASON_MISSING_MARKET_DATA = "missing_market_data"
+REASON_BOH_NOT_CONFIRMED = "boh_not_confirmed"
+REASON_INVALID_CANDIDATE_ROW = "invalid_candidate_row"
+REASON_EXISTING_OPEN_ORDERS = "existing_open_orders"
+REASON_OTHER_REJECTED = "other_rejected"
+
+_KNOWN_REJECTION_REASONS = {
+    REASON_MISSING_MARKET_DATA,
+    REASON_BOH_NOT_CONFIRMED,
+    REASON_INVALID_CANDIDATE_ROW,
+    REASON_EXISTING_OPEN_ORDERS,
+    REASON_OTHER_REJECTED,
+}
+
+
+@dataclass
+class EntryRejectionTelemetry:
+    candidates_seen: int = 0
+    accepted: int = 0
+    rejected: int = 0
+    reason_counts: dict[str, int] = field(default_factory=dict)
+    first_rejection_reason_by_symbol: dict[str, str] = field(default_factory=dict)
+
+    def record_candidate(self) -> None:
+        self.candidates_seen += 1
+
+    def record_accepted(self) -> None:
+        self.accepted += 1
+
+    def record_rejected(self, symbol: str | None, reason_code: str) -> None:
+        normalized_reason = (
+            reason_code if reason_code in _KNOWN_REJECTION_REASONS else REASON_OTHER_REJECTED
+        )
+        self.rejected += 1
+        self.reason_counts[normalized_reason] = self.reason_counts.get(normalized_reason, 0) + 1
+
+        normalized_symbol = (symbol or "").strip().upper()
+        if not normalized_symbol:
+            return
+        if normalized_symbol not in self.first_rejection_reason_by_symbol:
+            self.first_rejection_reason_by_symbol[normalized_symbol] = normalized_reason
+
+    def to_decision_payload(
+        self,
+        *,
+        max_rejected_symbols: int = 50,
+        include_rejected_symbols: bool = True,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "candidates_seen": int(self.candidates_seen),
+            "accepted": int(self.accepted),
+            "rejected": int(self.rejected),
+            "reason_counts": dict(sorted(self.reason_counts.items())),
+            "rejected_symbols_truncated": 0,
+        }
+        if not include_rejected_symbols:
+            return payload
+
+        cap = max(0, int(max_rejected_symbols))
+        rejected_symbols = [
+            {"symbol": symbol, "reason": reason}
+            for symbol, reason in self.first_rejection_reason_by_symbol.items()
+        ]
+        payload["rejected_symbols"] = rejected_symbols[:cap]
+        payload["rejected_symbols_truncated"] = max(0, len(rejected_symbols) - cap)
+        return payload
+
+
 class BuyLoopConfig:
     """
     Configuration for buy-loop operations.
@@ -134,7 +202,9 @@ def _deterministic_delay(
     return float(min_sec) + u * (float(max_sec) - float(min_sec))
 
 
-def _load_candidates(path: str) -> list[Candidate]:
+def _load_candidates(
+    path: str, *, rejection_telemetry: EntryRejectionTelemetry | None = None
+) -> list[Candidate]:
     p = Path(path)
     if not p.exists():
         return []
@@ -151,7 +221,14 @@ def _load_candidates(path: str) -> list[Candidate]:
     candidates: list[Candidate] = []
     for _, row in df.iterrows():
         symbol = str(row["Symbol"]).strip().upper()
+        if rejection_telemetry is not None:
+            rejection_telemetry.record_candidate()
         if not symbol:
+            if rejection_telemetry is not None:
+                rejection_telemetry.record_rejected(
+                    symbol,
+                    REASON_INVALID_CANDIDATE_ROW,
+                )
             continue
 
         direction = str(row.get("Direction", "Long")).strip().title()
@@ -168,8 +245,18 @@ def _load_candidates(path: str) -> list[Candidate]:
             anchor = str(row["Anchor"])
 
         if entry_level <= 0 or stop_loss <= 0 or target_r2 <= 0:
+            if rejection_telemetry is not None:
+                rejection_telemetry.record_rejected(
+                    symbol,
+                    REASON_INVALID_CANDIDATE_ROW,
+                )
             continue
         if stop_loss >= target_r2:
+            if rejection_telemetry is not None:
+                rejection_telemetry.record_rejected(
+                    symbol,
+                    REASON_INVALID_CANDIDATE_ROW,
+                )
             continue
 
         candidates.append(
@@ -193,12 +280,17 @@ def load_candidates(path: str) -> list[Candidate]:
     return _load_candidates(path)
 
 
-def ingest_watchlist_as_candidates(store, cfg: BuyLoopConfig) -> list[Candidate]:
+def ingest_watchlist_as_candidates(
+    store,
+    cfg: BuyLoopConfig,
+    *,
+    rejection_telemetry: EntryRejectionTelemetry | None = None,
+) -> list[Candidate]:
     """
     Inserts scan candidates into the candidates table.
     """
     now_ts = time.time()
-    candidates = _load_candidates(cfg.candidates_csv)
+    candidates = _load_candidates(cfg.candidates_csv, rejection_telemetry=rejection_telemetry)
     for cand in candidates:
         store.upsert_candidate(
             symbol=cand.symbol,
@@ -226,6 +318,7 @@ def evaluate_and_create_entry_intents(
     edge_window: EdgeWindowConfig | None = None,
     edge_report: EdgeWindowReport | None = None,
     edge_clock: EdgeWindowClock | None = None,
+    rejection_telemetry: EntryRejectionTelemetry | None = None,
 ) -> int:
     """
     Evaluate scan candidates and create entry intents for BOH-confirmed names.
@@ -258,18 +351,28 @@ def evaluate_and_create_entry_intents(
         )
         risk_controls = result.controls
         risk_controls_result = result
-    candidates = ingest_watchlist_as_candidates(store, cfg)
+    candidates = ingest_watchlist_as_candidates(
+        store,
+        cfg,
+        rejection_telemetry=rejection_telemetry,
+    )
     active_symbols = set(store.list_active_candidates(now_ts))
 
     created = 0
     for cand in _iter_active_candidates(candidates, active_symbols):
         if cand.direction != "Long":
+            if rejection_telemetry is not None:
+                rejection_telemetry.record_rejected(cand.symbol, REASON_OTHER_REJECTED)
             continue
         if store.get_entry_intent(cand.symbol) is not None:
+            if rejection_telemetry is not None:
+                rejection_telemetry.record_rejected(cand.symbol, REASON_EXISTING_OPEN_ORDERS)
             continue
 
         bars = md.get_last_two_closed_10m(cand.symbol)
         if len(bars) != 2:
+            if rejection_telemetry is not None:
+                rejection_telemetry.record_rejected(cand.symbol, REASON_MISSING_MARKET_DATA)
             continue
 
         boh = boh_confirmed_option2(bars, cand.entry_level)
@@ -291,6 +394,8 @@ def evaluate_and_create_entry_intents(
                             edge_report.mark_confirmed(cand.symbol)
                         break
         if not boh.confirmed:
+            if rejection_telemetry is not None:
+                rejection_telemetry.record_rejected(cand.symbol, REASON_BOH_NOT_CONFIRMED)
             continue
 
         bar_close = None
@@ -317,6 +422,8 @@ def evaluate_and_create_entry_intents(
             cfg=cfg.sizing_cfg,
         )
         if base_size <= 0:
+            if rejection_telemetry is not None:
+                rejection_telemetry.record_rejected(cand.symbol, REASON_OTHER_REJECTED)
             continue
         size = base_size
         if risk_controls is not None:
@@ -364,6 +471,8 @@ def evaluate_and_create_entry_intents(
                     except Exception as exc:
                         print(f"WARN: risk attribution write failed for {cand.symbol}: {exc}")
         if size <= 0:
+            if rejection_telemetry is not None:
+                rejection_telemetry.record_rejected(cand.symbol, REASON_OTHER_REJECTED)
             continue
 
         daily_bars = md.get_daily_bars(cand.symbol)
@@ -373,8 +482,12 @@ def evaluate_and_create_entry_intents(
             buffer_dollars=exit_cfg.stop_buffer_dollars,
         )
         if stop_price is None:
+            if rejection_telemetry is not None:
+                rejection_telemetry.record_rejected(cand.symbol, REASON_MISSING_MARKET_DATA)
             continue
         if not exits.validate_risk(cand.price, stop_price, exit_cfg.max_risk_per_share):
+            if rejection_telemetry is not None:
+                rejection_telemetry.record_rejected(cand.symbol, REASON_OTHER_REJECTED)
             continue
 
         deterministic_delay = (
@@ -406,6 +519,8 @@ def evaluate_and_create_entry_intents(
         if created_intents is not None:
             created_intents.append(intent)
         created += 1
+        if rejection_telemetry is not None:
+            rejection_telemetry.record_accepted()
 
     return created
 
