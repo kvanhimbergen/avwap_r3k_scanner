@@ -468,14 +468,19 @@ def main(argv: list[str] | None = None) -> int:
 
     # --- Structured summary (stable grep target) ---
     tickets_sent = 1 if result.posted else 0
-    if not result.should_rebalance:
-        reason = "gating_not_met"
+
+    if result.posted:
+        reason = "sent"
+    elif not result.should_rebalance:
+        reason = "notice_blocked" if result.notice else "no_rebalance_needed"
     elif dry_run:
         reason = "dry_run"
-    elif not result.posted:
-        reason = "idempotent_or_posting_disabled"
+    elif not result.posting_enabled:
+        reason = "posting_disabled"
     else:
-        reason = "sent"
+        reason = "idempotent_or_adapter_skipped"
+
+    notice_str = (result.notice or "none").replace("\n", " ").strip()
 
     print(
         "SCHWAB_401K_MANUAL: "
@@ -484,19 +489,10 @@ def main(argv: list[str] | None = None) -> int:
         f"should_rebalance={int(result.should_rebalance)} "
         f"posting_enabled={int(result.posting_enabled)} "
         f"posted={int(result.posted)} "
-        f"reason={reason}"
+        f"reason={reason} "
+        f"notice={notice_str}"
     )
 
-    # --- Existing human-readable lines (preserved) ---
-    if not result.should_rebalance:
-        print("No rebalance ticket sent (gating conditions not met).")
-    elif dry_run:
-        print("DRY_RUN enabled; Slack post skipped.")
-    elif not result.posted:
-        print("Slack post skipped or already sent (idempotent).")
-    else:
-        print("Slack ticket sent.")
-    return 0
 
 
 
