@@ -465,6 +465,29 @@ def main(argv: list[str] | None = None) -> int:
         dry_run=dry_run,
         allow_state_write=args.allow_state_write,
     )
+
+    # --- Structured summary (stable grep target) ---
+    tickets_sent = 1 if result.posted else 0
+    if not result.should_rebalance:
+        reason = "gating_not_met"
+    elif dry_run:
+        reason = "dry_run"
+    elif not result.posted:
+        reason = "idempotent_or_posting_disabled"
+    else:
+        reason = "sent"
+
+    print(
+        "SCHWAB_401K_MANUAL: "
+        f"tickets_sent={tickets_sent} "
+        f"asof={result.asof_date} "
+        f"should_rebalance={int(result.should_rebalance)} "
+        f"posting_enabled={int(result.posting_enabled)} "
+        f"posted={int(result.posted)} "
+        f"reason={reason}"
+    )
+
+    # --- Existing human-readable lines (preserved) ---
     if not result.should_rebalance:
         print("No rebalance ticket sent (gating conditions not met).")
     elif dry_run:
@@ -474,6 +497,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("Slack ticket sent.")
     return 0
+
 
 
 if __name__ == "__main__":
