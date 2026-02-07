@@ -36,6 +36,20 @@ Download the Schwab “Positions” CSV export from the workplace portal and ing
 python -m strategies.raec_401k_allocs --from-csv /path/to/Schwab-Positions.csv
 ```
 
+If you prefer a drop-folder workflow, place CSV files in:
+
+```text
+state/strategies/SCHWAB_401K_MANUAL/csv_drop/
+```
+
+Then ingest the newest file automatically:
+
+```bash
+python -m strategies.raec_401k_allocs --from-csv
+```
+
+You can also point `--from-csv` at a directory; it will pick the newest `*.csv` there.
+
 If a row lacks a ticker symbol, update the `DEFAULT_DESCRIPTION_MAPPING` in
 `strategies/raec_401k_allocs.py` to map Schwab fund descriptions to tickers before re-running
 the command.

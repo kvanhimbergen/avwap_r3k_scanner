@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -8,7 +9,11 @@ import pytest
 
 from data.prices import FixturePriceProvider
 from strategies import raec_401k
-from strategies.raec_401k_allocs import parse_schwab_positions_csv
+from strategies.raec_401k_allocs import (
+    DEFAULT_CSV_DROP_SUBDIR,
+    _resolve_csv_source,
+    parse_schwab_positions_csv,
+)
 
 
 def _make_series(start: date, values: list[float]) -> list[tuple[date, float]]:
@@ -256,3 +261,31 @@ def test_parse_schwab_positions_csv_rounding_stable(tmp_path: Path) -> None:
     path = _write_csv(tmp_path, content)
     allocations = parse_schwab_positions_csv(path)
     assert allocations == {"AAA": 66.7, "BBB": 33.3}
+
+
+def test_resolve_csv_source_default_drop_uses_latest(tmp_path: Path) -> None:
+    drop_dir = tmp_path / DEFAULT_CSV_DROP_SUBDIR
+    drop_dir.mkdir(parents=True, exist_ok=True)
+    old_csv = drop_dir / "Schwab-Positions-older.csv"
+    new_csv = drop_dir / "Schwab-Positions-newer.csv"
+    old_csv.write_text("old")
+    new_csv.write_text("new")
+    os.utime(old_csv, (1000, 1000))
+    os.utime(new_csv, (2000, 2000))
+
+    resolved = _resolve_csv_source("__LATEST__", repo_root=tmp_path)
+    assert resolved == new_csv
+
+
+def test_resolve_csv_source_directory_uses_latest(tmp_path: Path) -> None:
+    folder = tmp_path / "drop_here"
+    folder.mkdir(parents=True, exist_ok=True)
+    csv_a = folder / "a.csv"
+    csv_b = folder / "b.csv"
+    csv_a.write_text("a")
+    csv_b.write_text("b")
+    os.utime(csv_a, (500, 500))
+    os.utime(csv_b, (700, 700))
+
+    resolved = _resolve_csv_source(str(folder), repo_root=tmp_path)
+    assert resolved == csv_b

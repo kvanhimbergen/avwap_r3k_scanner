@@ -21,6 +21,8 @@ _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9-]{0,5}$")
 DEFAULT_DESCRIPTION_MAPPING = {
     "vanguard total stock market index fund": "VTI",
 }
+DEFAULT_CSV_DROP_SUBDIR = Path("state") / "strategies" / BOOK_ID / "csv_drop"
+_CSV_AUTO_LATEST = "__LATEST__"
 
 
 def _parse_allocations(items: list[str]) -> dict[str, float]:
@@ -197,16 +199,52 @@ def _filter_universe(allocations: dict[str, float]) -> dict[str, float]:
     return filtered
 
 
+def _latest_csv_in_directory(path: Path) -> Path:
+    if not path.exists():
+        raise FileNotFoundError(f"CSV directory not found: {path}")
+    if not path.is_dir():
+        raise ValueError(f"CSV directory expected, got file: {path}")
+    candidates = [entry for entry in path.iterdir() if entry.is_file() and entry.suffix.lower() == ".csv"]
+    if not candidates:
+        raise FileNotFoundError(f"No CSV files found in directory: {path}")
+    candidates.sort(key=lambda entry: (entry.stat().st_mtime, entry.name))
+    return candidates[-1]
+
+
+def _resolve_csv_source(raw: str, *, repo_root: Path) -> Path:
+    if raw == _CSV_AUTO_LATEST:
+        return _latest_csv_in_directory(repo_root / DEFAULT_CSV_DROP_SUBDIR)
+
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = (Path.cwd() / path).resolve()
+    if path.is_dir():
+        return _latest_csv_in_directory(path)
+    if not path.exists():
+        raise FileNotFoundError(f"CSV file not found: {path}")
+    return path
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Set current allocations for RAEC 401(k) strategy.")
     parser.add_argument("--set", nargs="*", default=None, help="Allocations as SYMBOL=NUM ...")
     parser.add_argument("--from-json", default=None, help="Path to JSON {symbol: pct}")
-    parser.add_argument("--from-csv", default=None, help="Path to Schwab Positions CSV export")
+    parser.add_argument(
+        "--from-csv",
+        nargs="?",
+        const=_CSV_AUTO_LATEST,
+        default=None,
+        help=(
+            "Path to Schwab Positions CSV export. "
+            f"If omitted, loads newest *.csv from {DEFAULT_CSV_DROP_SUBDIR}."
+        ),
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    repo_root = Path(__file__).resolve().parents[1]
     provided = [args.set is not None, args.from_json is not None, args.from_csv is not None]
     if sum(1 for item in provided if item) != 1:
         raise SystemExit("Provide exactly one of --set, --from-json, or --from-csv")
@@ -214,7 +252,8 @@ def main(argv: list[str] | None = None) -> int:
     allocations: dict[str, float]
     try:
         if args.from_csv:
-            allocations = parse_schwab_positions_csv(Path(args.from_csv))
+            csv_path = _resolve_csv_source(args.from_csv, repo_root=repo_root)
+            allocations = parse_schwab_positions_csv(csv_path)
         elif args.from_json:
             allocations = _load_allocations_from_json(Path(args.from_json))
         else:
@@ -224,7 +263,6 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"FAIL: {exc}") from None
 
     allocations = _filter_universe(allocations)
-    repo_root = Path(__file__).resolve().parents[1]
     state_path = _state_path(repo_root)
     state = {}
     if state_path.exists():
