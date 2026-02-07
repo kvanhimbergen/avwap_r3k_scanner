@@ -7,21 +7,24 @@ import csv
 import json
 import re
 from pathlib import Path
+from types import ModuleType
 
-from strategies.raec_401k import (
-    BOOK_ID,
-    DEFAULT_UNIVERSE,
-    FALLBACK_CASH_SYMBOL,
-    STRATEGY_ID,
-    _save_state,
-    _state_path,
-)
+from strategies import raec_401k, raec_401k_v2
+
+_STRATEGY_MODULES: dict[str, ModuleType] = {
+    "v1": raec_401k,
+    "v2": raec_401k_v2,
+}
+DEFAULT_STRATEGY_KEY = "v1"
+DEFAULT_BOOK_ID = raec_401k.BOOK_ID
+DEFAULT_UNIVERSE = tuple(dict.fromkeys([*raec_401k.DEFAULT_UNIVERSE, *raec_401k_v2.DEFAULT_UNIVERSE]))
+FALLBACK_CASH_SYMBOL = raec_401k.FALLBACK_CASH_SYMBOL
 
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9-]{0,5}$")
 DEFAULT_DESCRIPTION_MAPPING = {
     "vanguard total stock market index fund": "VTI",
 }
-DEFAULT_CSV_DROP_SUBDIR = Path("state") / "strategies" / BOOK_ID / "csv_drop"
+DEFAULT_CSV_DROP_SUBDIR = Path("state") / "strategies" / DEFAULT_BOOK_ID / "csv_drop"
 _CSV_AUTO_LATEST = "__LATEST__"
 
 
@@ -188,8 +191,13 @@ def parse_schwab_positions_csv(
     return allocations
 
 
-def _filter_universe(allocations: dict[str, float]) -> dict[str, float]:
-    allowed = set(DEFAULT_UNIVERSE) | {FALLBACK_CASH_SYMBOL}
+def _filter_universe(
+    allocations: dict[str, float],
+    *,
+    universe: tuple[str, ...] = DEFAULT_UNIVERSE,
+    fallback_cash_symbol: str = FALLBACK_CASH_SYMBOL,
+) -> dict[str, float]:
+    allowed = set(universe) | {fallback_cash_symbol}
     filtered: dict[str, float] = {}
     for symbol, pct in allocations.items():
         if symbol in allowed:
@@ -225,8 +233,22 @@ def _resolve_csv_source(raw: str, *, repo_root: Path) -> Path:
     return path
 
 
+def _resolve_strategy_module(key: str) -> ModuleType:
+    normalized = (key or DEFAULT_STRATEGY_KEY).strip().lower()
+    if normalized not in _STRATEGY_MODULES:
+        supported = ", ".join(sorted(_STRATEGY_MODULES))
+        raise ValueError(f"Unknown strategy '{key}'. Supported: {supported}")
+    return _STRATEGY_MODULES[normalized]
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Set current allocations for RAEC 401(k) strategy.")
+    parser.add_argument(
+        "--strategy",
+        default=DEFAULT_STRATEGY_KEY,
+        choices=sorted(_STRATEGY_MODULES),
+        help="Target strategy state to update (default: v1).",
+    )
     parser.add_argument("--set", nargs="*", default=None, help="Allocations as SYMBOL=NUM ...")
     parser.add_argument("--from-json", default=None, help="Path to JSON {symbol: pct}")
     parser.add_argument(
@@ -244,6 +266,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    strategy_module = _resolve_strategy_module(args.strategy)
     repo_root = Path(__file__).resolve().parents[1]
     provided = [args.set is not None, args.from_json is not None, args.from_csv is not None]
     if sum(1 for item in provided if item) != 1:
@@ -262,16 +285,20 @@ def main(argv: list[str] | None = None) -> int:
         # Fail closed with a single actionable line for systemd/journalctl.
         raise SystemExit(f"FAIL: {exc}") from None
 
-    allocations = _filter_universe(allocations)
-    state_path = _state_path(repo_root)
+    allocations = _filter_universe(
+        allocations,
+        universe=tuple(strategy_module.DEFAULT_UNIVERSE),
+        fallback_cash_symbol=str(strategy_module.FALLBACK_CASH_SYMBOL),
+    )
+    state_path = strategy_module._state_path(repo_root)
     state = {}
     if state_path.exists():
         state = json.loads(state_path.read_text())
-    state["book_id"] = BOOK_ID
-    state["strategy_id"] = STRATEGY_ID
+    state["book_id"] = strategy_module.BOOK_ID
+    state["strategy_id"] = strategy_module.STRATEGY_ID
     state["last_known_allocations"] = allocations
-    _save_state(state_path, state)
-    print(f"Updated allocations for {BOOK_ID}/{STRATEGY_ID}: {allocations}")
+    strategy_module._save_state(state_path, state)
+    print(f"Updated allocations for {strategy_module.BOOK_ID}/{strategy_module.STRATEGY_ID}: {allocations}")
     return 0
 
 

@@ -12,6 +12,7 @@ from strategies import raec_401k
 from strategies.raec_401k_allocs import (
     DEFAULT_CSV_DROP_SUBDIR,
     _resolve_csv_source,
+    _resolve_strategy_module,
     parse_schwab_positions_csv,
 )
 
@@ -289,3 +290,8 @@ def test_resolve_csv_source_directory_uses_latest(tmp_path: Path) -> None:
 
     resolved = _resolve_csv_source(str(folder), repo_root=tmp_path)
     assert resolved == csv_b
+
+
+def test_resolve_strategy_module_v2() -> None:
+    strategy = _resolve_strategy_module("v2")
+    assert strategy.STRATEGY_ID == "RAEC_401K_V2"
