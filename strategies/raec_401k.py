@@ -372,6 +372,10 @@ def run_strategy(
         current_allocs=None if notice else current_allocs,
     )
 
+    # If we can't load current allocations, still emit an informational ticket.
+    if notice:
+        should_rebalance = True
+
     intents: list[dict] = []
     if should_rebalance and not notice:
         intents = _build_intents(asof_date=asof_date, targets=targets, current=current_allocs)
