@@ -143,7 +143,7 @@ def test_risk_controls_deterministic(tmp_path: Path) -> None:
     assert result_a.reasons == result_b.reasons
 
 
-def test_adjust_order_quantity_preserves_entry_decision() -> None:
+def test_adjust_order_quantity_blocks_when_multiplier_zero() -> None:
     controls = risk_controls.RiskControls(
         risk_multiplier=0.0,
         max_gross_exposure=None,
@@ -160,7 +160,7 @@ def test_adjust_order_quantity_preserves_entry_decision() -> None:
         gross_exposure=None,
         min_qty=None,
     )
-    assert qty == 1
+    assert qty == 0
 
 
 def test_adjust_order_quantity_caps_pct_gross_exposure() -> None:

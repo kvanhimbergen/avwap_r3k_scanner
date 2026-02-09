@@ -196,6 +196,32 @@ def _load_current_allocations(state: dict, universe: set[str]) -> tuple[dict[str
     return filtered, None
 
 
+def _load_latest_csv_allocations(
+    *,
+    repo_root: Path,
+    universe: set[str],
+) -> dict[str, float] | None:
+    if os.getenv("RAEC_AUTO_SYNC_ALLOCATIONS_FROM_CSV", "1").strip() not in {"1", "true", "TRUE", "yes", "YES"}:
+        return None
+    try:
+        from strategies import raec_401k_allocs
+
+        csv_path = raec_401k_allocs._latest_csv_in_directory(
+            repo_root / raec_401k_allocs.DEFAULT_CSV_DROP_SUBDIR
+        )
+        parsed = raec_401k_allocs.parse_schwab_positions_csv(csv_path)
+    except Exception:
+        return None
+
+    filtered: dict[str, float] = {}
+    for symbol, pct in parsed.items():
+        normalized = str(symbol).upper()
+        if normalized not in universe:
+            continue
+        filtered[normalized] = float(pct)
+    return filtered or None
+
+
 def _compute_drift(current: dict[str, float], targets: dict[str, float]) -> dict[str, float]:
     drift = {}
     for symbol, target_pct in targets.items():
@@ -361,7 +387,10 @@ def run_strategy(
     state_path = _state_path(repo_root)
     state = _load_state(state_path)
 
-    current_allocs, notice = _load_current_allocations(state, universe_set)
+    current_allocs = _load_latest_csv_allocations(repo_root=repo_root, universe=universe_set)
+    notice = None
+    if current_allocs is None:
+        current_allocs, notice = _load_current_allocations(state, universe_set)
     if current_allocs is None:
         current_allocs = {symbol: targets[symbol] for symbol in targets}
     should_rebalance = _should_rebalance(

@@ -187,6 +187,45 @@ def test_runner_dry_run_no_slack(tmp_path: Path) -> None:
     assert json.loads(state_path.read_text())["last_eval_date"] == "2025-01-31"
 
 
+def test_runner_prefers_latest_csv_allocations_when_available(tmp_path: Path) -> None:
+    series = _risk_on_series()
+    provider = FixturePriceProvider({"VTI": series, "BIL": series})
+    state_path = tmp_path / "state" / "strategies" / raec_401k.BOOK_ID / f"{raec_401k.STRATEGY_ID}.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "last_eval_date": "2025-01-31",
+                "last_regime": "RISK_OFF",
+                "last_known_allocations": {"BIL": 100.0},
+            }
+        )
+    )
+    drop_dir = tmp_path / DEFAULT_CSV_DROP_SUBDIR
+    drop_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = drop_dir / "positions.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "Positions for account 123 as of 03/01/2025",
+                "Symbol,Description,Security Type,Mkt Val (Market Value)",
+                "SPY,SPDR S&P 500 ETF,ETF,$25,000.00",
+                ",Cash & Cash Investments,Cash and Money Market,$75,000.00",
+            ]
+        )
+    )
+
+    result = raec_401k.run_strategy(
+        asof_date="2025-02-07",
+        repo_root=tmp_path,
+        price_provider=provider,
+        dry_run=True,
+    )
+
+    assert result.notice is None
+    assert any(intent["symbol"] == "SPY" and intent["side"] == "SELL" for intent in result.intents)
+
+
 def _write_csv(tmp_path: Path, content: str) -> Path:
     path = tmp_path / "positions.csv"
     path.write_text(content)

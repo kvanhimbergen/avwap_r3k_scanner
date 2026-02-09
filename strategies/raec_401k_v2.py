@@ -58,6 +58,7 @@ class SymbolFeature:
     vol_252d: float
     drawdown_63d: float
     score: float
+    returns_window: tuple[float, ...]
 
 
 @dataclass(frozen=True)
@@ -195,6 +196,7 @@ def _feature_from_series(symbol: str, series: list[tuple[date, float]]) -> Symbo
         vol_252d = _compute_volatility(returns)
     drawdown_63d = (close / max(closes[-63:])) - 1.0 if len(closes) >= 63 else (close / max(closes)) - 1.0
     score = ((mom_6m * 0.65) + (mom_12m * 0.35)) / max(vol_20d, 0.06)
+    returns_window = tuple(float(value) for value in returns[-63:])
     return SymbolFeature(
         symbol=symbol,
         close=close,
@@ -204,6 +206,7 @@ def _feature_from_series(symbol: str, series: list[tuple[date, float]]) -> Symbo
         vol_252d=vol_252d,
         drawdown_63d=drawdown_63d,
         score=score,
+        returns_window=returns_window,
     )
 
 
@@ -286,13 +289,51 @@ def _inverse_vol_weights(symbols: list[str], feature_map: dict[str, SymbolFeatur
 
 
 def _estimate_portfolio_vol(weights: dict[str, float], feature_map: dict[str, SymbolFeature]) -> float:
+    symbols = [symbol for symbol in weights if symbol in feature_map]
+    if not symbols:
+        return 0.0
+    if len(symbols) == 1:
+        symbol = symbols[0]
+        return abs(weights[symbol]) * feature_map[symbol].vol_20d
+
+    min_window = min(len(feature_map[symbol].returns_window) for symbol in symbols)
+    if min_window < 2:
+        # Fallback to a diagonal approximation when we cannot estimate covariance.
+        total_var = 0.0
+        for symbol in symbols:
+            total_var += (weights[symbol] * feature_map[symbol].vol_20d) ** 2
+        return math.sqrt(max(total_var, 0.0))
+
+    annualized_vol: dict[str, float] = {}
+    aligned_returns: dict[str, tuple[float, ...]] = {}
+    for symbol in symbols:
+        seq = feature_map[symbol].returns_window[-min_window:]
+        aligned_returns[symbol] = tuple(seq)
+        annualized_vol[symbol] = _compute_volatility(list(seq))
+
     total_var = 0.0
-    for symbol, weight in weights.items():
-        feature = feature_map.get(symbol)
-        if feature is None:
-            continue
-        total_var += (weight * feature.vol_20d) ** 2
-    return math.sqrt(total_var)
+    for sym_i in symbols:
+        for sym_j in symbols:
+            wi = float(weights[sym_i])
+            wj = float(weights[sym_j])
+            corr = _corr(aligned_returns[sym_i], aligned_returns[sym_j])
+            cov = annualized_vol[sym_i] * annualized_vol[sym_j] * corr
+            total_var += wi * wj * cov
+    return math.sqrt(max(total_var, 0.0))
+
+
+def _corr(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+    if len(left) != len(right) or len(left) < 2:
+        return 0.0
+    mean_left = sum(left) / len(left)
+    mean_right = sum(right) / len(right)
+    num = sum((a - mean_left) * (b - mean_right) for a, b in zip(left, right))
+    den_left = sum((a - mean_left) ** 2 for a in left)
+    den_right = sum((b - mean_right) ** 2 for b in right)
+    if den_left <= 0 or den_right <= 0:
+        return 0.0
+    corr = num / math.sqrt(den_left * den_right)
+    return max(-0.99, min(0.99, corr))
 
 
 def _weights_to_target_pct(weights: dict[str, float], *, cash_symbol: str) -> dict[str, float]:
@@ -411,6 +452,32 @@ def _load_current_allocations(state: dict, universe: set[str]) -> tuple[dict[str
             continue
         filtered[normalized] = float(pct)
     return filtered, None
+
+
+def _load_latest_csv_allocations(
+    *,
+    repo_root: Path,
+    universe: set[str],
+) -> dict[str, float] | None:
+    if os.getenv("RAEC_AUTO_SYNC_ALLOCATIONS_FROM_CSV", "1").strip() not in {"1", "true", "TRUE", "yes", "YES"}:
+        return None
+    try:
+        from strategies import raec_401k_allocs
+
+        csv_path = raec_401k_allocs._latest_csv_in_directory(
+            repo_root / raec_401k_allocs.DEFAULT_CSV_DROP_SUBDIR
+        )
+        parsed = raec_401k_allocs.parse_schwab_positions_csv(csv_path)
+    except Exception:
+        return None
+
+    filtered: dict[str, float] = {}
+    for symbol, pct in parsed.items():
+        normalized = str(symbol).upper()
+        if normalized not in universe:
+            continue
+        filtered[normalized] = float(pct)
+    return filtered or None
 
 
 def _compute_drift(current: dict[str, float], targets: dict[str, float]) -> dict[str, float]:
@@ -592,7 +659,10 @@ def run_strategy(
 
     state_path = _state_path(repo_root)
     state = _load_state(state_path)
-    current_allocs, notice = _load_current_allocations(state, universe_set)
+    current_allocs = _load_latest_csv_allocations(repo_root=repo_root, universe=universe_set)
+    notice = None
+    if current_allocs is None:
+        current_allocs, notice = _load_current_allocations(state, universe_set)
     if current_allocs is None:
         current_allocs = {symbol: targets[symbol] for symbol in targets}
 

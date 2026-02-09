@@ -24,7 +24,7 @@ from alerts.slack import (
     maybe_send_heartbeat,
     maybe_send_daily_summary,
 )
-from execution_v2 import buy_loop, exits, state_machine
+from execution_v2 import buy_loop, exits, sell_loop, state_machine
 from execution_v2 import live_gate
 from execution_v2 import config_check as _config_check
 from execution_v2 import alpaca_paper
@@ -42,7 +42,7 @@ from execution_v2 import shadow_strategies
 from execution_v2 import portfolio_s2_enforcement
 from execution_v2 import strategy_sleeves
 from execution_v2 import entry_suppression
-from execution_v2.orders import generate_idempotency_key
+from execution_v2.orders import generate_idempotency_key, build_marketable_limit, SlippageConfig
 from execution_v2.state_store import StateStore
 from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 from utils.atomic_write import atomic_write_text
@@ -297,14 +297,32 @@ def _submit_market_entry(trading_client: TradingClient, intent, dry_run: bool) -
 
         return "dry-run"
 
-    from alpaca.trading.requests import MarketOrderRequest
+    from alpaca.trading.requests import LimitOrderRequest
     from alpaca.trading.enums import OrderSide, TimeInForce
 
-    order = MarketOrderRequest(
+    slippage_cfg = SlippageConfig(
+        max_slippage_pct=float(
+            os.getenv("ENTRY_LIMIT_MAX_SLIPPAGE_PCT", str(SlippageConfig().max_slippage_pct))
+        ),
+        randomization_pct=float(
+            os.getenv("ENTRY_LIMIT_RANDOMIZATION_PCT", str(SlippageConfig().randomization_pct))
+        ),
+    )
+    order_spec = build_marketable_limit(
+        strategy_id=getattr(intent, "strategy_id", DEFAULT_STRATEGY_ID),
+        date_ny=paper_sim.resolve_date_ny(datetime.now(timezone.utc)),
+        symbol=intent.symbol,
+        side="buy",
+        qty=int(intent.size_shares),
+        ref_price=float(intent.ref_price),
+        cfg=slippage_cfg,
+    )
+    order = LimitOrderRequest(
         symbol=intent.symbol,
         qty=intent.size_shares,
         side=OrderSide.BUY,
         time_in_force=TimeInForce.DAY,
+        limit_price=float(order_spec.limit_price),
     )
     response = trading_client.submit_order(order)
     return getattr(response, "id", None)
@@ -815,6 +833,149 @@ def _parse_bool_env(name: str, default: bool = False) -> bool:
     return default
 
 
+def _parse_float_env(name: str, default: float, *, min_value: float | None = None) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        _warn_once(
+            name,
+            f"WARNING: invalid {name}={raw!r}; using default {default}",
+        )
+        return default
+    if min_value is not None and value < min_value:
+        _warn_once(
+            name,
+            f"WARNING: {name}={value} below minimum {min_value}; using default {default}",
+        )
+        return default
+    return value
+
+
+def _resolve_candidates_freshness(
+    *,
+    candidates_snapshot: dict,
+    now_utc: datetime,
+    ny_date: str,
+) -> tuple[bool, str]:
+    mtime_raw = candidates_snapshot.get("mtime_utc")
+    if not mtime_raw:
+        return False, "candidates_mtime_missing"
+    try:
+        mtime_utc = datetime.fromisoformat(str(mtime_raw).replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
+    except Exception:
+        return False, "candidates_mtime_invalid"
+
+    mtime_ny = mtime_utc.astimezone(clocks.ET)
+    mtime_ny_date = mtime_ny.date().isoformat()
+    if mtime_ny_date != ny_date:
+        return False, f"candidates_stale_date:file={mtime_ny_date} expected={ny_date}"
+
+    max_age_minutes = _parse_int_env("CANDIDATES_MAX_AGE_MINUTES", 24 * 60, min_value=0)
+    age_minutes = (now_utc - mtime_utc).total_seconds() / 60.0
+    if age_minutes > float(max_age_minutes):
+        return False, f"candidates_stale_age:age_min={age_minutes:.1f} max={max_age_minutes}"
+
+    return True, "fresh"
+
+
+def _entry_submit_quality_check(intent, md) -> tuple[bool, str]:
+    try:
+        symbol = str(getattr(intent, "symbol", "")).upper()
+    except Exception:
+        symbol = ""
+    if not symbol:
+        return False, "submit_quality:symbol_missing"
+
+    try:
+        ref_price = float(getattr(intent, "ref_price", 0.0))
+    except Exception:
+        ref_price = 0.0
+    if ref_price <= 0:
+        return False, "submit_quality:ref_price_invalid"
+
+    try:
+        stop_loss = float(getattr(intent, "stop_loss", 0.0))
+    except Exception:
+        stop_loss = 0.0
+    if stop_loss > 0:
+        risk_per_share = ref_price - stop_loss
+        max_risk = _parse_float_env("MAX_RISK_PER_SHARE_DOLLARS", 3.0, min_value=0.0)
+        if risk_per_share > max_risk:
+            return False, "submit_quality:risk_too_wide"
+
+    try:
+        pivot_level = float(getattr(intent, "pivot_level", 0.0))
+    except Exception:
+        pivot_level = 0.0
+    if pivot_level > 0:
+        pivot_tolerance = _parse_float_env("ENTRY_PIVOT_BREAK_TOLERANCE_PCT", 0.002, min_value=0.0)
+        if ref_price < pivot_level * (1.0 - pivot_tolerance):
+            return False, "submit_quality:below_pivot"
+
+    max_age_sec = _parse_int_env("ENTRY_INTENT_MAX_AGE_SEC", 2 * 60 * 60, min_value=0)
+    if max_age_sec > 0:
+        try:
+            confirmed_at = float(getattr(intent, "boh_confirmed_at", 0.0) or 0.0)
+        except Exception:
+            confirmed_at = 0.0
+        if confirmed_at > 0 and (time.time() - confirmed_at) > float(max_age_sec):
+            return False, "submit_quality:intent_stale"
+
+    if md is not None and hasattr(md, "get_last_two_closed_10m"):
+        try:
+            bars = md.get_last_two_closed_10m(symbol)
+        except Exception:
+            bars = []
+        if len(bars) == 2:
+            last_close = None
+            try:
+                last_close = float(getattr(bars[-1], "close"))
+            except Exception:
+                try:
+                    last_close = float(bars[-1]["close"])
+                except Exception:
+                    last_close = None
+            if last_close is not None and last_close > 0:
+                drift_cap = _parse_float_env("ENTRY_SUBMIT_PRICE_DRIFT_PCT", 0.03, min_value=0.0)
+                drift = abs(last_close - ref_price) / ref_price
+                if drift > drift_cap:
+                    return False, "submit_quality:price_drift"
+
+    return True, "ok"
+
+
+def _requeue_entry_intent(store: StateStore, intent, *, delay_seconds: int, reason: str) -> None:
+    try:
+        scheduled_entry_at = float(getattr(intent, "scheduled_entry_at"))
+    except Exception:
+        scheduled_entry_at = time.time()
+    try:
+        retry_intent = buy_loop.EntryIntent(
+            strategy_id=getattr(intent, "strategy_id"),
+            symbol=getattr(intent, "symbol"),
+            pivot_level=float(getattr(intent, "pivot_level")),
+            boh_confirmed_at=float(getattr(intent, "boh_confirmed_at")),
+            scheduled_entry_at=max(
+                scheduled_entry_at,
+                time.time() + max(int(delay_seconds), 0),
+            ),
+            size_shares=int(getattr(intent, "size_shares")),
+            stop_loss=float(getattr(intent, "stop_loss")),
+            take_profit=float(getattr(intent, "take_profit")),
+            ref_price=float(getattr(intent, "ref_price")),
+            dist_pct=float(getattr(intent, "dist_pct")),
+        )
+        store.put_entry_intent(retry_intent)
+        _log(f"ENTRY_REQUEUE symbol={retry_intent.symbol} reason={reason}")
+    except Exception as exc:
+        _log(f"WARNING: failed to requeue entry intent ({type(exc).__name__}: {exc})")
+
+
 def _parse_time_env(name: str, default_value: str) -> dt_time:
     raw = os.getenv(name)
     value = raw.strip() if raw else ""
@@ -966,6 +1127,13 @@ def run_once(cfg) -> None:
     candidates_snapshot = _snapshot_candidates_csv(cfg.candidates_csv)
     repo_root = Path(getattr(cfg, "base_dir", "") or os.getenv("AVWAP_REPO_ROOT", "") or Path(__file__).resolve().parents[1]).resolve()
     decision_record = _init_decision_record(cfg, candidates_snapshot, decision_ts_utc, repo_root)
+    candidates_fresh, candidates_fresh_reason = _resolve_candidates_freshness(
+        candidates_snapshot=candidates_snapshot,
+        now_utc=decision_ts_utc,
+        ny_date=decision_record["ny_date"],
+    )
+    decision_record["gates"]["freshness"]["candidates_fresh"] = bool(candidates_fresh)
+    decision_record["gates"]["freshness"]["reason"] = candidates_fresh_reason
     decision_path = Path(decision_record["artifacts"]["portfolio_decisions_path"])
     latest_path = _state_dir() / "portfolio_decision_latest.json"
     decision_record["artifacts"]["portfolio_decision_latest_path"] = str(latest_path.resolve())
@@ -991,6 +1159,14 @@ def run_once(cfg) -> None:
         "ttl_sec": entry_intent_ttl_sec,
         "reschedule_on_gate": entry_intent_reschedule_on_gate,
     }
+    if not candidates_fresh:
+        blocks.append(
+            {
+                "code": "candidates_stale",
+                "message": f"candidate freshness gate failed ({candidates_fresh_reason})",
+            }
+        )
+        _log(f"Gate candidates_stale active ({candidates_fresh_reason}).")
     lifecycle_meta = decision_record.setdefault("intents_meta", {}).setdefault(
         "entry_intent_lifecycle", {}
     )
@@ -1356,12 +1532,14 @@ def run_once(cfg) -> None:
                         return []
 
                 md = _NoMarketData()
-            if not settle_active and not entry_delay_after_open_active:
+            if candidates_fresh and not settle_active and not entry_delay_after_open_active:
                 created = _evaluate_entry_candidates(account_equity)
                 if created:
                     _log(f"Created {created} entry intents.")
                     _record_created_intents_meta(decision_record, entry_intents_created, created)
             else:
+                if not candidates_fresh:
+                    _log("PAPER_SIM: candidates stale; skipping entry intent creation.")
                 if settle_active:
                     _log("PAPER_SIM: settle delay active; skipping entry intent creation.")
                 if entry_delay_after_open_active:
@@ -1383,12 +1561,14 @@ def run_once(cfg) -> None:
                 md = _NoMarketData()
             account_equity = float(os.getenv("MANUAL_ACCOUNT_EQUITY", "0") or 0.0)
             decision_record["inputs"]["account"]["equity"] = account_equity
-            if not settle_active and not entry_delay_after_open_active:
+            if candidates_fresh and not settle_active and not entry_delay_after_open_active:
                 created = _evaluate_entry_candidates(account_equity)
                 if created:
                     _log(f"Created {created} entry intents.")
                     _record_created_intents_meta(decision_record, entry_intents_created, created)
             else:
+                if not candidates_fresh:
+                    _log("SCHWAB_401K_MANUAL: candidates stale; skipping entry intent creation.")
                 if settle_active:
                     _log("SCHWAB_401K_MANUAL: settle delay active; skipping entry intent creation.")
                 if entry_delay_after_open_active:
@@ -1426,12 +1606,14 @@ def run_once(cfg) -> None:
                     }
                 )
             account_equity = _get_account_equity(trading_client)
-            if not settle_active and not entry_delay_after_open_active:
+            if candidates_fresh and not settle_active and not entry_delay_after_open_active:
                 created = _evaluate_entry_candidates(account_equity)
                 if created:
                     _log(f"Created {created} entry intents.")
                     _record_created_intents_meta(decision_record, entry_intents_created, created)
             else:
+                if not candidates_fresh:
+                    _log("ALPACA_PAPER: candidates stale; skipping entry intent creation.")
                 if settle_active:
                     _log("ALPACA_PAPER: settle delay active; skipping entry intent creation.")
                 if entry_delay_after_open_active:
@@ -1448,6 +1630,14 @@ def run_once(cfg) -> None:
                     log=_log,
                     entry_delay_active=entry_delay_after_open_active,
                 )
+                try:
+                    sell_loop.evaluate_positions(
+                        store,
+                        trading_client,
+                        sell_loop.SellLoopConfig(candidates_csv=cfg.candidates_csv),
+                    )
+                except Exception as exc:
+                    _log(f"WARNING: sell loop evaluation failed ({type(exc).__name__}: {exc})")
 
         else:
             decision_record["gates"]["live_gate_applied"] = True
@@ -1498,12 +1688,14 @@ def run_once(cfg) -> None:
                         }
                     )
             account_equity = _get_account_equity(trading_client)
-            if not settle_active and not entry_delay_after_open_active:
+            if candidates_fresh and not settle_active and not entry_delay_after_open_active:
                 created = _evaluate_entry_candidates(account_equity)
                 if created:
                     _log(f"Created {created} entry intents.")
                     _record_created_intents_meta(decision_record, entry_intents_created, created)
             else:
+                if not candidates_fresh:
+                    _log("LIVE: candidates stale; skipping entry intent creation.")
                 if settle_active:
                     _log("LIVE: settle delay active; skipping entry intent creation.")
                 if entry_delay_after_open_active:
@@ -1520,12 +1712,21 @@ def run_once(cfg) -> None:
                     log=_log,
                     entry_delay_active=entry_delay_after_open_active,
                 )
+                try:
+                    sell_loop.evaluate_positions(
+                        store,
+                        trading_client,
+                        sell_loop.SellLoopConfig(candidates_csv=cfg.candidates_csv),
+                    )
+                except Exception as exc:
+                    _log(f"WARNING: sell loop evaluation failed ({type(exc).__name__}: {exc})")
 
         now_ts = time.time()
         _log(
             "Entry intent consume gate: "
             f"settle_active={settle_active} "
             f"entry_delay_after_open_active={entry_delay_after_open_active} "
+            f"candidates_fresh={candidates_fresh} "
             f"now_ts={now_ts:.3f}"
         )
         pop_diag: dict[str, Any] = {
@@ -1548,10 +1749,13 @@ def run_once(cfg) -> None:
             pop_diag["gate_blocked"] = True
             pop_diag["block_reason"] = "manual_market_closed"
         else:
-            if settle_active or entry_delay_after_open_active:
+            if settle_active or entry_delay_after_open_active or (not candidates_fresh):
                 entry_intents = []
                 pop_diag["gate_blocked"] = True
-                pop_diag["block_reason"] = "entry_settle_gate"
+                if not candidates_fresh:
+                    pop_diag["block_reason"] = "candidates_stale"
+                else:
+                    pop_diag["block_reason"] = "entry_settle_gate"
             else:
                 entry_intents = store.pop_due_entry_intents(now_ts)
                 popped_count = len(entry_intents)
@@ -1949,6 +2153,9 @@ def run_once(cfg) -> None:
             if entries_blocked:
                 _log("SCHWAB_401K_MANUAL: portfolio decision unavailable; skipping entry tickets.")
                 return
+            if not intents:
+                _log("SCHWAB_401K_MANUAL: no approved entry intents; skipping entry tickets.")
+                return
             from execution_v2.schwab_manual_adapter import send_manual_tickets
 
             now_utc = datetime.now(timezone.utc)
@@ -1997,6 +2204,7 @@ def run_once(cfg) -> None:
             submitted = 0
             fills = 0
             wrote_ledger = False
+            projected_open_positions = int(positions_count or 0)
 
             for intent in intents:
                 if not paper_active:
@@ -2050,6 +2258,13 @@ def run_once(cfg) -> None:
                         {"symbol": intent.symbol, "reason": "open_order_or_position"}
                     )
                     continue
+                quality_ok, quality_reason = _entry_submit_quality_check(intent, md)
+                if not quality_ok:
+                    _log(f"SKIP {intent.symbol}: {quality_reason}")
+                    decision_record["actions"]["skipped"].append(
+                        {"symbol": intent.symbol, "reason": quality_reason}
+                    )
+                    continue
                 if consumed_entries_store and consumed_entries_store.is_consumed(intent.symbol):
                     _log(f"SKIP {intent.symbol}: already consumed today")
                     decision_record["actions"]["skipped"].append(
@@ -2086,7 +2301,7 @@ def run_once(cfg) -> None:
                     caps_ledger,
                     allowlist,
                     caps,
-                    open_positions=positions_count,
+                    open_positions=projected_open_positions,
                 )
                 status = "PASS" if allowed else "FAIL"
                 _log(f"Gate {status} {intent.symbol}: {cap_reason}")
@@ -2142,6 +2357,7 @@ def run_once(cfg) -> None:
                         symbol_state_store.save()
                     if consumed_entries_store:
                         consumed_entries_store.mark(intent.symbol, now_utc)
+                    projected_open_positions += 1
                     candidate_notes = store.get_candidate_notes(intent.symbol) or "scan:n/a"
                     send_verbose_alert(
                         "TRADE",
@@ -2266,6 +2482,13 @@ def run_once(cfg) -> None:
                         _log(f"ALPACA_PAPER: skipped duplicate intent {intent.symbol}")
                 except Exception as exc:
                     _log(f"ERROR submitting {intent.symbol}: {exc}")
+                    retry_delay = _parse_int_env("ENTRY_SUBMIT_RETRY_DELAY_SECONDS", 60, min_value=0)
+                    _requeue_entry_intent(
+                        store,
+                        intent,
+                        delay_seconds=retry_delay,
+                        reason="alpaca_paper_submit_error",
+                    )
                     decision_record["actions"]["errors"].append(
                         {
                             "where": "alpaca_paper_submit",
@@ -2294,6 +2517,7 @@ def run_once(cfg) -> None:
 
         if entries_blocked:
             _log("Portfolio decision unavailable; skipping entry orders.")
+        projected_open_positions = int(positions_count or 0)
         for intent in intents:
             effective_dry_run = not live_active
             if enforcement_context:
@@ -2333,6 +2557,13 @@ def run_once(cfg) -> None:
                 _log(f"SKIP {intent.symbol}: open order/position exists")
                 decision_record["actions"]["skipped"].append(
                     {"symbol": intent.symbol, "reason": "open_order_or_position"}
+                )
+                continue
+            quality_ok, quality_reason = _entry_submit_quality_check(intent, md)
+            if not quality_ok:
+                _log(f"SKIP {intent.symbol}: {quality_reason}")
+                decision_record["actions"]["skipped"].append(
+                    {"symbol": intent.symbol, "reason": quality_reason}
                 )
                 continue
             if entry_delay_after_open_active:
@@ -2379,7 +2610,7 @@ def run_once(cfg) -> None:
                     live_ledger,
                     allowlist,
                     caps,
-                    open_positions=positions_count,
+                    open_positions=projected_open_positions,
                 )
                 status = "PASS" if allowed else "FAIL"
                 _log(f"Gate {status} {intent.symbol}: {cap_reason}")
@@ -2440,6 +2671,7 @@ def run_once(cfg) -> None:
                         symbol_state_store.save()
                     if consumed_entries_store:
                         consumed_entries_store.mark(intent.symbol, datetime.now(timezone.utc))
+                    projected_open_positions += 1
                     if effective_dry_run:
                         ledgers_written.append("/root/avwap_r3k_scanner/state/dry_run_ledger.json")
                 candidate_notes = store.get_candidate_notes(intent.symbol) or "scan:n/a"
@@ -2474,6 +2706,13 @@ def run_once(cfg) -> None:
                             _log(f"WARNING: failed to update live ledger: {exc}")
             except Exception as exc:
                 _log(f"ERROR submitting {intent.symbol}: {exc}")
+                retry_delay = _parse_int_env("ENTRY_SUBMIT_RETRY_DELAY_SECONDS", 60, min_value=0)
+                _requeue_entry_intent(
+                    store,
+                    intent,
+                    delay_seconds=retry_delay,
+                    reason="live_submit_error",
+                )
                 decision_record["actions"]["errors"].append(
                     {
                         "where": "live_submit",

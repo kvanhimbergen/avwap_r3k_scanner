@@ -147,6 +147,10 @@ def adjust_order_quantity(
     if base_qty <= 0:
         return 0
 
+    # Hard block semantics: a zero multiplier should prevent new entries.
+    if float(risk_controls.risk_multiplier) <= 0.0:
+        return 0
+
     adjusted_qty = int(math.floor(base_qty * risk_controls.risk_multiplier))
 
     if risk_controls.per_position_cap is not None:

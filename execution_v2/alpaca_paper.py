@@ -114,6 +114,9 @@ def build_order_event(
     if order_id is not None:
         order_id = str(order_id)
     status = getattr(order, "status", None)
+    side = getattr(order, "side", None)
+    if side is not None:
+        side = str(side).split(".")[-1].lower()
     filled_qty_raw = getattr(order, "filled_qty", None)
     filled_avg_price_raw = getattr(order, "filled_avg_price", None)
     filled_at = _normalize_ts(getattr(order, "filled_at", None))
@@ -157,6 +160,7 @@ def build_order_event(
         "ref_price": ref_price,
         "notional": notional,
         "status": status,
+        "side": side,
         "filled_qty": filled_qty,
         "filled_avg_price": filled_avg_price,
         "fills": fills,
@@ -188,7 +192,7 @@ def append_events(path: Path, events: Iterable[dict]) -> tuple[int, int]:
 
 def load_caps_ledger(repo_root: Path, date_ny: str) -> live_gate.LiveLedger:
     path = ledger_path(repo_root, date_ny)
-    entries: list[dict] = []
+    entries_by_order_key: dict[str, dict] = {}
     if path.exists():
         try:
             with path.open("r") as handle:
@@ -202,6 +206,9 @@ def load_caps_ledger(repo_root: Path, date_ny: str) -> live_gate.LiveLedger:
                         continue
                     if data.get("date_ny") != date_ny:
                         continue
+                    side = str(data.get("side", "")).split(".")[-1].lower()
+                    if side and side != "buy":
+                        continue
                     symbol = str(data.get("symbol", "")).upper()
                     notional = data.get("notional")
                     order_id = data.get("alpaca_order_id") or data.get("intent_id")
@@ -211,17 +218,23 @@ def load_caps_ledger(repo_root: Path, date_ny: str) -> live_gate.LiveLedger:
                         notional_value = float(notional)
                     except Exception:
                         continue
-                    entries.append(
-                        {
-                            "order_id": str(order_id),
-                            "symbol": symbol,
-                            "notional": notional_value,
-                            "timestamp": data.get("ts_utc"),
-                        }
-                    )
+                    order_key = str(order_id or "").strip()
+                    if not order_key:
+                        continue
+                    existing = entries_by_order_key.get(order_key)
+                    if existing is not None:
+                        # Keep the max notional snapshot for this order key.
+                        existing["notional"] = max(float(existing["notional"]), notional_value)
+                        continue
+                    entries_by_order_key[order_key] = {
+                        "order_id": order_key,
+                        "symbol": symbol,
+                        "notional": notional_value,
+                        "timestamp": data.get("ts_utc"),
+                    }
         except Exception:
-            entries = []
-
+            entries_by_order_key = {}
+    entries = list(entries_by_order_key.values())
     return live_gate.LiveLedger(str(path), date_ny, entries, was_reset=False)
 
 

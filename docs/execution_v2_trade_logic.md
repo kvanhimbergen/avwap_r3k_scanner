@@ -105,9 +105,9 @@ Sizing is evaluated only at entry.
 
 ## Risk Management (Execution)
 
-- Initial orders are submitted as Alpaca bracket orders.
-- The scan provides a structural stop (`Stop_Loss`) and a primary target (`Target_R2`).
-- Behavioral stop escalation is planned but not yet automated.
+- Initial entries are submitted as marketable limit orders (bounded slippage).
+- The scan provides structural context (`Stop_Loss`, `Target_R2`) and execution computes/ratchets active stops.
+- Session-phase stop guardrails are automated.
 
 ### Session-phase stop authority
 
@@ -134,8 +134,8 @@ Sizing is evaluated only at entry.
 
 ## Full Exit Logic
 
-- Initial bracket stop orders handle early exits.
-- After R2, a trailing stop (measured off the R2 move) will trigger a full exit if price reverses.
+- Structural stop management handles early exits.
+- After R2, trailing behavior plus stop reconciliation handles reversal exits.
 
 ---
 

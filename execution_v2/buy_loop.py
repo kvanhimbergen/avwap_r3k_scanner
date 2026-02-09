@@ -46,6 +46,7 @@ REASON_MISSING_MARKET_DATA = "missing_market_data"
 REASON_BOH_NOT_CONFIRMED = "boh_not_confirmed"
 REASON_INVALID_CANDIDATE_ROW = "invalid_candidate_row"
 REASON_EXISTING_OPEN_ORDERS = "existing_open_orders"
+REASON_RISK_CONTROLS_BLOCKED = "risk_controls_blocked"
 REASON_OTHER_REJECTED = "other_rejected"
 
 _KNOWN_REJECTION_REASONS = {
@@ -53,6 +54,7 @@ _KNOWN_REJECTION_REASONS = {
     REASON_BOH_NOT_CONFIRMED,
     REASON_INVALID_CANDIDATE_ROW,
     REASON_EXISTING_OPEN_ORDERS,
+    REASON_RISK_CONTROLS_BLOCKED,
     REASON_OTHER_REJECTED,
 }
 
@@ -184,6 +186,26 @@ class EdgeWindowClock:
 
 def _default_edge_clock() -> EdgeWindowClock:
     return EdgeWindowClock(now=time.time, sleep=time.sleep)
+
+
+def _optional_env_int(name: str) -> int | None:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _optional_env_float(name: str) -> float | None:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
 
 
 def _deterministic_delay(
@@ -336,15 +358,37 @@ def evaluate_and_create_entry_intents(
     risk_controls_result = None
     drawdown_value = None
     drawdown_threshold = None
+    base_max_positions = (
+        _optional_env_int("MAX_LIVE_POSITIONS")
+        or _optional_env_int("RISK_BASE_MAX_POSITIONS")
+        or 5
+    )
+    base_max_gross_exposure = (
+        _optional_env_float("MAX_LIVE_GROSS_NOTIONAL")
+        or _optional_env_float("RISK_BASE_MAX_GROSS_EXPOSURE")
+        or float(account_equity)
+    )
     repo_root = Path(".")
+    gross_exposure = 0.0
+    open_positions_count = 0
+    try:
+        current_positions = list(store.list_positions())
+        open_positions_count = len(current_positions)
+        gross_exposure = sum(
+            abs(float(getattr(pos, "avg_price", 0.0)) * float(getattr(pos, "size_shares", 0.0)))
+            for pos in current_positions
+        )
+    except Exception:
+        current_positions = []
+    projected_positions_count = open_positions_count
     if risk_modulation_enabled():
         ny_date = exits.entry_day_from_ts(now_ts)
         drawdown_value, drawdown_threshold, _ = resolve_drawdown_guardrail()
         result = build_risk_controls(
             ny_date=ny_date,
             repo_root=repo_root,
-            base_max_positions=None,
-            base_max_gross_exposure=None,
+            base_max_positions=base_max_positions,
+            base_max_gross_exposure=base_max_gross_exposure,
             base_per_position_cap=cfg.sizing_cfg.max_position_pct,
             drawdown=drawdown_value,
             max_drawdown_pct_block=drawdown_threshold,
@@ -367,6 +411,14 @@ def evaluate_and_create_entry_intents(
         if store.get_entry_intent(cand.symbol) is not None:
             if rejection_telemetry is not None:
                 rejection_telemetry.record_rejected(cand.symbol, REASON_EXISTING_OPEN_ORDERS)
+            continue
+        if (
+            risk_controls is not None
+            and risk_controls.max_positions is not None
+            and projected_positions_count >= int(risk_controls.max_positions)
+        ):
+            if rejection_telemetry is not None:
+                rejection_telemetry.record_rejected(cand.symbol, REASON_RISK_CONTROLS_BLOCKED)
             continue
 
         bars = md.get_last_two_closed_10m(cand.symbol)
@@ -432,7 +484,7 @@ def evaluate_and_create_entry_intents(
                 price=price_for_sizing,
                 account_equity=account_equity,
                 risk_controls=risk_controls,
-                gross_exposure=None,
+                gross_exposure=gross_exposure,
                 min_qty=None,
             )
             if os.getenv("E3_RISK_ATTRIBUTION_WRITE", "0").strip() == "1" and risk_controls_result is not None:
@@ -456,7 +508,7 @@ def evaluate_and_create_entry_intents(
                             modulated_qty=size,
                             price=cand.price,
                             account_equity=account_equity,
-                            gross_exposure=None,
+                            gross_exposure=gross_exposure,
                             risk_controls=risk_controls,
                             risk_control_reasons=risk_controls_result.reasons,
                             throttle_source=risk_controls_result.source,
@@ -472,7 +524,8 @@ def evaluate_and_create_entry_intents(
                         print(f"WARN: risk attribution write failed for {cand.symbol}: {exc}")
         if size <= 0:
             if rejection_telemetry is not None:
-                rejection_telemetry.record_rejected(cand.symbol, REASON_OTHER_REJECTED)
+                reason = REASON_RISK_CONTROLS_BLOCKED if risk_controls is not None else REASON_OTHER_REJECTED
+                rejection_telemetry.record_rejected(cand.symbol, reason)
             continue
 
         daily_bars = md.get_daily_bars(cand.symbol)
@@ -519,6 +572,8 @@ def evaluate_and_create_entry_intents(
         if created_intents is not None:
             created_intents.append(intent)
         created += 1
+        projected_positions_count += 1
+        gross_exposure += float(size) * float(price_for_sizing)
         if rejection_telemetry is not None:
             rejection_telemetry.record_accepted()
 

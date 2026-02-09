@@ -134,3 +134,36 @@ def test_turnover_cap_limits_buys() -> None:
     buys = [intent for intent in intents if intent["side"] == "BUY"]
     total_buy_delta = sum(float(intent["delta_pct"]) for intent in buys)
     assert total_buy_delta == pytest.approx(15.0, abs=0.2)
+
+
+def test_portfolio_vol_estimator_accounts_for_covariance() -> None:
+    base_returns = tuple([0.01, -0.005, 0.008, -0.004, 0.006, -0.003] * 11)
+    feature_a = raec_401k_v2.SymbolFeature(
+        symbol="AAA",
+        close=100.0,
+        mom_6m=0.1,
+        mom_12m=0.2,
+        vol_20d=0.2,
+        vol_252d=0.2,
+        drawdown_63d=-0.05,
+        score=1.0,
+        returns_window=base_returns,
+    )
+    feature_b = raec_401k_v2.SymbolFeature(
+        symbol="BBB",
+        close=100.0,
+        mom_6m=0.1,
+        mom_12m=0.2,
+        vol_20d=0.2,
+        vol_252d=0.2,
+        drawdown_63d=-0.05,
+        score=1.0,
+        returns_window=base_returns,
+    )
+    weights = {"AAA": 0.5, "BBB": 0.5}
+    feature_map = {"AAA": feature_a, "BBB": feature_b}
+
+    estimated = raec_401k_v2._estimate_portfolio_vol(weights, feature_map)
+    sigma = raec_401k_v2._compute_volatility(list(base_returns))
+    diagonal_only = ((0.5 * sigma) ** 2 + (0.5 * sigma) ** 2) ** 0.5
+    assert estimated > diagonal_only

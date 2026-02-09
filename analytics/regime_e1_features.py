@@ -2,16 +2,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import os
 from typing import Any, Iterable
 
 import pandas as pd
 
-VOL_LOOKBACK = 20
-DRAWDOWN_LOOKBACK = 63
-TREND_SHORT_LOOKBACK = 50
-TREND_LONG_LOOKBACK = 200
-BREADTH_LOOKBACK = 50
-MIN_BREADTH_SYMBOLS = 20
+DEFAULT_VOL_LOOKBACK = 20
+DEFAULT_DRAWDOWN_LOOKBACK = 63
+DEFAULT_TREND_SHORT_LOOKBACK = 50
+DEFAULT_TREND_LONG_LOOKBACK = 200
+DEFAULT_BREADTH_LOOKBACK = 50
+DEFAULT_MIN_BREADTH_SYMBOLS = 20
+
+ENV_VOL_LOOKBACK = "REGIME_E1_VOL_LOOKBACK"
+ENV_DRAWDOWN_LOOKBACK = "REGIME_E1_DRAWDOWN_LOOKBACK"
+ENV_TREND_SHORT_LOOKBACK = "REGIME_E1_TREND_SHORT_LOOKBACK"
+ENV_TREND_LONG_LOOKBACK = "REGIME_E1_TREND_LONG_LOOKBACK"
+ENV_BREADTH_LOOKBACK = "REGIME_E1_BREADTH_LOOKBACK"
+ENV_MIN_BREADTH_SYMBOLS = "REGIME_E1_MIN_BREADTH_SYMBOLS"
 
 
 @dataclass(frozen=True)
@@ -34,8 +42,52 @@ class RegimeFeatureResult:
     inputs_snapshot: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class RegimeLookbacks:
+    vol: int
+    drawdown: int
+    trend_short: int
+    trend_long: int
+    breadth: int
+    min_breadth_symbols: int
+
+
 def _round(value: float, places: int = 6) -> float:
     return round(float(value), places)
+
+
+def _env_positive_int(name: str, default: int, *, minimum: int = 1) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        return default
+    if parsed < minimum:
+        return default
+    return parsed
+
+
+def _resolve_lookbacks() -> RegimeLookbacks:
+    trend_long = _env_positive_int(
+        ENV_TREND_LONG_LOOKBACK, DEFAULT_TREND_LONG_LOOKBACK
+    )
+    trend_short = _env_positive_int(
+        ENV_TREND_SHORT_LOOKBACK, DEFAULT_TREND_SHORT_LOOKBACK
+    )
+    # Keep trend windows coherent even when env overrides are misconfigured.
+    trend_short = min(trend_short, trend_long)
+    return RegimeLookbacks(
+        vol=_env_positive_int(ENV_VOL_LOOKBACK, DEFAULT_VOL_LOOKBACK),
+        drawdown=_env_positive_int(ENV_DRAWDOWN_LOOKBACK, DEFAULT_DRAWDOWN_LOOKBACK),
+        trend_short=trend_short,
+        trend_long=trend_long,
+        breadth=_env_positive_int(ENV_BREADTH_LOOKBACK, DEFAULT_BREADTH_LOOKBACK),
+        min_breadth_symbols=_env_positive_int(
+            ENV_MIN_BREADTH_SYMBOLS, DEFAULT_MIN_BREADTH_SYMBOLS
+        ),
+    )
 
 
 def _normalize_columns(history: pd.DataFrame) -> pd.DataFrame:
@@ -82,30 +134,42 @@ def _require_length(series: pd.Series, count: int, reason: str, reasons: list[st
     return True
 
 
-def _compute_volatility(closes: pd.Series, reasons: list[str]) -> tuple[float | None, list[float]]:
+def _compute_volatility(
+    closes: pd.Series, reasons: list[str], *, lookback: int
+) -> tuple[float | None, list[float]]:
     returns = closes.pct_change().dropna()
-    window = _series_tail(returns, VOL_LOOKBACK)
-    if not _require_length(window, VOL_LOOKBACK, "insufficient_vol_history", reasons):
+    window = _series_tail(returns, lookback)
+    if not _require_length(window, lookback, "insufficient_vol_history", reasons):
         return None, []
     vol = window.std(ddof=0) * (252 ** 0.5)
     return _round(vol), [_round(val) for val in window.tolist()]
 
 
-def _compute_drawdown(closes: pd.Series, reasons: list[str]) -> tuple[float | None, list[float]]:
-    window = _series_tail(closes, DRAWDOWN_LOOKBACK)
-    if not _require_length(window, DRAWDOWN_LOOKBACK, "insufficient_drawdown_history", reasons):
+def _compute_drawdown(
+    closes: pd.Series, reasons: list[str], *, lookback: int
+) -> tuple[float | None, list[float]]:
+    window = _series_tail(closes, lookback)
+    if not _require_length(window, lookback, "insufficient_drawdown_history", reasons):
         return None, []
     running_max = window.cummax()
     drawdowns = window / running_max - 1.0
     return _round(drawdowns.min()), [_round(val) for val in window.tolist()]
 
 
-def _compute_trend(closes: pd.Series, reasons: list[str]) -> tuple[float | None, float | None, float | None]:
-    window_long = _series_tail(closes, TREND_LONG_LOOKBACK)
-    if not _require_length(window_long, TREND_LONG_LOOKBACK, "insufficient_trend_history", reasons):
+def _compute_trend(
+    closes: pd.Series,
+    reasons: list[str],
+    *,
+    short_lookback: int,
+    long_lookback: int,
+) -> tuple[float | None, float | None, float | None]:
+    window_long = _series_tail(closes, long_lookback)
+    if not _require_length(window_long, long_lookback, "insufficient_trend_history", reasons):
         return None, None, None
-    window_short = _series_tail(closes, TREND_SHORT_LOOKBACK)
-    if not _require_length(window_short, TREND_SHORT_LOOKBACK, "insufficient_trend_short_history", reasons):
+    window_short = _series_tail(closes, short_lookback)
+    if not _require_length(
+        window_short, short_lookback, "insufficient_trend_short_history", reasons
+    ):
         return None, None, None
     ma_short = window_short.mean()
     ma_long = window_long.mean()
@@ -116,21 +180,29 @@ def _compute_trend(closes: pd.Series, reasons: list[str]) -> tuple[float | None,
     return _round(trend), _round(ma_short), _round(ma_long)
 
 
-def _breadth_fraction(df: pd.DataFrame, ny_date: str) -> tuple[float | None, dict[str, Any], str | None]:
+def _breadth_fraction(
+    df: pd.DataFrame,
+    ny_date: str,
+    *,
+    breadth_lookback: int | None = None,
+    min_breadth_symbols: int | None = None,
+) -> tuple[float | None, dict[str, Any], str | None]:
+    lookback = breadth_lookback or _resolve_lookbacks().breadth
+    min_symbols = min_breadth_symbols or _resolve_lookbacks().min_breadth_symbols
     breadth_symbols: list[str] = []
     above_count = 0
     df_sorted = df.sort_values(["symbol", "date"])
     for symbol, history in df_sorted.groupby("symbol", sort=True):
-        if len(history) < BREADTH_LOOKBACK:
+        if len(history) < lookback:
             continue
         closes = history["close"]
-        window = closes.iloc[-BREADTH_LOOKBACK:]
+        window = closes.iloc[-lookback:]
         ma = window.mean()
         last_close = closes.iloc[-1]
         breadth_symbols.append(symbol)
         if last_close >= ma:
             above_count += 1
-    if len(breadth_symbols) < MIN_BREADTH_SYMBOLS:
+    if len(breadth_symbols) < min_symbols:
         return None, {}, "insufficient_breadth_symbols"
     fraction = above_count / len(breadth_symbols)
     return _round(fraction), {
@@ -140,17 +212,23 @@ def _breadth_fraction(df: pd.DataFrame, ny_date: str) -> tuple[float | None, dic
     }, None
 
 
-def _breadth_ratio(df: pd.DataFrame, ny_date: str) -> tuple[float | None, dict[str, Any], str | None]:
+def _breadth_ratio(
+    df: pd.DataFrame,
+    ny_date: str,
+    *,
+    breadth_lookback: int | None = None,
+) -> tuple[float | None, dict[str, Any], str | None]:
+    lookback = breadth_lookback or _resolve_lookbacks().breadth
     spy = _filter_as_of(_symbol_history(df, "SPY"), ny_date)
     iwm = _filter_as_of(_symbol_history(df, "IWM"), ny_date)
     if spy.empty or iwm.empty:
         return None, {}, "missing_breadth_ratio_symbols"
     merged = pd.merge(spy[["date", "close"]], iwm[["date", "close"]], on="date", suffixes=("_spy", "_iwm"))
     merged = merged.sort_values("date")
-    if len(merged) < BREADTH_LOOKBACK:
+    if len(merged) < lookback:
         return None, {}, "insufficient_breadth_ratio_history"
     ratio = merged["close_iwm"] / merged["close_spy"]
-    window = _series_tail(ratio, BREADTH_LOOKBACK)
+    window = _series_tail(ratio, lookback)
     ma = window.mean()
     last_ratio = window.iloc[-1]
     if ma == 0:
@@ -165,6 +243,7 @@ def _breadth_ratio(df: pd.DataFrame, ny_date: str) -> tuple[float | None, dict[s
 
 
 def compute_regime_features(history: pd.DataFrame, ny_date: str) -> RegimeFeatureResult:
+    lookbacks = _resolve_lookbacks()
     reasons: list[str] = []
     try:
         df = _normalize_columns(history)
@@ -204,16 +283,30 @@ def compute_regime_features(history: pd.DataFrame, ny_date: str) -> RegimeFeatur
 
     spy_closes = spy_history["close"]
     last_date = _to_date_string(spy_history["date"].iloc[-1])
-    vol, vol_returns = _compute_volatility(spy_closes, reasons)
-    drawdown, drawdown_closes = _compute_drawdown(spy_closes, reasons)
-    trend, ma_short, ma_long = _compute_trend(spy_closes, reasons)
+    vol, vol_returns = _compute_volatility(spy_closes, reasons, lookback=lookbacks.vol)
+    drawdown, drawdown_closes = _compute_drawdown(
+        spy_closes, reasons, lookback=lookbacks.drawdown
+    )
+    trend, ma_short, ma_long = _compute_trend(
+        spy_closes,
+        reasons,
+        short_lookback=lookbacks.trend_short,
+        long_lookback=lookbacks.trend_long,
+    )
 
     breadth_reasons: list[str] = []
-    breadth_value, breadth_snapshot, breadth_reason = _breadth_fraction(df, ny_date)
+    breadth_value, breadth_snapshot, breadth_reason = _breadth_fraction(
+        df,
+        ny_date,
+        breadth_lookback=lookbacks.breadth,
+        min_breadth_symbols=lookbacks.min_breadth_symbols,
+    )
     if breadth_value is None and breadth_reason:
         breadth_reasons.append(breadth_reason)
     if breadth_value is None:
-        breadth_value, breadth_snapshot, breadth_reason = _breadth_ratio(df, ny_date)
+        breadth_value, breadth_snapshot, breadth_reason = _breadth_ratio(
+            df, ny_date, breadth_lookback=lookbacks.breadth
+        )
         if breadth_value is None and breadth_reason:
             breadth_reasons.append(breadth_reason)
     if breadth_value is None and breadth_reasons:
@@ -225,6 +318,14 @@ def compute_regime_features(history: pd.DataFrame, ny_date: str) -> RegimeFeatur
             "last_date": last_date,
             "history_rows": int(len(df)),
             "available_symbols": sorted(df["symbol"].unique().tolist()),
+            "lookbacks": {
+                "vol": lookbacks.vol,
+                "drawdown": lookbacks.drawdown,
+                "trend_short": lookbacks.trend_short,
+                "trend_long": lookbacks.trend_long,
+                "breadth": lookbacks.breadth,
+                "min_breadth_symbols": lookbacks.min_breadth_symbols,
+            },
         }
         return RegimeFeatureResult(
             ok=False,
@@ -238,22 +339,22 @@ def compute_regime_features(history: pd.DataFrame, ny_date: str) -> RegimeFeatur
     signals = {
         "volatility": {
             "value": vol,
-            "lookback": VOL_LOOKBACK,
+            "lookback": lookbacks.vol,
         },
         "drawdown": {
             "value": drawdown,
-            "lookback": DRAWDOWN_LOOKBACK,
+            "lookback": lookbacks.drawdown,
         },
         "trend": {
             "value": trend,
             "ma_short": ma_short,
             "ma_long": ma_long,
-            "lookback_short": TREND_SHORT_LOOKBACK,
-            "lookback_long": TREND_LONG_LOOKBACK,
+            "lookback_short": lookbacks.trend_short,
+            "lookback_long": lookbacks.trend_long,
         },
         "breadth": {
             "value": breadth_value,
-            "lookback": BREADTH_LOOKBACK,
+            "lookback": lookbacks.breadth,
             **breadth_snapshot,
         },
     }
@@ -267,6 +368,14 @@ def compute_regime_features(history: pd.DataFrame, ny_date: str) -> RegimeFeatur
         "trend_ma_short": ma_short,
         "trend_ma_long": ma_long,
         "breadth": breadth_snapshot,
+        "lookbacks": {
+            "vol": lookbacks.vol,
+            "drawdown": lookbacks.drawdown,
+            "trend_short": lookbacks.trend_short,
+            "trend_long": lookbacks.trend_long,
+            "breadth": lookbacks.breadth,
+            "min_breadth_symbols": lookbacks.min_breadth_symbols,
+        },
     }
 
     feature_set = RegimeFeatureSet(

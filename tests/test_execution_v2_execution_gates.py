@@ -1,7 +1,9 @@
 import json
+import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 if "requests" not in sys.modules:
@@ -414,3 +416,82 @@ def test_consumed_entry_blocks_reentry(tmp_path, monkeypatch):
     reasons = {item["reason"] for item in decision["actions"]["skipped"]}
     assert "already_consumed_today" in reasons
     assert calls == []
+
+
+def test_candidates_stale_blocks_entry_creation(tmp_path, monkeypatch):
+    state_dir = tmp_path / "state"
+    now_et = datetime(2024, 1, 2, 10, 0, tzinfo=clocks.ET)
+    store = DummyStore([])
+    _patch_core(monkeypatch, state_dir, now_et, store)
+
+    called = {"buy_loop": False}
+
+    def _mark_buy(*_args, **_kwargs):
+        called["buy_loop"] = True
+        return 0
+
+    monkeypatch.setattr(execution_main.buy_loop, "evaluate_and_create_entry_intents", _mark_buy)
+
+    cfg = _base_cfg(tmp_path)
+    candidates_path = Path(cfg.candidates_csv)
+    stale_ts = (datetime.now(timezone.utc) - timedelta(days=2)).timestamp()
+    candidates_path.touch()
+    os.utime(candidates_path, (stale_ts, stale_ts))
+    execution_main.run_once(cfg)
+
+    latest_path = state_dir / "portfolio_decision_latest.json"
+    decision = json.loads(latest_path.read_text(encoding="utf-8"))
+    block_codes = {block["code"] for block in decision["gates"]["blocks"]}
+    assert "candidates_stale" in block_codes
+    assert called["buy_loop"] is False
+
+
+def test_projected_max_positions_blocks_second_order_same_cycle(tmp_path, monkeypatch):
+    state_dir = tmp_path / "state"
+    now_et = datetime(2024, 1, 2, 10, 0, tzinfo=clocks.ET)
+    monkeypatch.setenv("ENTRY_DELAY_AFTER_OPEN_MINUTES", "0")
+    monkeypatch.setenv("MAX_LIVE_POSITIONS", "1")
+    now_ts = time.time()
+    intents = [
+        EntryIntent(
+            strategy_id="core",
+            symbol="AAA",
+            pivot_level=1.0,
+            boh_confirmed_at=now_ts,
+            scheduled_entry_at=now_ts,
+            size_shares=5,
+            stop_loss=0.9,
+            take_profit=1.2,
+            ref_price=1.0,
+            dist_pct=0.1,
+        ),
+        EntryIntent(
+            strategy_id="core",
+            symbol="BBB",
+            pivot_level=1.0,
+            boh_confirmed_at=now_ts,
+            scheduled_entry_at=now_ts,
+            size_shares=5,
+            stop_loss=0.9,
+            take_profit=1.2,
+            ref_price=1.0,
+            dist_pct=0.1,
+        ),
+    ]
+    store = DummyStore(intents)
+    _patch_core(monkeypatch, state_dir, now_et, store)
+    monkeypatch.setattr(
+        execution_main,
+        "_submit_market_entry",
+        lambda *_args, **_kwargs: "order-id",
+    )
+
+    cfg = _base_cfg(tmp_path)
+    execution_main.run_once(cfg)
+
+    latest_path = state_dir / "portfolio_decision_latest.json"
+    decision = json.loads(latest_path.read_text(encoding="utf-8"))
+    submitted_symbols = [row["symbol"] for row in decision["actions"]["submitted_orders"]]
+    skipped_reasons = {item["reason"] for item in decision["actions"]["skipped"]}
+    assert len(submitted_symbols) == 1
+    assert "max positions reached" in skipped_reasons

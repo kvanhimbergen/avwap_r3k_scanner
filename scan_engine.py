@@ -409,7 +409,7 @@ def is_near_earnings_cached(ticker: str) -> bool:
     if os.getenv("EARNINGS_CACHE_DISABLE", "0") == "1":
         return False
 
-    ttl_days = int(os.getenv("EARNINGS_CACHE_TTL_DAYS", "7"))
+    ttl_days = int(os.getenv("EARNINGS_CACHE_TTL_DAYS", "1"))
     force_refresh = os.getenv("EARNINGS_CACHE_FORCE_REFRESH", "0") == "1"
 
     t = (ticker or "").upper().strip()

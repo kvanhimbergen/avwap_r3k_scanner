@@ -28,20 +28,31 @@ All features are computed using data **on or before** `ny_date`.
 
 ### Volatility
 - **Definition:** annualized realized volatility of SPY daily returns.
-- **Lookback:** 20 trading days.
+- **Lookback (default):** 20 trading days.
+- **Override env:** `REGIME_E1_VOL_LOOKBACK`
 
 ### Drawdown
 - **Definition:** minimum peak-to-trough drawdown over SPY closes.
-- **Lookback:** 63 trading days.
+- **Lookback (default):** 63 trading days.
+- **Override env:** `REGIME_E1_DRAWDOWN_LOOKBACK`
 
 ### Trend
 - **Definition:** SPY MA crossover strength (`MA50 / MA200 - 1`).
-- **Lookbacks:** 50d short, 200d long.
+- **Lookbacks (default):** 50d short, 200d long.
+- **Override envs:** `REGIME_E1_TREND_SHORT_LOOKBACK`, `REGIME_E1_TREND_LONG_LOOKBACK`
 
 ### Breadth
 Two deterministic methods:
 1. **Above-MA fraction (preferred):** fraction of symbols with close >= 50d MA using at least 20 symbols.
 2. **Ratio fallback:** `IWM / SPY` ratio vs its 50d MA (breadth = 1.0 if ratio >= MA else 0.0).
+
+Default breadth controls and overrides:
+- `BREADTH_LOOKBACK=50` via `REGIME_E1_BREADTH_LOOKBACK`
+- `MIN_BREADTH_SYMBOLS=20` via `REGIME_E1_MIN_BREADTH_SYMBOLS`
+
+Notes:
+- All overrides require positive integers; invalid values fall back to defaults.
+- If `REGIME_E1_TREND_SHORT_LOOKBACK > REGIME_E1_TREND_LONG_LOOKBACK`, short lookback is clamped to long lookback.
 
 ## Classification Rules
 Thresholds (fixed):
