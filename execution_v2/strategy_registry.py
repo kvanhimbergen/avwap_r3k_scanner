@@ -14,6 +14,7 @@ from typing import Mapping
 
 class StrategyID(str, Enum):
     S1_AVWAP_CORE = "S1_AVWAP_CORE"
+    S2_LETF_ORB_AGGRO = "S2_LETF_ORB_AGGRO"
 
 
 @dataclass(frozen=True)
@@ -32,7 +33,14 @@ _STRATEGY_REGISTRY: dict[StrategyID, StrategyMetadata] = {
         holding_horizon="swing",
         execution_style="systematic",
         risk_profile="directional",
-    )
+    ),
+    StrategyID.S2_LETF_ORB_AGGRO: StrategyMetadata(
+        strategy_id=StrategyID.S2_LETF_ORB_AGGRO,
+        asset_universe="Leveraged ETFs + liquid high-beta ETFs/equities",
+        holding_horizon="swing",
+        execution_style="systematic",
+        risk_profile="aggressive_directional",
+    ),
 }
 
 STRATEGY_REGISTRY: Mapping[StrategyID, StrategyMetadata] = MappingProxyType(_STRATEGY_REGISTRY)

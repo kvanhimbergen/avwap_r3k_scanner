@@ -32,6 +32,7 @@ from portfolio.risk_controls import (
 @dataclass(frozen=True)
 class Candidate:
     symbol: str
+    strategy_id: str
     direction: str
     entry_level: float
     stop_loss: float
@@ -243,6 +244,12 @@ def _load_candidates(
     candidates: list[Candidate] = []
     for _, row in df.iterrows():
         symbol = str(row["Symbol"]).strip().upper()
+        strategy_cell = row.get("Strategy_ID", None)
+        if strategy_cell is None or pd.isna(strategy_cell):
+            strategy_id = DEFAULT_STRATEGY_ID
+        else:
+            raw_strategy_id = str(strategy_cell).strip()
+            strategy_id = raw_strategy_id or DEFAULT_STRATEGY_ID
         if rejection_telemetry is not None:
             rejection_telemetry.record_candidate()
         if not symbol:
@@ -284,6 +291,7 @@ def _load_candidates(
         candidates.append(
             Candidate(
                 symbol=symbol,
+                strategy_id=strategy_id,
                 direction=direction,
                 entry_level=entry_level,
                 stop_loss=stop_loss,
@@ -557,7 +565,7 @@ def evaluate_and_create_entry_intents(
         else:
             delay = random.uniform(cfg.entry_delay_min_sec, cfg.entry_delay_max_sec)
         intent = EntryIntent(
-            strategy_id=DEFAULT_STRATEGY_ID,
+            strategy_id=cand.strategy_id,
             symbol=cand.symbol,
             pivot_level=cand.entry_level,
             boh_confirmed_at=boh.confirm_bar_ts or now_ts,
