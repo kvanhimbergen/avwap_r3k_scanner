@@ -21,7 +21,7 @@ def _truthy(value: str) -> bool:
 
 
 def slack_post_enabled() -> bool:
-    return _truthy(os.getenv("SLACK_POST_ENABLED", "0"))
+    return _truthy(os.getenv("SLACK_POST_ENABLED", "1"))
 
 
 def _normalize_symbol(value: Any) -> str:
