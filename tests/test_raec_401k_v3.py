@@ -292,32 +292,39 @@ def test_transition_structure(tmp_path: Path) -> None:
 # Test: weekly rebalance trigger
 # ---------------------------------------------------------------------------
 
-def test_weekly_rebalance_trigger(tmp_path: Path) -> None:
+def test_daily_rebalance_trigger(tmp_path: Path) -> None:
     provider = _risk_on_provider()
-    # Last eval was a Thursday in same ISO week
-    _seed_state(tmp_path, last_regime="RISK_ON",
-                allocs={"TQQQ": 50.0, "SOXL": 50.0},
-                last_eval_date="2026-02-02")  # Monday W06
-    # Same ISO week -> no rebalance (unless drift)
-    result_same_week = raec_401k_v3.run_strategy(
-        asof_date="2026-02-05",  # Thursday W06
+    asof_date = "2026-02-06"
+    # Compute targets so we can seed allocs that match (no drift)
+    asof = raec_401k_v3._parse_date(asof_date)
+    cash_symbol = raec_401k_v3._get_cash_symbol(provider)
+    vti_series = raec_401k_v3._sorted_series(provider.get_daily_close_series("VTI"), asof=asof)
+    signal = raec_401k_v3._compute_anchor_signal(vti_series)
+    feature_map = raec_401k_v3._load_symbol_features(provider=provider, asof=asof, cash_symbol=cash_symbol)
+    targets = raec_401k_v3._targets_for_regime(signal=signal, feature_map=feature_map, cash_symbol=cash_symbol)
+
+    # Same day, same regime, allocs at target -> no rebalance
+    _seed_state(tmp_path, last_regime=signal.regime, allocs=targets,
+                last_eval_date=asof_date)
+    result_same_day = raec_401k_v3.run_strategy(
+        asof_date=asof_date,
         repo_root=tmp_path,
         price_provider=provider,
         dry_run=True,
         allow_state_write=False,
     )
-    # New ISO week -> triggers rebalance
-    _seed_state(tmp_path, last_regime="RISK_ON",
-                allocs={"TQQQ": 50.0, "SOXL": 50.0},
-                last_eval_date="2026-02-02")  # Monday W06
-    result_new_week = raec_401k_v3.run_strategy(
-        asof_date="2026-02-09",  # Monday W07
+    # New day -> triggers rebalance
+    _seed_state(tmp_path, last_regime=signal.regime, allocs=targets,
+                last_eval_date="2026-02-05")
+    result_new_day = raec_401k_v3.run_strategy(
+        asof_date=asof_date,
         repo_root=tmp_path,
         price_provider=provider,
         dry_run=True,
         allow_state_write=False,
     )
-    assert result_new_week.should_rebalance is True
+    assert result_same_day.should_rebalance is False
+    assert result_new_day.should_rebalance is True
 
 
 # ---------------------------------------------------------------------------
@@ -344,9 +351,9 @@ def test_drift_threshold_1_5(tmp_path: Path) -> None:
     if other_syms:
         close_allocs[other_syms[0]] -= 1.4
 
-    # Same week eval -> should NOT rebalance at 1.4% drift
+    # Same day eval -> should NOT rebalance at 1.4% drift
     _seed_state(tmp_path, last_regime=signal.regime, allocs=close_allocs,
-                last_eval_date="2026-02-05")
+                last_eval_date="2026-02-06")
     result_no = raec_401k_v3.run_strategy(
         asof_date=asof_date,
         repo_root=tmp_path,
@@ -363,7 +370,7 @@ def test_drift_threshold_1_5(tmp_path: Path) -> None:
         drift_allocs[other_syms[0]] -= 1.6
 
     _seed_state(tmp_path, last_regime=signal.regime, allocs=drift_allocs,
-                last_eval_date="2026-02-05")
+                last_eval_date="2026-02-06")
     result_yes = raec_401k_v3.run_strategy(
         asof_date=asof_date,
         repo_root=tmp_path,

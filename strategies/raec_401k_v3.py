@@ -494,11 +494,11 @@ def _compute_drift(current: dict[str, float], targets: dict[str, float]) -> dict
     return {symbol: float(targets.get(symbol, 0.0)) - float(current.get(symbol, 0.0)) for symbol in symbols}
 
 
-def _first_eval_of_week(asof: date, last_eval: str | None) -> bool:
+def _first_eval_of_day(asof: date, last_eval: str | None) -> bool:
     if not last_eval:
         return True
     prior = _parse_date(last_eval)
-    return prior.isocalendar()[:2] != asof.isocalendar()[:2]
+    return prior != asof
 
 
 def _should_rebalance(
@@ -509,7 +509,7 @@ def _should_rebalance(
     targets: dict[str, float],
     current_allocs: dict[str, float] | None,
 ) -> bool:
-    if _first_eval_of_week(asof, state.get("last_eval_date")):
+    if _first_eval_of_day(asof, state.get("last_eval_date")):
         return True
     if state.get("last_regime") and state.get("last_regime") != regime:
         return True
