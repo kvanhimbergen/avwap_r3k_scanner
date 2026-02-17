@@ -70,6 +70,10 @@ CANDIDATE_COLUMNS = [
     "Setup_Extension_State",
     "Setup_Gap_Reset",
     "Setup_Structure_State",
+    "TrendScore_Zscore",
+    "TrendScore_Pctile",
+    "DistPct_Zscore",
+    "Composite_Rank",
 ]
 
 BENCHMARK_TICKERS = (
@@ -656,6 +660,39 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
         if row:
             results.append(row)
 
+    candidates = _build_candidates_dataframe(results)
+
+    if getattr(scan_cfg, "CROSS_SECTIONAL_ENABLED", False) and not candidates.empty:
+        from analytics.cross_sectional import apply_cross_sectional_scoring
+        features = getattr(scan_cfg, "CROSS_SECTIONAL_FEATURES", ["TrendScore", "Entry_DistPct", "AVWAP_Slope"])
+        top_decile = float(getattr(scan_cfg, "CROSS_SECTIONAL_TOP_DECILE", 0.1))
+        hard_floor = float(getattr(scan_cfg, "CROSS_SECTIONAL_HARD_FLOOR_TREND_SCORE", 5.0))
+        candidates = apply_cross_sectional_scoring(
+            candidates, features=features, top_decile=top_decile, hard_floor_trend=hard_floor,
+        )
+        candidates["SchemaVersion"] = 2
+
+        if getattr(scan_cfg, "FEATURE_STORE_WRITE_ENABLED", False):
+            try:
+                from feature_store.writers import write_cross_sectional_distributions
+                scan_date = candidates["ScanDate"].iloc[0] if not candidates.empty else None
+                if scan_date:
+                    write_cross_sectional_distributions(
+                        base_dir=Path(getattr(scan_cfg, "FEATURE_STORE_DIR", "feature_store")),
+                        date_str=scan_date,
+                        candidates_df=candidates,
+                        features=features,
+                    )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Cross-sectional distribution write failed (fail-open)", exc_info=True,
+                )
+    else:
+        for col in ("TrendScore_Zscore", "TrendScore_Pctile", "DistPct_Zscore", "Composite_Rank"):
+            if col not in candidates.columns:
+                candidates[col] = np.nan
+
     if getattr(scan_cfg, "FEATURE_STORE_WRITE_ENABLED", False) and results:
         try:
             from feature_store.store import FeatureStore
@@ -686,7 +723,7 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
                 "Feature store write failed (fail-open)", exc_info=True
             )
 
-    return _build_candidates_dataframe(results)
+    return candidates.reindex(columns=CANDIDATE_COLUMNS)
 
 
 def write_candidates_csv(df: pd.DataFrame, path: Path | str) -> None:

@@ -95,6 +95,10 @@ def test_scan_engine_schema_matches_output() -> None:
         "Setup_Extension_State": "object",
         "Setup_Gap_Reset": "object",
         "Setup_Structure_State": "object",
+        "TrendScore_Zscore": "float64",
+        "TrendScore_Pctile": "float64",
+        "DistPct_Zscore": "float64",
+        "Composite_Rank": "float64",
     }
 
     assert out.dtypes.astype(str).to_dict() == expected_dtypes

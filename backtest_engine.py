@@ -347,6 +347,23 @@ def _scan_as_of(
         if row:
             rows.append(row)
     candidates = scan_engine._build_candidates_dataframe(rows)
+
+    if getattr(scan_cfg, "CROSS_SECTIONAL_ENABLED", False) and not candidates.empty:
+        from analytics.cross_sectional import apply_cross_sectional_scoring
+        import numpy as np
+        features = getattr(scan_cfg, "CROSS_SECTIONAL_FEATURES", ["TrendScore", "Entry_DistPct", "AVWAP_Slope"])
+        top_decile = float(getattr(scan_cfg, "CROSS_SECTIONAL_TOP_DECILE", 0.1))
+        hard_floor = float(getattr(scan_cfg, "CROSS_SECTIONAL_HARD_FLOOR_TREND_SCORE", 5.0))
+        candidates = apply_cross_sectional_scoring(
+            candidates, features=features, top_decile=top_decile, hard_floor_trend=hard_floor,
+        )
+        candidates["SchemaVersion"] = 2
+    else:
+        import numpy as np
+        for col in ("TrendScore_Zscore", "TrendScore_Pctile", "DistPct_Zscore", "Composite_Rank"):
+            if col not in candidates.columns:
+                candidates[col] = np.nan
+
     if return_stats:
         return candidates, {
             "symbols_scanned": symbols_scanned,

@@ -150,18 +150,18 @@ def deflated_sharpe(
 
 ## Phase 3: Cross-Sectional Scoring
 
-**Scope: Medium** | **Status: TODO**
+**Scope: Medium** | **Status: DONE**
 
 **Objective:** Replace absolute thresholds (`TREND_SCORE_MIN_LONG: 5.0`) with universe-relative rankings. "Top-decile today" replaces "above 5.0". Absolute thresholds remain as hard safety floors.
 
 ### Tasks
 
-- [ ] Create `analytics/cross_sectional.py` — Z-score and percentile rank computation for configurable feature set (trend_score, dist_pct, AVWAP_slope, ATR_pct). Composite rank formula.
-- [ ] Modify `scan_engine.py` — After `build_candidate_row()` produces all raw candidates, compute cross-sectional ranks. Add columns: `TrendScore_Zscore`, `TrendScore_Pctile`, `DistPct_Zscore`, `Composite_Rank`. Primary selection becomes `Composite_Rank <= top_decile_cutoff`. Bump `SchemaVersion` to 2.
-- [ ] Modify `backtest_engine.py` — Pipe day's candidate universe through cross-sectional ranking before entry selection (`_scan_as_of()` already produces all candidates for a date)
-- [ ] Modify `config.py` — Add `CROSS_SECTIONAL_ENABLED`, `CROSS_SECTIONAL_TOP_DECILE`, `CROSS_SECTIONAL_FEATURES`, `CROSS_SECTIONAL_HARD_FLOOR_TREND_SCORE`
-- [ ] Modify `feature_store/writers.py` — Store daily cross-sectional distributions (mean, std, percentiles)
-- [ ] Create `tests/test_cross_sectional.py`
+- [x] Create `analytics/cross_sectional.py` — Z-score and percentile rank computation for configurable feature set (trend_score, dist_pct, AVWAP_slope, ATR_pct). Composite rank formula.
+- [x] Modify `scan_engine.py` — After `build_candidate_row()` produces all raw candidates, compute cross-sectional ranks. Add columns: `TrendScore_Zscore`, `TrendScore_Pctile`, `DistPct_Zscore`, `Composite_Rank`. Primary selection becomes `Composite_Rank <= top_decile_cutoff`. Bump `SchemaVersion` to 2.
+- [x] Modify `backtest_engine.py` — Pipe day's candidate universe through cross-sectional ranking before entry selection (`_scan_as_of()` already produces all candidates for a date)
+- [x] Modify `config.py` — Add `CROSS_SECTIONAL_ENABLED`, `CROSS_SECTIONAL_TOP_DECILE`, `CROSS_SECTIONAL_FEATURES`, `CROSS_SECTIONAL_HARD_FLOOR_TREND_SCORE`
+- [x] Modify `feature_store/writers.py` — Store daily cross-sectional distributions (mean, std, percentiles)
+- [x] Create `tests/test_cross_sectional.py`
 
 ### Composite Rank Formula
 
@@ -183,11 +183,11 @@ New flow: build rows -> compute z-scores across day's candidates -> filter to to
 
 ### Verification
 
-- [ ] Candidate CSV includes z-score and percentile columns
-- [ ] Cross-sectional distributions stored in feature store per day
-- [ ] Hard floor safety gates still apply
-- [ ] Backward compatible: SchemaVersion=1 backtests still work
-- [ ] Edge cases handled: single candidate (fall back to absolute), all identical values, NaN
+- [x] Candidate CSV includes z-score and percentile columns
+- [x] Cross-sectional distributions stored in feature store per day
+- [x] Hard floor safety gates still apply
+- [x] Backward compatible: SchemaVersion=1 backtests still work
+- [x] Edge cases handled: single candidate (fall back to absolute), all identical values, NaN
 
 ---
 

@@ -204,6 +204,14 @@ class CFG:
     BACKTEST_EMBARGO_DAYS: int = 3
     BACKTEST_USE_FEATURE_STORE: bool = False
 
+    # Cross-sectional scoring (Phase 3)
+    CROSS_SECTIONAL_ENABLED: bool = False
+    CROSS_SECTIONAL_TOP_DECILE: float = 0.1
+    CROSS_SECTIONAL_FEATURES: list = field(
+        default_factory=lambda: ["TrendScore", "Entry_DistPct", "AVWAP_Slope"]
+    )
+    CROSS_SECTIONAL_HARD_FLOOR_TREND_SCORE: float = 5.0
+
     def effective_universe_allow_network(self) -> bool:
         raw = os.getenv("UNIVERSE_ALLOW_NETWORK")
         if raw is None:
