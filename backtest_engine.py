@@ -313,6 +313,13 @@ def _scan_as_of(
     *,
     return_stats: bool = False,
 ) -> pd.DataFrame | tuple[pd.DataFrame, dict[str, int]]:
+    # Phase 2: Feature store read-back optimization (placeholder).
+    # When enabled, could read pre-computed features instead of recomputing.
+    # Currently a no-op — full candidate computation via build_candidate_row()
+    # is required because feature store lacks quality gates, stops, and targets.
+    if getattr(scan_cfg, "BACKTEST_USE_FEATURE_STORE", False):
+        pass  # Future: read from feature store, fall back to inline below
+
     scan_engine._ACTIVE_CFG = scan_cfg
     setup_rules = load_setup_rules()
     rows: list[dict] = []

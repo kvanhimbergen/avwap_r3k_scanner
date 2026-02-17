@@ -83,6 +83,8 @@ SUMMARY_COLUMNS = [
     "exposure_avg_pct",
     "avg_position_size",
     "max_concurrent_positions",
+    "sharpe",
+    "deflated_sharpe_pvalue",
 ]
 
 
@@ -498,7 +500,29 @@ def run_sweep(
         wf_spec = walk_forward_spec or spec.get("walk_forward")
         execution_mode = "walk_forward" if wf_spec else "sweep"
         validate_execution_mode(execution_mode)
-        splits = compute_walk_forward_splits(trading_days, wf_spec)
+        validation_mode = getattr(cfg, "BACKTEST_VALIDATION_MODE", "rolling")
+        if validation_mode == "cpcv":
+            from analytics.cpcv import generate_cpcv_splits
+            cpcv_raw = generate_cpcv_splits(
+                trading_days,
+                n_groups=getattr(cfg, "BACKTEST_CPCV_N_GROUPS", 5),
+                k_test_groups=getattr(cfg, "BACKTEST_CPCV_K_SPLITS", 2),
+                purge_days=getattr(cfg, "BACKTEST_PURGE_DAYS", 5),
+                embargo_days=getattr(cfg, "BACKTEST_EMBARGO_DAYS", 3),
+            )
+            splits = []
+            for i, s in enumerate(cpcv_raw):
+                train = sorted(s["train_dates"])
+                test = sorted(s["test_dates"])
+                splits.append({
+                    "label": f"cpcv_{i+1}",
+                    "is_start": train[0],
+                    "is_end": train[-1],
+                    "oos_start": test[0] if test else None,
+                    "oos_end": test[-1] if test else None,
+                })
+        else:
+            splits = compute_walk_forward_splits(trading_days, wf_spec)
 
         regime_df = compute_regime_labels(history, trading_days)
 
@@ -536,6 +560,18 @@ def run_sweep(
                     write_run_meta=False,
                 )
                 _print_run_summary(run_id=run_id, run_dir=run_dir)
+
+                import math as _math
+                _eq = result.equity_curve
+                if not _eq.empty and len(_eq) > 1:
+                    _rets = _eq["equity"].pct_change().dropna()
+                    _std = _rets.std()
+                    _sharpe = float((_rets.mean() / _std) * _math.sqrt(252)) if _std > 0 else 0.0
+                    _T = len(_rets)
+                else:
+                    _sharpe, _T = 0.0, 0
+                result.summary["sharpe"] = round(_sharpe, 6)
+                result.summary["_T"] = _T
 
                 params_path = run_dir / "params.json"
                 _atomic_write_json(params, params_path)
@@ -577,6 +613,26 @@ def run_sweep(
                     summary=result.summary,
                 )
                 all_rows.append(row)
+
+    import statistics
+    from analytics.deflated_sharpe import deflated_sharpe_ratio
+
+    sharpes = [r.get("sharpe", 0.0) for r in all_rows]
+    n_trials = len(all_rows)
+    if n_trials > 1 and any(s != 0.0 for s in sharpes):
+        var_sharpe = statistics.variance(sharpes)
+        for row in all_rows:
+            T = row.pop("_T", 0)
+            if T > 1:
+                row["deflated_sharpe_pvalue"] = round(
+                    deflated_sharpe_ratio(row.get("sharpe", 0.0), n_trials, var_sharpe, T), 6
+                )
+            else:
+                row["deflated_sharpe_pvalue"] = None
+    else:
+        for row in all_rows:
+            row.pop("_T", None)
+            row["deflated_sharpe_pvalue"] = None
 
     summary_table = build_summary_table(all_rows)
     _atomic_write_csv(summary_table, compare_dir / "summary_table.csv")

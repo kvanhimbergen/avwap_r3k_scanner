@@ -86,27 +86,27 @@ New ledger directory `ledger/EXECUTION_SLIPPAGE/{date}.jsonl` — same append-on
 
 ## Phase 2: Feature Store + Walk-Forward Validation
 
-**Scope: Large** | **Status: TODO**
+**Scope: Large** | **Status: DONE**
 
 **Objective:** Centralize all computed features in a versioned, point-in-time-correct Parquet store. Extend `backtest_sweep.py` with Combinatorial Purged Cross-Validation (CPCV) and Deflated Sharpe Ratio (DSR) to combat overfitting.
 
 ### Tasks
 
-- [ ] Create `feature_store/__init__.py`
-- [ ] Create `feature_store/store.py` — Core store: Parquet partitioned by date, versioned schemas, point-in-time reads
-- [ ] Create `feature_store/schemas.py` — Frozen dataclass schemas per feature type (trend, regime, avwap_state)
-- [ ] Create `feature_store/writers.py` — Atomic writes (reuse `cache_store.py` tmp+rename pattern)
-- [ ] Create `feature_store/readers.py` — `get_features(symbol, date)` with strict "no future data" enforcement
-- [ ] Create `feature_store/versioning.py` — Schema version tracking, migration helpers
-- [ ] Create `analytics/cpcv.py` — Combinatorial Purged Cross-Validation (Lopez de Prado framework)
-- [ ] Create `analytics/deflated_sharpe.py` — DSR computation
-- [ ] Modify `scan_engine.py` — After computing candidates, persist features to store (behind `FEATURE_STORE_WRITE_ENABLED` flag)
-- [ ] Modify `backtest_sweep.py` — Add `validation_mode` param: `"rolling"` (existing), `"cpcv"` (new). Add DSR to `build_summary_row()`
-- [ ] Modify `backtest_engine.py` — Optionally read from feature store (behind `BACKTEST_USE_FEATURE_STORE` flag)
-- [ ] Modify `config.py` — Add `FEATURE_STORE_DIR`, `FEATURE_STORE_WRITE_ENABLED`, `FEATURE_STORE_SCHEMA_VERSION`, `BACKTEST_VALIDATION_MODE`, `BACKTEST_CPCV_N_GROUPS`, `BACKTEST_CPCV_K_SPLITS`, `BACKTEST_PURGE_DAYS`, `BACKTEST_EMBARGO_DAYS`
-- [ ] Create `tests/test_feature_store.py` — CRUD and point-in-time correctness
-- [ ] Create `tests/test_cpcv.py` — Split generation and purge/embargo validation
-- [ ] Create `tests/test_deflated_sharpe.py` — DSR computation against known values
+- [x] Create `feature_store/__init__.py`
+- [x] Create `feature_store/store.py` — Core store: Parquet partitioned by date, versioned schemas, point-in-time reads
+- [x] Create `feature_store/schemas.py` — Frozen dataclass schemas per feature type (trend, regime, avwap_state)
+- [x] Create `feature_store/writers.py` — Atomic writes (reuse `cache_store.py` tmp+rename pattern)
+- [x] Create `feature_store/readers.py` — `get_features(symbol, date)` with strict "no future data" enforcement
+- [x] Create `feature_store/versioning.py` — Schema version tracking, migration helpers
+- [x] Create `analytics/cpcv.py` — Combinatorial Purged Cross-Validation (Lopez de Prado framework)
+- [x] Create `analytics/deflated_sharpe.py` — DSR computation
+- [x] Modify `scan_engine.py` — After computing candidates, persist features to store (behind `FEATURE_STORE_WRITE_ENABLED` flag)
+- [x] Modify `backtest_sweep.py` — Add `validation_mode` param: `"rolling"` (existing), `"cpcv"` (new). Add DSR to `build_summary_row()`
+- [x] Modify `backtest_engine.py` — Optionally read from feature store (behind `BACKTEST_USE_FEATURE_STORE` flag)
+- [x] Modify `config.py` — Add `FEATURE_STORE_DIR`, `FEATURE_STORE_WRITE_ENABLED`, `FEATURE_STORE_SCHEMA_VERSION`, `BACKTEST_VALIDATION_MODE`, `BACKTEST_CPCV_N_GROUPS`, `BACKTEST_CPCV_K_SPLITS`, `BACKTEST_PURGE_DAYS`, `BACKTEST_EMBARGO_DAYS`
+- [x] Create `tests/test_feature_store.py` — CRUD and point-in-time correctness
+- [x] Create `tests/test_cpcv.py` — Split generation and purge/embargo validation
+- [x] Create `tests/test_deflated_sharpe.py` — DSR computation against known values
 
 ### Feature Store Layout
 
@@ -140,11 +140,11 @@ def deflated_sharpe(
 
 ### Verification
 
-- [ ] Feature store populated during scan runs
-- [ ] Backtests with `BACKTEST_USE_FEATURE_STORE=True` produce identical results to inline computation (parity test)
-- [ ] CPCV produces more conservative Sharpe estimates than rolling walk-forward
-- [ ] `deflated_sharpe` column appears in summary tables
-- [ ] Point-in-time correctness: features for date D3 never returned when reading as-of D2
+- [x] Feature store populated during scan runs
+- [x] Backtests with `BACKTEST_USE_FEATURE_STORE=True` produce identical results to inline computation (parity test)
+- [x] CPCV produces more conservative Sharpe estimates than rolling walk-forward
+- [x] `deflated_sharpe` column appears in summary tables
+- [x] Point-in-time correctness: features for date D3 never returned when reading as-of D2
 
 ---
 

@@ -656,6 +656,36 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
         if row:
             results.append(row)
 
+    if getattr(scan_cfg, "FEATURE_STORE_WRITE_ENABLED", False) and results:
+        try:
+            from feature_store.store import FeatureStore
+            store = FeatureStore(
+                base_dir=getattr(scan_cfg, "FEATURE_STORE_DIR", "feature_store"),
+                schema_version=getattr(scan_cfg, "FEATURE_STORE_SCHEMA_VERSION", 1),
+            )
+            scan_date = results[0]["ScanDate"]
+            trend_df = pd.DataFrame([{
+                "symbol": r["Symbol"],
+                "trend_score": r["TrendScore"],
+            } for r in results])
+            store.write(scan_date, "trend_features", trend_df)
+            avwap_df = pd.DataFrame([{
+                "symbol": r["Symbol"],
+                "anchor": r["Anchor"],
+                "avwap_slope": r["AVWAP_Slope"],
+                "dist_pct": r["Entry_DistPct"],
+                "setup_vwap_control": r.get("Setup_VWAP_Control", ""),
+                "setup_avwap_control": r.get("Setup_AVWAP_Control", ""),
+                "setup_extension_state": r.get("Setup_Extension_State", ""),
+                "setup_structure_state": r.get("Setup_Structure_State", ""),
+            } for r in results])
+            store.write(scan_date, "avwap_features", avwap_df)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Feature store write failed (fail-open)", exc_info=True
+            )
+
     return _build_candidates_dataframe(results)
 
 

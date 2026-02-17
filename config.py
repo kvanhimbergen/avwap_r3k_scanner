@@ -191,6 +191,19 @@ class CFG:
         "mid": 750_000,
     })
 
+    # Feature store (Phase 2)
+    FEATURE_STORE_DIR: str = "feature_store"
+    FEATURE_STORE_WRITE_ENABLED: bool = False
+    FEATURE_STORE_SCHEMA_VERSION: int = 1
+
+    # Backtest validation mode
+    BACKTEST_VALIDATION_MODE: str = "rolling"
+    BACKTEST_CPCV_N_GROUPS: int = 5
+    BACKTEST_CPCV_K_SPLITS: int = 2
+    BACKTEST_PURGE_DAYS: int = 5
+    BACKTEST_EMBARGO_DAYS: int = 3
+    BACKTEST_USE_FEATURE_STORE: bool = False
+
     def effective_universe_allow_network(self) -> bool:
         raw = os.getenv("UNIVERSE_ALLOW_NETWORK")
         if raw is None:
