@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from typing import Optional
 
@@ -182,6 +182,14 @@ class CFG:
 
     # Determinism
     BACKTEST_RANDOM_SEED: int = 42
+
+    # Slippage measurement (Phase 1 – observational only)
+    SLIPPAGE_LEDGER_ENABLED: bool = True
+    SLIPPAGE_LIQUIDITY_BUCKETS: dict = field(default_factory=lambda: {
+        "mega": 5_000_000,
+        "large": 2_000_000,
+        "mid": 750_000,
+    })
 
     def effective_universe_allow_network(self) -> bool:
         raw = os.getenv("UNIVERSE_ALLOW_NETWORK")

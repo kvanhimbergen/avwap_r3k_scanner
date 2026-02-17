@@ -69,6 +69,45 @@ def _warn_once(key: str, message: str) -> None:
     _log(message)
 
 
+def _maybe_log_slippage(
+    *,
+    date_ny: str,
+    symbol: str,
+    strategy_id: str,
+    expected_price: float,
+    ideal_fill_price: float,
+    actual_fill_price: float,
+    fill_ts_utc: str,
+) -> None:
+    """Append a slippage event if SLIPPAGE_LEDGER_ENABLED. Fail-open."""
+    try:
+        import importlib
+        _scan_cfg = importlib.import_module("config").cfg
+        if not _scan_cfg.SLIPPAGE_LEDGER_ENABLED:
+            return
+        _slip_mod = importlib.import_module("analytics.slippage_model")
+        _timing_mod = importlib.import_module("analytics.slippage_timing")
+
+        adv_shares_20d = 0.0
+        slip_event = _slip_mod.SlippageEvent(
+            schema_version=_slip_mod.SCHEMA_VERSION,
+            record_type=_slip_mod.RECORD_TYPE,
+            date_ny=date_ny,
+            symbol=symbol,
+            strategy_id=strategy_id,
+            expected_price=expected_price,
+            ideal_fill_price=ideal_fill_price,
+            actual_fill_price=actual_fill_price,
+            slippage_bps=_slip_mod.compute_slippage_bps(ideal_fill_price, actual_fill_price),
+            adv_shares_20d=adv_shares_20d,
+            liquidity_bucket=_slip_mod.classify_liquidity_bucket(adv_shares_20d),
+            fill_ts_utc=fill_ts_utc,
+            time_of_day_bucket=_timing_mod.classify_time_bucket(fill_ts_utc),
+        )
+        _slip_mod.append_slippage_event(slip_event)
+    except Exception:
+        pass
+
 
 def _write_portfolio_decision_latest(
     *,
@@ -2429,6 +2468,17 @@ def run_once(cfg) -> None:
                                                 filled_ts=datetime.now(timezone.utc).timestamp(),
                                                 source="alpaca_paper",
                                             )
+                                            _filled_price = refreshed_event.get("filled_avg_price")
+                                            if _filled_price is not None:
+                                                _maybe_log_slippage(
+                                                    date_ny=date_ny,
+                                                    symbol=intent.symbol,
+                                                    strategy_id=intent.strategy_id,
+                                                    expected_price=float(intent.pivot_level),
+                                                    ideal_fill_price=float(intent.ref_price),
+                                                    actual_fill_price=float(_filled_price),
+                                                    fill_ts_utc=datetime.now(timezone.utc).isoformat(),
+                                                )
                                             if symbol_state_store:
                                                 symbol_state_store.transition(
                                                     intent.symbol,
@@ -2468,6 +2518,17 @@ def run_once(cfg) -> None:
                                     filled_ts=now_utc.timestamp(),
                                     source="alpaca_paper",
                                 )
+                                _filled_price = event.get("filled_avg_price")
+                                if _filled_price is not None:
+                                    _maybe_log_slippage(
+                                        date_ny=date_ny,
+                                        symbol=intent.symbol,
+                                        strategy_id=intent.strategy_id,
+                                        expected_price=float(intent.pivot_level),
+                                        ideal_fill_price=float(intent.ref_price),
+                                        actual_fill_price=float(_filled_price),
+                                        fill_ts_utc=now_utc.isoformat(),
+                                    )
                                 if symbol_state_store:
                                     symbol_state_store.transition(
                                         intent.symbol,
