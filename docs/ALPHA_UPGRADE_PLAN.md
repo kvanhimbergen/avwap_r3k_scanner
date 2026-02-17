@@ -28,19 +28,19 @@ Phase 2 (Feature Store)      [benefits from Phase 1]
 
 ## Phase 1: Slippage Measurement + Execution Timing Analysis
 
-**Scope: Medium** | **Status: TODO**
+**Scope: Medium** | **Status: DONE**
 
 **Objective:** Log expected vs actual fill prices, build slippage model by liquidity bucket, analyze entry timing by time-of-day. You cannot optimize what you do not measure — this calibrates `BACKTEST_SLIPPAGE_BPS` (currently fixed 2.5) and reveals whether BOH confirmation is net-positive.
 
 ### Tasks
 
-- [ ] Create `analytics/slippage_model.py` — SlippageEvent dataclass, liquidity bucket classification (mega/large/mid/small by ADV), aggregation functions
-- [ ] Create `analytics/slippage_timing.py` — Time-of-day bucketing (30-min windows 09:30-16:00), entry quality by window
-- [ ] Modify `execution_v2/buy_loop.py` — After fill confirmation, emit `EXECUTION_SLIPPAGE` record to ledger. Already has `Candidate.entry_level` (expected) and Alpaca fill price
-- [ ] Modify `backtest_engine.py` — Add `ideal_fill_price` and `slippage_actual_bps` columns to trades DataFrame (ideal price already computed at line ~549 as `bar["Open"]`)
-- [ ] Modify `config.py` — Add `SLIPPAGE_LIQUIDITY_BUCKETS`, `SLIPPAGE_LEDGER_ENABLED`
-- [ ] Create `tests/test_slippage_model.py` — Unit tests for slippage calculations, liquidity bucket assignment, edge cases
-- [ ] Create `tests/test_slippage_timing.py` — Unit tests for timing bucketing
+- [x] Create `analytics/slippage_model.py` — SlippageEvent dataclass, liquidity bucket classification (mega/large/mid/small by ADV), aggregation functions
+- [x] Create `analytics/slippage_timing.py` — Time-of-day bucketing (30-min windows 09:30-16:00), entry quality by window
+- [x] Modify `execution_v2/execution_main.py` — After fill confirmation, emit `EXECUTION_SLIPPAGE` record to ledger via `_maybe_log_slippage()` (gated, fail-open)
+- [x] Modify `backtest_engine.py` — Add `ideal_fill_price` and `slippage_actual_bps` columns to trades DataFrame
+- [x] Modify `config.py` — Add `SLIPPAGE_LIQUIDITY_BUCKETS`, `SLIPPAGE_LEDGER_ENABLED`
+- [x] Create `tests/test_slippage_model.py` — Unit tests for slippage calculations, liquidity bucket assignment, edge cases
+- [x] Create `tests/test_slippage_timing.py` — Unit tests for timing bucketing
 
 ### Slippage Event Schema
 
@@ -77,10 +77,10 @@ New ledger directory `ledger/EXECUTION_SLIPPAGE/{date}.jsonl` — same append-on
 
 ### Verification
 
-- [ ] Backtest trades CSV contains `ideal_fill_price` and `slippage_actual_bps` columns
-- [ ] Live execution writes `EXECUTION_SLIPPAGE` records
-- [ ] Aggregation by liquidity bucket and time-of-day produces meaningful output
-- [ ] Existing test suite passes unchanged (observational only, no behavioral change)
+- [x] Backtest trades CSV contains `ideal_fill_price` and `slippage_actual_bps` columns
+- [x] Live execution writes `EXECUTION_SLIPPAGE` records
+- [x] Aggregation by liquidity bucket and time-of-day produces meaningful output
+- [x] Existing test suite passes unchanged (observational only, no behavioral change)
 
 ---
 
