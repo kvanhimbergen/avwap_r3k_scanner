@@ -129,6 +129,56 @@ def sample_repo(tmp_path: Path) -> Path:
         "symbol,pnl\nAAPL,100\n", encoding="utf-8"
     )
 
+    # --- RAEC rebalance event fixture ---
+    (tmp_path / "ledger" / "RAEC_REBALANCE" / "RAEC_401K_V3").mkdir(parents=True)
+    (tmp_path / "ledger" / "RAEC_REBALANCE" / "RAEC_401K_COORD").mkdir(parents=True)
+
+    raec_rebalance_event = {
+        "record_type": "RAEC_REBALANCE_EVENT",
+        "ts_utc": "2026-02-10T15:00:00+00:00",
+        "ny_date": "2026-02-10",
+        "book_id": "SCHWAB_401K_MANUAL",
+        "strategy_id": "RAEC_401K_V3",
+        "regime": "RISK_ON",
+        "should_rebalance": True,
+        "rebalance_trigger": "daily",
+        "targets": {"TQQQ": 35.0, "SOXL": 25.0, "BIL": 40.0},
+        "current_allocations": {"SPY": 50.0, "BIL": 50.0},
+        "intent_count": 3,
+        "intents": [
+            {"intent_id": "intent-raec-001", "symbol": "TQQQ", "side": "BUY", "delta_pct": 35.0, "target_pct": 35.0, "current_pct": 0.0},
+            {"intent_id": "intent-raec-002", "symbol": "SOXL", "side": "BUY", "delta_pct": 25.0, "target_pct": 25.0, "current_pct": 0.0},
+            {"intent_id": "intent-raec-003", "symbol": "SPY", "side": "SELL", "delta_pct": -50.0, "target_pct": 0.0, "current_pct": 50.0},
+        ],
+        "signals": {"sma200": 180.5, "sma50": 195.3, "vol20": 0.185, "anchor_symbol": "VTI"},
+        "momentum_scores": [{"symbol": "TQQQ", "score": 2.45, "ret_6m": 0.152}],
+        "portfolio_vol_target": 0.18,
+        "portfolio_vol_realized": 0.165,
+        "posted": True,
+        "notice": None,
+        "build_git_sha": "abc123",
+    }
+    (tmp_path / "ledger" / "RAEC_REBALANCE" / "RAEC_401K_V3" / "2026-02-10.jsonl").write_text(
+        json.dumps(raec_rebalance_event) + "\n", encoding="utf-8"
+    )
+
+    raec_coordinator_run = {
+        "record_type": "RAEC_COORDINATOR_RUN",
+        "ts_utc": "2026-02-10T15:05:00+00:00",
+        "ny_date": "2026-02-10",
+        "book_id": "SCHWAB_401K_MANUAL",
+        "strategy_id": "RAEC_401K_COORD",
+        "capital_split": {"v3": 0.40, "v4": 0.30, "v5": 0.30},
+        "sub_strategy_results": {
+            "v3": {"regime": "RISK_ON", "should_rebalance": True, "intent_count": 3},
+            "v4": {"regime": "TRANSITION", "should_rebalance": False, "intent_count": 0},
+            "v5": {"regime": "RISK_ON", "should_rebalance": True, "intent_count": 1},
+        },
+    }
+    (tmp_path / "ledger" / "RAEC_REBALANCE" / "RAEC_401K_COORD" / "2026-02-10.jsonl").write_text(
+        json.dumps(raec_coordinator_run) + "\n", encoding="utf-8"
+    )
+
     return tmp_path
 
 
