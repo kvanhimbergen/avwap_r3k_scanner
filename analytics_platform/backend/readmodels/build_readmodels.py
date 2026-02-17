@@ -97,6 +97,11 @@ def build_readmodels(settings: Settings) -> BuildResult:
     risk_rows: list[dict[str, Any]] = []
     regime_rows: list[dict[str, Any]] = []
 
+    raec_event_rows: list[dict[str, Any]] = []
+    raec_allocation_rows: list[dict[str, Any]] = []
+    raec_intent_rows: list[dict[str, Any]] = []
+    raec_coordinator_rows: list[dict[str, Any]] = []
+
     backtest_run_rows: list[dict[str, Any]] = []
     backtest_metric_rows: list[dict[str, Any]] = []
     backtest_equity_rows: list[dict[str, Any]] = []
@@ -126,6 +131,10 @@ def build_readmodels(settings: Settings) -> BuildResult:
         SourceHealth(
             source_name="regime_e1",
             source_glob=str(settings.ledger_dir / "REGIME_E1" / "*.jsonl"),
+        ),
+        SourceHealth(
+            source_name="raec_rebalance_events",
+            source_glob=str(settings.ledger_dir / "RAEC_REBALANCE" / "**" / "*.jsonl"),
         ),
         SourceHealth(
             source_name="backtests_summary",
@@ -364,8 +373,105 @@ def build_readmodels(settings: Settings) -> BuildResult:
                 }
             )
 
+    # RAEC_REBALANCE
+    raec_source = sources[5]
+    raec_dir = settings.ledger_dir / "RAEC_REBALANCE"
+    raec_files = sorted(raec_dir.glob("**/*.jsonl")) if raec_dir.exists() else []
+    raec_source.file_count = len(raec_files)
+    if raec_files:
+        raec_source.latest_mtime_utc = _iso_mtime(raec_files[-1])
+    for path in raec_files:
+        try:
+            entries = _iter_jsonl(path)
+        except Exception as exc:  # noqa: BLE001
+            raec_source.parse_status = "error"
+            raec_source.last_error = str(exc)
+            warnings.append(f"RAEC_REBALANCE parse error {path}: {exc}")
+            continue
+        raec_source.row_count += len(entries)
+        for rec in entries:
+            record_type = rec.get("record_type") or ""
+            ny_date = str(rec.get("ny_date") or "")
+            ts_utc = rec.get("ts_utc")
+            strategy_id = str(rec.get("strategy_id") or "")
+
+            if record_type == "RAEC_REBALANCE_EVENT":
+                targets = rec.get("targets") or {}
+                current_allocs = rec.get("current_allocations") or {}
+                intents = rec.get("intents") or []
+
+                raec_event_rows.append(
+                    {
+                        "event_id": _hash_payload(rec),
+                        "ny_date": ny_date,
+                        "ts_utc": ts_utc,
+                        "strategy_id": strategy_id,
+                        "book_id": str(rec.get("book_id") or ""),
+                        "regime": str(rec.get("regime") or ""),
+                        "should_rebalance": bool(rec.get("should_rebalance", False)),
+                        "rebalance_trigger": str(rec.get("rebalance_trigger") or ""),
+                        "intent_count": int(rec.get("intent_count") or 0),
+                        "portfolio_vol_target": rec.get("portfolio_vol_target"),
+                        "portfolio_vol_realized": rec.get("portfolio_vol_realized"),
+                        "posted": bool(rec.get("posted", False)),
+                        "notice": rec.get("notice"),
+                        "signals_json": json.dumps(rec.get("signals") or {}, sort_keys=True),
+                        "momentum_json": json.dumps(rec.get("momentum_scores") or [], sort_keys=True),
+                        "targets_json": json.dumps(targets, sort_keys=True),
+                        "current_json": json.dumps(current_allocs, sort_keys=True),
+                        "source_file": str(path),
+                    }
+                )
+
+                for symbol, weight in sorted(targets.items()):
+                    raec_allocation_rows.append(
+                        {
+                            "ny_date": ny_date,
+                            "strategy_id": strategy_id,
+                            "alloc_type": "target",
+                            "symbol": str(symbol).upper(),
+                            "weight_pct": float(weight),
+                        }
+                    )
+
+                for symbol, weight in sorted(current_allocs.items()):
+                    raec_allocation_rows.append(
+                        {
+                            "ny_date": ny_date,
+                            "strategy_id": strategy_id,
+                            "alloc_type": "current",
+                            "symbol": str(symbol).upper(),
+                            "weight_pct": float(weight),
+                        }
+                    )
+
+                for intent in intents:
+                    raec_intent_rows.append(
+                        {
+                            "ny_date": ny_date,
+                            "ts_utc": ts_utc,
+                            "strategy_id": strategy_id,
+                            "intent_id": str(intent.get("intent_id") or ""),
+                            "symbol": str(intent.get("symbol") or "").upper(),
+                            "side": str(intent.get("side") or "").upper(),
+                            "delta_pct": float(intent.get("delta_pct") or 0.0),
+                            "target_pct": float(intent.get("target_pct") or 0.0),
+                            "current_pct": float(intent.get("current_pct") or 0.0),
+                        }
+                    )
+
+            elif record_type == "RAEC_COORDINATOR_RUN":
+                raec_coordinator_rows.append(
+                    {
+                        "ny_date": ny_date,
+                        "ts_utc": ts_utc,
+                        "capital_split_json": json.dumps(rec.get("capital_split") or {}, sort_keys=True),
+                        "sub_results_json": json.dumps(rec.get("sub_strategy_results") or {}, sort_keys=True),
+                    }
+                )
+
     # BACKTESTS
-    backtest_source = sources[5]
+    backtest_source = sources[6]
     summary_files = sorted(settings.backtests_dir.glob("**/summary.json")) if settings.backtests_dir.exists() else []
     backtest_source.file_count = len(summary_files)
     if summary_files:
@@ -448,7 +554,7 @@ def build_readmodels(settings: Settings) -> BuildResult:
                 warnings.append(f"BACKTEST equity parse warning {eq_path}: {exc}")
 
     # state/portfolio_decision_latest.json freshness only
-    latest_source = sources[6]
+    latest_source = sources[7]
     latest_file = settings.state_dir / "portfolio_decision_latest.json"
     if latest_file.exists():
         latest_source.file_count = 1
@@ -526,6 +632,10 @@ def build_readmodels(settings: Settings) -> BuildResult:
         "backtest_runs": len(backtest_run_rows),
         "backtest_metrics": len(backtest_metric_rows),
         "backtest_equity": len(backtest_equity_rows),
+        "raec_rebalance_events": len(raec_event_rows),
+        "raec_allocations": len(raec_allocation_rows),
+        "raec_intents": len(raec_intent_rows),
+        "raec_coordinator_runs": len(raec_coordinator_rows),
         "freshness_health": len(freshness_rows),
     }
 
@@ -655,6 +765,57 @@ def build_readmodels(settings: Settings) -> BuildResult:
                     "inputs_snapshot_json",
                     "source_file",
                 ],
+            ),
+        )
+        _write_table(
+            conn,
+            "raec_rebalance_events",
+            _ensure_columns(
+                raec_event_rows,
+                [
+                    "event_id",
+                    "ny_date",
+                    "ts_utc",
+                    "strategy_id",
+                    "book_id",
+                    "regime",
+                    "should_rebalance",
+                    "rebalance_trigger",
+                    "intent_count",
+                    "portfolio_vol_target",
+                    "portfolio_vol_realized",
+                    "posted",
+                    "notice",
+                    "signals_json",
+                    "momentum_json",
+                    "targets_json",
+                    "current_json",
+                    "source_file",
+                ],
+            ),
+        )
+        _write_table(
+            conn,
+            "raec_allocations",
+            _ensure_columns(
+                raec_allocation_rows,
+                ["ny_date", "strategy_id", "alloc_type", "symbol", "weight_pct"],
+            ),
+        )
+        _write_table(
+            conn,
+            "raec_intents",
+            _ensure_columns(
+                raec_intent_rows,
+                ["ny_date", "ts_utc", "strategy_id", "intent_id", "symbol", "side", "delta_pct", "target_pct", "current_pct"],
+            ),
+        )
+        _write_table(
+            conn,
+            "raec_coordinator_runs",
+            _ensure_columns(
+                raec_coordinator_rows,
+                ["ny_date", "ts_utc", "capital_split_json", "sub_results_json"],
             ),
         )
         _write_table(
