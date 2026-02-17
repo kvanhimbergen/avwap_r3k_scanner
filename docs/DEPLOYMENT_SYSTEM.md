@@ -12,6 +12,7 @@ The system is designed to be:
 - Operated entirely through systemd
 
 **Systemd verification runbook:** see [`docs/RUNBOOK_SYSTEMD_VERIFY.md`](RUNBOOK_SYSTEMD_VERIFY.md) for the deterministic verification sweep.
+**Analytics platform runbook:** see [`docs/RUNBOOK_ANALYTICS_PLATFORM.md`](RUNBOOK_ANALYTICS_PLATFORM.md) for service/tunnel/health verification.
 
 ---
 
@@ -22,6 +23,7 @@ The system is designed to be:
 | Service | Purpose |
 |------|------|
 | `execution.service` | Execution V2 order and position execution loop |
+| `analytics-platform.service` | Read-only analytics API for AVWAP/S2 monitoring (`127.0.0.1:8787`) |
 
 Execution runs under systemd, restarts automatically on failure, and logs to `journald`.
 

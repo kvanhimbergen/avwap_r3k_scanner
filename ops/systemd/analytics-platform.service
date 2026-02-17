@@ -1,0 +1,22 @@
+[Unit]
+Description=Strategy Analytics Platform API (read-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/avwap_r3k_scanner
+Environment=ANALYTICS_ENABLE_SCHEDULER=1
+Environment=ANALYTICS_REFRESH_SECONDS=60
+ExecStart=/root/avwap_r3k_scanner/venv/bin/python -m analytics_platform.backend.main
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target

@@ -52,6 +52,11 @@ tradingview_watchlist.txt
 # Local artifacts
 _local_backups/
 ledger/
+
+# Analytics platform frontend/build artifacts
+analytics_platform/frontend/node_modules/
+analytics_platform/frontend/dist/
+analytics_platform/data/
 backtests/
 
 # local patch backups

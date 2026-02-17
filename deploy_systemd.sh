@@ -21,6 +21,8 @@ echo "Running Python compile checks..."
 python -m py_compile \
   universe.py \
   run_scan.py \
+  analytics_platform/backend/main.py \
+  analytics_platform/backend/app.py \
   execution_v2/execution_main.py \
   config.py
 
@@ -44,6 +46,7 @@ sudo systemctl daemon-reload
 
 echo "Restarting services (systemd-managed)..."
 sudo systemctl restart execution.service
+sudo systemctl restart analytics-platform.service || true
 
 echo "Verifying timers..."
 sudo systemctl restart scan.timer execution-restart.timer >/dev/null 2>&1 || true
