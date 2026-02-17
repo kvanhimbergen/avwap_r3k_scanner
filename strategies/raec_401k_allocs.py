@@ -9,16 +9,23 @@ import re
 from pathlib import Path
 from types import ModuleType
 
-from strategies import raec_401k, raec_401k_v2, raec_401k_v3
+from strategies import raec_401k, raec_401k_v2, raec_401k_v3, raec_401k_v4, raec_401k_v5, raec_401k_coordinator
 
 _STRATEGY_MODULES: dict[str, ModuleType] = {
     "v1": raec_401k,
     "v2": raec_401k_v2,
     "v3": raec_401k_v3,
+    "v4": raec_401k_v4,
+    "v5": raec_401k_v5,
+    "coord": raec_401k_coordinator,
 }
 DEFAULT_STRATEGY_KEY = "v1"
 DEFAULT_BOOK_ID = raec_401k.BOOK_ID
-DEFAULT_UNIVERSE = tuple(dict.fromkeys([*raec_401k.DEFAULT_UNIVERSE, *raec_401k_v2.DEFAULT_UNIVERSE, *raec_401k_v3.DEFAULT_UNIVERSE]))
+DEFAULT_UNIVERSE = tuple(dict.fromkeys([
+    *raec_401k.DEFAULT_UNIVERSE, *raec_401k_v2.DEFAULT_UNIVERSE,
+    *raec_401k_v3.DEFAULT_UNIVERSE, *raec_401k_v4.DEFAULT_UNIVERSE,
+    *raec_401k_v5.DEFAULT_UNIVERSE,
+]))
 FALLBACK_CASH_SYMBOL = raec_401k.FALLBACK_CASH_SYMBOL
 
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9-]{0,5}$")
