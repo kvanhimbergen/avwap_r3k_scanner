@@ -58,6 +58,12 @@ def run_snapshot_and_reconciliation(
         health = check_token_health(config.token_path)
         if not health.healthy:
             raise RuntimeError(f"Schwab token unhealthy: {health.reason}")
+        if health.days_until_expiry < 2:
+            print(
+                f"WARNING: Schwab refresh token expires in {health.days_until_expiry:.1f} days. "
+                "Re-authenticate with: python -m analytics.schwab_auth",
+                flush=True,
+            )
 
         adapter = SchwabReadonlyLiveAdapter.from_config(
             config,
