@@ -403,22 +403,40 @@ def _save_earnings_cache(cache: dict) -> None:
         pass
 
 
-def is_near_earnings_cached(ticker: str) -> bool:
+def is_near_earnings_cached(ticker: str, *, as_of_date: str | None = None) -> bool:
     """
     Disk-backed cache for is_near_earnings() results.
     Stores: { "AAPL": {"value": false, "asof": "2026-01-13"} , ... }
     TTL-based refresh; safe to use inside the scanning loop.
+
+    If BACKTEST_POINT_IN_TIME_EARNINGS_PATH is set and the file exists,
+    uses point-in-time lookup instead of live yfinance (Phase 7).
     """
     # Allow bypass for testing
     if os.getenv("EARNINGS_CACHE_DISABLE", "0") == "1":
         return False
 
-    ttl_days = int(os.getenv("EARNINGS_CACHE_TTL_DAYS", "1"))
-    force_refresh = os.getenv("EARNINGS_CACHE_FORCE_REFRESH", "0") == "1"
-
     t = (ticker or "").upper().strip()
     if not t:
         return False
+
+    # Phase 7: Point-in-time earnings for backtest mode
+    try:
+        from config import cfg as _cfg
+        pit_path = getattr(_cfg, "BACKTEST_POINT_IN_TIME_EARNINGS_PATH", None)
+        if pit_path and Path(pit_path).exists():
+            from universe.point_in_time_earnings import (
+                is_near_earnings_pit,
+                load_earnings_calendar,
+            )
+            cal = load_earnings_calendar(pit_path)
+            query_date = as_of_date or date.today().isoformat()
+            return is_near_earnings_pit(t, query_date, cal)
+    except Exception:
+        pass
+
+    ttl_days = int(os.getenv("EARNINGS_CACHE_TTL_DAYS", "1"))
+    force_refresh = os.getenv("EARNINGS_CACHE_FORCE_REFRESH", "0") == "1"
 
     cache = _load_earnings_cache()
 

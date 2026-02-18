@@ -223,6 +223,12 @@ class CFG:
     MIN_GROSS_EXPOSURE_FLOOR: float = 0.2
     PORTFOLIO_VOL_LOOKBACK_DAYS: int = 20
 
+    # Survivorship-clean backtesting (Phase 7)
+    BACKTEST_HISTORICAL_CONSTITUENCY_PATH: str = "universe/historical"
+    BACKTEST_CORPORATE_ACTIONS_PATH: str = "universe/corporate_actions.csv"
+    BACKTEST_APPLY_SPLIT_ADJUSTMENTS: bool = False
+    BACKTEST_POINT_IN_TIME_EARNINGS_PATH: str = "universe/earnings_calendar.parquet"
+
     # Cross-sectional scoring (Phase 3)
     CROSS_SECTIONAL_ENABLED: bool = False
     CROSS_SECTIONAL_TOP_DECILE: float = 0.1

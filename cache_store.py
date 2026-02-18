@@ -83,6 +83,24 @@ def upsert_history(existing: pd.DataFrame | None, newdata: pd.DataFrame) -> pd.D
     # Keep the most recent data if duplicates exist
     out = out.drop_duplicates(subset=["Date", "Ticker"], keep="last")
     out = out.sort_values(["Ticker", "Date"]).reset_index(drop=True)
+
+    # Apply split adjustments if enabled (Phase 7)
+    try:
+        from config import cfg
+
+        if getattr(cfg, "BACKTEST_APPLY_SPLIT_ADJUSTMENTS", False):
+            actions_path = Path(getattr(cfg, "BACKTEST_CORPORATE_ACTIONS_PATH", "universe/corporate_actions.csv"))
+            if actions_path.exists():
+                from universe.corporate_actions import adjust_prices_for_splits, load_corporate_actions
+
+                actions = load_corporate_actions(actions_path)
+                if actions:
+                    out = adjust_prices_for_splits(out, actions)
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).warning("Split adjustment in upsert_history failed: %s", e)
+
     return out
 
 def set_meta(key: str, value):

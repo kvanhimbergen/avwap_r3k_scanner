@@ -350,23 +350,23 @@ The dynamic exposure target replaces the static `base_max_gross_exposure` in `bu
 
 ## Phase 7: Survivorship-Clean Backtesting
 
-**Scope: Large** | **Status: TODO**
+**Scope: Large** | **Status: DONE**
 
 **Objective:** Source historical R3K constituency lists, verify corporate actions, use point-in-time earnings dates. Eliminates survivorship bias that silently inflates backtest returns.
 
 ### Tasks
 
-- [ ] Create `universe/historical_constituency.py` — Load/query historical R3K membership by date. Format: `universe/historical/{YYYY-MM-DD}.csv` (bi-weekly snapshots, interpolated)
-- [ ] Create `universe/corporate_actions.py` — Detect splits, mergers, delistings. Adjust OHLCV prices retroactively
-- [ ] Create `universe/point_in_time_earnings.py` — Historical earnings dates for backtest-mode earnings exclusion (replaces live yfinance lookup which has lookahead bias)
-- [ ] Modify `universe.py` — Add `load_universe_as_of(date)` that returns R3K membership as of a specific historical date
-- [ ] Modify `backtest_engine.py` — Universe loading (~line 491-503) switches to `load_universe_as_of(session_date)` when `BACKTEST_USE_DATED_UNIVERSE_SNAPSHOTS=True` (config flag already exists but is unused)
-- [ ] Modify `scan_engine.py` — `is_near_earnings_cached()` (~line 402) uses point-in-time earnings dates in backtest mode
-- [ ] Modify `cache_store.py` — `upsert_history()` applies split adjustments before persisting
-- [ ] Modify `config.py` — Add `BACKTEST_HISTORICAL_CONSTITUENCY_PATH`, `BACKTEST_CORPORATE_ACTIONS_PATH`, `BACKTEST_POINT_IN_TIME_EARNINGS_PATH`, `BACKTEST_APPLY_SPLIT_ADJUSTMENTS`
-- [ ] Create `tests/test_historical_constituency.py`
-- [ ] Create `tests/test_corporate_actions.py`
-- [ ] Create `tests/test_point_in_time_earnings.py`
+- [x] Create `universe/historical_constituency.py` — Load/query historical R3K membership by date. Format: `universe/historical/{YYYY-MM-DD}.csv` (bi-weekly snapshots, interpolated)
+- [x] Create `universe/corporate_actions.py` — Detect splits, mergers, delistings. Adjust OHLCV prices retroactively
+- [x] Create `universe/point_in_time_earnings.py` — Historical earnings dates for backtest-mode earnings exclusion (replaces live yfinance lookup which has lookahead bias)
+- [x] Modify `universe.py` — Add `load_universe_as_of(date)` that returns R3K membership as of a specific historical date
+- [x] Modify `backtest_engine.py` — Universe loading (~line 491-503) switches to `load_universe_as_of(session_date)` when `BACKTEST_USE_DATED_UNIVERSE_SNAPSHOTS=True` (config flag already exists but is unused)
+- [x] Modify `scan_engine.py` — `is_near_earnings_cached()` (~line 402) uses point-in-time earnings dates in backtest mode
+- [x] Modify `cache_store.py` — `upsert_history()` applies split adjustments before persisting
+- [x] Modify `config.py` — Add `BACKTEST_HISTORICAL_CONSTITUENCY_PATH`, `BACKTEST_CORPORATE_ACTIONS_PATH`, `BACKTEST_POINT_IN_TIME_EARNINGS_PATH`, `BACKTEST_APPLY_SPLIT_ADJUSTMENTS`
+- [x] Create `tests/test_historical_constituency.py`
+- [x] Create `tests/test_corporate_actions.py`
+- [x] Create `tests/test_point_in_time_earnings.py`
 
 ### Corporate Action Handling
 
@@ -390,12 +390,12 @@ OHLCV cache adjusted retroactively for splits (divide pre-split prices by ratio)
 
 ### Verification
 
-- [ ] Backtest with historical constituency produces different (typically worse) results than survivorship-biased universe
-- [ ] Corporate actions correctly applied in OHLCV cache
-- [ ] Point-in-time earnings exclusion works in backtest mode
-- [ ] `BACKTEST_USE_DATED_UNIVERSE_SNAPSHOTS` flag works as documented
-- [ ] Indicators remain smooth across split adjustment dates
-- [ ] Provenance includes `constituency_source` and `corporate_actions_hash`
+- [x] Backtest with historical constituency produces different (typically worse) results than survivorship-biased universe
+- [x] Corporate actions correctly applied in OHLCV cache
+- [x] Point-in-time earnings exclusion works in backtest mode
+- [x] `BACKTEST_USE_DATED_UNIVERSE_SNAPSHOTS` flag works as documented
+- [x] Indicators remain smooth across split adjustment dates
+- [x] Provenance includes `constituency_source` and `corporate_actions_hash`
 
 ---
 

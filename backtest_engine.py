@@ -19,7 +19,7 @@ from analytics import risk_attribution_slack_summary
 import scan_engine
 from config import cfg as default_cfg
 from setup_context import load_setup_rules
-from universe import load_universe
+from universe import load_universe, load_universe_as_of
 from provenance import (
     compute_config_hash,
     compute_data_hash,
@@ -636,24 +636,68 @@ def run_backtest(
     )
     trading_days = [d for d in trading_days if start_dt <= d <= end_dt]
 
-    if universe_symbols is None:
-        universe = load_universe(allow_network=False)
-        if universe.empty or "Ticker" not in universe.columns:
-            raise ValueError("Universe snapshot missing or empty; cannot run backtest.")
-        symbols = (
-            universe["Ticker"].dropna().astype(str).str.upper().unique().tolist()
-        )
-        sector_map = {}
-        if "Sector" in universe.columns:
-            sector_map = {
-                str(row["Ticker"]).upper(): str(row["Sector"])
-                for _, row in universe.iterrows()
-            }
-    else:
-        symbols = [str(sym).upper() for sym in universe_symbols]
-        sector_map = {}
+    use_dated_universe = bool(
+        getattr(cfg, "BACKTEST_USE_DATED_UNIVERSE_SNAPSHOTS", False)
+    )
+    constituency_source = None
 
-    symbols = sorted(dict.fromkeys(symbols))
+    # Phase 7: Load corporate actions for delisting detection
+    corporate_actions_list = []
+    corporate_actions_hash_value = None
+    try:
+        ca_path = Path(getattr(cfg, "BACKTEST_CORPORATE_ACTIONS_PATH", "universe/corporate_actions.csv"))
+        if ca_path.exists():
+            from universe.corporate_actions import get_delistings, load_corporate_actions
+            corporate_actions_list = load_corporate_actions(ca_path)
+            if corporate_actions_list:
+                import hashlib as _hashlib
+                corporate_actions_hash_value = _hashlib.sha256(
+                    ca_path.read_bytes()
+                ).hexdigest()
+    except Exception as _ca_err:
+        import logging as _logging
+        _logging.getLogger(__name__).warning("Failed to load corporate actions: %s", _ca_err)
+
+    # Phase 7: Load earnings calendar for point-in-time filtering
+    earnings_calendar_df = None
+    try:
+        pit_path = Path(getattr(cfg, "BACKTEST_POINT_IN_TIME_EARNINGS_PATH", "universe/earnings_calendar.parquet"))
+        if pit_path.exists():
+            from universe.point_in_time_earnings import load_earnings_calendar
+            earnings_calendar_df = load_earnings_calendar(pit_path)
+            if earnings_calendar_df.empty:
+                earnings_calendar_df = None
+    except Exception:
+        pass
+
+    def _load_universe_for_date(session_date_str: str | None = None):
+        """Load universe symbols and sector map, optionally for a specific date."""
+        nonlocal constituency_source
+        if universe_symbols is not None:
+            return [str(sym).upper() for sym in universe_symbols], {}
+
+        if use_dated_universe and session_date_str is not None:
+            u = load_universe_as_of(session_date_str)
+            constituency_source = getattr(
+                cfg, "BACKTEST_HISTORICAL_CONSTITUENCY_PATH", "universe/historical"
+            )
+        else:
+            u = load_universe(allow_network=False)
+            constituency_source = "static"
+
+        if u.empty or "Ticker" not in u.columns:
+            raise ValueError("Universe snapshot missing or empty; cannot run backtest.")
+        syms = u["Ticker"].dropna().astype(str).str.upper().unique().tolist()
+        smap = {}
+        if "Sector" in u.columns:
+            smap = {
+                str(row["Ticker"]).upper(): str(row["Sector"])
+                for _, row in u.iterrows()
+            }
+        return sorted(dict.fromkeys(syms)), smap
+
+    # Initial universe load (static mode or first pass)
+    symbols, sector_map = _load_universe_for_date()
 
     trades: list[dict] = []
     position_snapshots: list[dict] = []
@@ -682,6 +726,65 @@ def run_backtest(
         stops_today = 0
         targets_r1_today = 0
         targets_r2_today = 0
+
+        # Phase 7: Reload universe per-day if using dated constituency
+        if use_dated_universe and universe_symbols is None:
+            symbols, sector_map = _load_universe_for_date(
+                session_date.date().isoformat()
+            )
+
+        # Phase 7: Force-exit positions in delisted symbols
+        if corporate_actions_list:
+            delisted_today = set(get_delistings(
+                corporate_actions_list,
+                as_of_date=session_date.date().isoformat(),
+            ))
+            for symbol in sorted(list(positions.keys())):
+                if symbol not in delisted_today:
+                    continue
+                pos = positions[symbol]
+                bar = get_bar(history, symbol, session_date)
+                if bar is None:
+                    # No price data — use last known entry price as exit
+                    exit_price = pos["entry_price"]
+                else:
+                    exit_price = bar["Close"]
+                qty = pos["remaining_qty"]
+                if qty <= 0:
+                    continue
+                sign = _direction_sign(pos["direction"])
+                equity_before = cash + _compute_positions_value(history, positions, session_date)
+                pnl = sign * (exit_price - pos["entry_price"]) * qty
+                cash += sign * exit_price * qty
+                pos["remaining_qty"] = 0.0
+                pos["realized_pnl"] += pnl
+                equity_after = cash + _compute_positions_value(history, positions, session_date)
+                trades.append(
+                    {
+                        "date": session_date.date().isoformat(),
+                        "symbol": symbol,
+                        "direction": pos["direction"],
+                        "fill_type": "exit",
+                        "reason": "delisting",
+                        "entry_reason": None,
+                        "exit_reason": "delisting",
+                        "price": exit_price,
+                        "qty": qty,
+                        "remaining_qty": 0.0,
+                        "pnl": pnl,
+                        "notional": exit_price * qty,
+                        "slippage_bps": 0.0,
+                        "ideal_fill_price": exit_price,
+                        "slippage_actual_bps": 0.0,
+                        "equity_before": equity_before,
+                        "equity_after": equity_after,
+                        "position_id": pos.get("position_id"),
+                        "hold_days": pos["hold_days"],
+                        "mae": sign * (pos["mae_price"] - pos["entry_price"]) * pos["initial_qty"],
+                        "mfe": sign * (pos["mfe_price"] - pos["entry_price"]) * pos["initial_qty"],
+                    }
+                )
+                del positions[symbol]
 
         if entry_model == ENTRY_MODEL_NEXT_OPEN:
             ready = [p for p in pending_entries if p["entry_date"] == session_date]
@@ -1213,6 +1316,17 @@ def run_backtest(
                 continue
             if any(p["symbol"] == symbol for p in pending_entries):
                 continue
+
+            # Phase 7: Point-in-time earnings exclusion
+            if earnings_calendar_df is not None:
+                from universe.point_in_time_earnings import is_near_earnings_pit
+                if is_near_earnings_pit(
+                    symbol,
+                    session_date.date().isoformat(),
+                    earnings_calendar_df,
+                ):
+                    continue
+
             direction = str(row.get("Direction", "Long"))
             entry_level = float(row.get("Entry_Level", row.get("Price", row["Stop_Loss"])))
             extension_high = _extension_high_from_candidate(row)
@@ -1670,6 +1784,8 @@ def run_backtest(
             "data_path": str(data_path),
             "execution_mode": execution_mode,
             "parameters_used": parameters_used,
+            "constituency_source": constituency_source,
+            "corporate_actions_hash": corporate_actions_hash_value,
         }
     )
     require_provenance_fields(summary, context="summary.json")
@@ -1682,6 +1798,8 @@ def run_backtest(
         "data_path": str(data_path),
         "execution_mode": execution_mode,
         "parameters_used": parameters_used,
+        "constituency_source": constituency_source,
+        "corporate_actions_hash": corporate_actions_hash_value,
         "command": " ".join(sys.argv),
         "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00","Z"),
         "environment": {

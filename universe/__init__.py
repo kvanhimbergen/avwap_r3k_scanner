@@ -16,12 +16,12 @@ from config import cfg
 
 logger = logging.getLogger(__name__)
 
-# --- CONFIGURATION (script-relative cache path) ---
-_BASE_DIR = Path(__file__).resolve().parent
+# --- CONFIGURATION (project-root-relative cache path) ---
+_BASE_DIR = Path(__file__).resolve().parent.parent
 LOCAL_CACHE_PATH = str(_BASE_DIR / "cache" / "iwv_holdings.csv")
 DEFAULT_SNAPSHOT_PATH = "universe/snapshots/iwv_holdings_latest.csv"
 
-# Default rules path (repo-relative, from universe.py location)
+# Default rules path (repo-relative)
 DEFAULT_RULES_PATH = str((_BASE_DIR / "knowledge" / "rules" / "universe_rules.yaml").resolve())
 
 
@@ -396,8 +396,8 @@ def apply_universe_rules(
         keep.append(_passes_liquidity_gate(t, m, liquidity_rules))
 
     out = df.loc[keep].reset_index(drop=True)
-    return out    
-    
+    return out
+
 def load_universe_as_of(date_str: str) -> pd.DataFrame:
     """Load R3K universe membership as of a specific historical date.
 
