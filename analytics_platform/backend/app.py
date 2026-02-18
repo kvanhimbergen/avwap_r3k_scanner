@@ -207,6 +207,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"unknown run_id: {run_id}")
         return _envelope(runtime, payload)
 
+    @app.get("/api/v1/raec/dashboard")
+    def raec_dashboard(
+        start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        strategy_id: str | None = None,
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_raec_dashboard(conn, start, end, strategy_id)
+        return _envelope(runtime, payload)
+
+    @app.get("/api/v1/journal")
+    def journal(
+        start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        strategy_id: str | None = None,
+        symbol: str | None = None,
+        side: str | None = None,
+        limit: int = Query(default=500, ge=1, le=5000),
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_journal(
+                conn, start=start, end=end, strategy_id=strategy_id,
+                symbol=symbol, side=side, limit=limit,
+            )
+        return _envelope(runtime, payload)
+
+    @app.get("/api/v1/raec/readiness")
+    def raec_readiness() -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_raec_readiness(conn, runtime.settings.repo_root)
+        return _envelope(runtime, payload)
+
+    @app.get("/api/v1/pnl")
+    def pnl(
+        start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        strategy_id: str | None = None,
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_pnl(conn, start, end, strategy_id)
+        return _envelope(runtime, payload)
+
     @app.get("/api/v1/exports/{dataset}.csv")
     def export_dataset(
         dataset: str,
