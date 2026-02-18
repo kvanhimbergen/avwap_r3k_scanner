@@ -303,3 +303,137 @@ th {
     grid-template-columns: 1fr;
   }
 }
+
+/* === Phase 4: RAEC & Analytics Styles === */
+
+/* Strategy filter bar */
+.filter-bar {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: var(--card-bg, #1e1e2e);
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.filter-bar label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary, #a0a0b0);
+}
+
+.filter-bar select,
+.filter-bar input {
+  padding: 0.35rem 0.6rem;
+  border-radius: 4px;
+  border: 1px solid var(--border, #333);
+  background: var(--input-bg, #2a2a3e);
+  color: var(--text-primary, #e0e0e0);
+  font-size: 0.85rem;
+}
+
+/* Regime badges */
+.regime-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.regime-badge.risk-on {
+  background: #0f9d5820;
+  color: #0f9d58;
+  border: 1px solid #0f9d5840;
+}
+
+.regime-badge.transition {
+  background: #dd6b2020;
+  color: #dd6b20;
+  border: 1px solid #dd6b2040;
+}
+
+.regime-badge.risk-off {
+  background: #db443720;
+  color: #db4437;
+  border: 1px solid #db443740;
+}
+
+/* Readiness cards */
+.readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.readiness-card {
+  padding: 1rem;
+  border-radius: 8px;
+  background: var(--card-bg, #1e1e2e);
+  border-left: 4px solid var(--border, #333);
+}
+
+.readiness-card h4 {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.95rem;
+}
+
+.readiness-card div {
+  font-size: 0.85rem;
+  margin-bottom: 0.35rem;
+  color: var(--text-secondary, #a0a0b0);
+}
+
+.readiness-ok {
+  border-left-color: #0f9d58;
+}
+
+.readiness-warn {
+  border-left-color: #dd6b20;
+}
+
+.readiness-error {
+  border-left-color: #db4437;
+}
+
+.warning-list {
+  margin: 0.5rem 0 0 0;
+  padding-left: 1.2rem;
+  font-size: 0.8rem;
+  color: #dd6b20;
+}
+
+/* Journal table */
+.journal-table {
+  width: 100%;
+  font-size: 0.85rem;
+}
+
+.journal-table .side-buy {
+  color: #0f9d58;
+  font-weight: 600;
+}
+
+.journal-table .side-sell {
+  color: #db4437;
+  font-weight: 600;
+}
+
+/* Nav section labels */
+.nav-section-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary, #666);
+  padding: 1rem 1rem 0.25rem 1rem;
+  font-weight: 600;
+}
+
+.nav-section-label:first-child {
+  padding-top: 0.5rem;
+}

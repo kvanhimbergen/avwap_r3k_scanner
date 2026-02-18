@@ -9,7 +9,9 @@ export function HelpPage() {
           1) Start on <strong>Overview</strong> to confirm system pulse. 2) Open <strong>Decisions</strong> if
           rejected or gate blocks are elevated. 3) Use <strong>S2 Signals</strong> to inspect dominant reason codes and
           symbol-level failures. 4) Check <strong>Risk</strong> for throttle and regime changes before adjusting any
-          strategy parameters.
+          strategy parameters. 5) Check <strong>RAEC Dashboard</strong> for regime status and rebalance activity across
+          401(k) strategies. 6) Use <strong>Readiness</strong> before market open to verify all strategies have valid
+          state.
         </p>
       </div>
 
@@ -53,6 +55,26 @@ export function HelpPage() {
               <td>Backtests</td>
               <td>Replay/backtest run comparison and equity-shape review.</td>
               <td>Act if live behavior diverges materially from selected run assumptions.</td>
+            </tr>
+            <tr>
+              <td>RAEC Dashboard</td>
+              <td>Regime status, allocation targets, rebalance history for all RAEC 401(k) strategies.</td>
+              <td>Act if regime changes unexpectedly or rebalances stop firing.</td>
+            </tr>
+            <tr>
+              <td>Readiness</td>
+              <td>Pre-market check that all RAEC strategies have valid state and recent evaluations.</td>
+              <td>Act if any strategy shows warnings, stale eval dates, or missing state files.</td>
+            </tr>
+            <tr>
+              <td>Trade Journal</td>
+              <td>Unified trade log across all strategies (S1, S2, RAEC V1-V5).</td>
+              <td>Review weekly for trade pattern analysis and strategy concentration.</td>
+            </tr>
+            <tr>
+              <td>P&amp;L</td>
+              <td>Allocation drift tracking and rebalance frequency analysis.</td>
+              <td>Act if drift exceeds thresholds consistently or rebalance frequency drops.</td>
             </tr>
           </tbody>
         </table>

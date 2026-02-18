@@ -12,6 +12,7 @@ export function OverviewPage() {
   const overview = usePolling(() => api.overview(), 45_000);
   const timeseries = usePolling(() => api.decisionsTimeseries(), 45_000);
   const freshness = usePolling(() => api.freshness(), 60_000);
+  const raec = usePolling(() => api.raecDashboard(), 45_000);
 
   if (overview.loading || timeseries.loading || freshness.loading) {
     return <LoadingState text="Loading overview..." />;
@@ -58,6 +59,35 @@ export function OverviewPage() {
           </LineChart>
         </ResponsiveContainer>
       </div>
+      {raec.data && !raec.error && (
+        <div className="table-card">
+          <h3>RAEC 401(k) Status</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Strategy</th>
+                <th>Regime</th>
+                <th>Last Eval</th>
+                <th>Rebalances</th>
+              </tr>
+            </thead>
+            <tbody>
+              {((raec.data.data as any)?.summary?.by_strategy ?? []).map((s: any) => (
+                <tr key={s.strategy_id}>
+                  <td>{s.strategy_id}</td>
+                  <td>
+                    <span className={`regime-badge ${s.current_regime?.toLowerCase().replace("_", "-") ?? ""}`}>
+                      {s.current_regime ?? "—"}
+                    </span>
+                  </td>
+                  <td>{s.last_eval_date ?? "—"}</td>
+                  <td>{s.rebalances ?? 0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }
