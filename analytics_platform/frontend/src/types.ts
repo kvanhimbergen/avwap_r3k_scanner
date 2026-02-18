@@ -33,3 +33,48 @@ export interface FreshnessRow {
   parse_status: string;
   last_error: string | null;
 }
+
+export interface RaecRebalanceEvent {
+  ny_date: string;
+  strategy_id: string;
+  regime: string;
+  should_rebalance: boolean;
+  rebalance_trigger: string;
+  intent_count: number;
+  portfolio_vol_target: number | null;
+  posted: boolean;
+}
+
+export interface JournalRow {
+  ny_date: string;
+  ts_utc: string;
+  strategy_id: string;
+  intent_id: string;
+  symbol: string;
+  side: string;
+  delta_pct: number;
+  target_pct: number;
+  current_pct: number;
+  regime: string | null;
+  posted: boolean | null;
+}
+
+export interface ReadinessStrategy {
+  strategy_id: string;
+  state_file_exists: boolean;
+  last_eval_date: string | null;
+  last_regime: string | null;
+  has_allocations: boolean;
+  allocation_count: number;
+  total_weight_pct: number;
+  ledger_files_today: number;
+  warnings: string[];
+}
+
+export interface AllocationSnapshot {
+  ny_date: string;
+  strategy_id: string;
+  symbol: string;
+  weight_pct: number;
+  alloc_type: string;
+}

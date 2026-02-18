@@ -35,6 +35,23 @@ export const api = {
   backtestRun: (runId: string) => get<KeyValue>(`/api/v1/backtests/runs/${encodeURIComponent(runId)}`),
   exportUrl: (dataset: string, start?: string, end?: string) =>
     `${API_BASE}/api/v1/exports/${dataset}.csv${toQuery({ start, end })}`,
+
+  raecDashboard: (args?: { start?: string; end?: string; strategy_id?: string }) =>
+    get<KeyValue>(`/api/v1/raec/dashboard${toQuery(args ?? {})}`),
+
+  journal: (args?: {
+    start?: string;
+    end?: string;
+    strategy_id?: string;
+    symbol?: string;
+    side?: string;
+    limit?: number;
+  }) => get<KeyValue>(`/api/v1/journal${toQuery(args ?? {})}`),
+
+  raecReadiness: () => get<KeyValue>("/api/v1/raec/readiness"),
+
+  pnl: (args?: { start?: string; end?: string; strategy_id?: string }) =>
+    get<KeyValue>(`/api/v1/pnl${toQuery(args ?? {})}`),
 };
 
 function toQuery(params: Record<string, unknown>): string {
