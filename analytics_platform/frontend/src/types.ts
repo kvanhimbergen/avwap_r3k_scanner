@@ -140,7 +140,7 @@ export interface StrategyMatrixRow {
   strategy_type: string;
   trade_count: number;
   unique_symbols: number;
-  current_regime: string | null;
+  latest_regime: string | null;
   exposure: number | null;
 }
 

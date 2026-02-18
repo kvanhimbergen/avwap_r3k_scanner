@@ -113,7 +113,7 @@ function extractStrategies(matrixData: KeyValue | null): StrategyMatrixRow[] {
 
 function extractRaecSummary(raecData: KeyValue | null): any[] {
   if (!raecData) return [];
-  return (raecData as any)?.summary?.by_strategy ?? [];
+  return (raecData as any)?.by_strategy ?? [];
 }
 
 function extractRaecEvents(raecData: KeyValue | null): RaecRebalanceEvent[] {
@@ -224,7 +224,7 @@ function buildStrategyCards(
     const readiness = readinessMap.get(upper);
 
     // Regime: prefer RAEC data, fall back to matrix
-    const regime = raec?.current_regime ?? s.current_regime ?? null;
+    const regime = raec?.latest_regime ?? s.latest_regime ?? null;
 
     // Health
     const health = computeHealth(s.strategy_id, regime, readiness, freshnessRows);
@@ -296,7 +296,7 @@ function buildAlerts(
 
   // RISK_OFF regimes
   for (const s of raecSummary) {
-    const regime = (s.current_regime ?? "") as string;
+    const regime = (s.latest_regime ?? "") as string;
     if (regime.toUpperCase().includes("RISK_OFF")) {
       alerts.push({
         severity: "warn",

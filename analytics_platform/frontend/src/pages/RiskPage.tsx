@@ -73,7 +73,7 @@ export function RiskPage() {
         <div className="kpi-grid">
           <KpiCard
             label="Current Regime"
-            value={String(latestRegime?.regime_id ?? "—")}
+            value={String(latestRegime?.regime_label ?? latestRegime?.regime_id ?? "—")}
           />
           <KpiCard
             label="Risk Multiplier"
@@ -108,14 +108,16 @@ export function RiskPage() {
                   <td>
                     <span
                       className={`regime-badge ${
-                        row.regime_id === "RISK_ON"
+                        (row.regime_label ?? row.regime_id) === "RISK_ON"
                           ? "risk-on"
-                          : row.regime_id === "RISK_OFF"
+                          : (row.regime_label ?? row.regime_id) === "RISK_OFF"
                             ? "risk-off"
-                            : "transition"
+                            : (row.regime_label ?? row.regime_id) === "STRESSED"
+                              ? "risk-off"
+                              : "transition"
                       }`}
                     >
-                      {String(row.regime_id ?? "")}
+                      {String(row.regime_label ?? row.regime_id ?? "")}
                     </span>
                   </td>
                   <td className="mono">{String(row.reason_codes_json ?? "")}</td>

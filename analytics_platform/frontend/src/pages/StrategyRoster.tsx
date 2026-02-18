@@ -71,7 +71,7 @@ function extractStrategies(data: KeyValue | null): StrategyMatrixRow[] {
 
 function extractRaecSummary(data: KeyValue | null): any[] {
   if (!data) return [];
-  return (data as any)?.summary?.by_strategy ?? [];
+  return (data as any)?.by_strategy ?? [];
 }
 
 function extractRaecEvents(data: KeyValue | null): RaecRebalanceEvent[] {
@@ -148,7 +148,7 @@ function buildCards(
     const meta = getMeta(s.strategy_id);
     const raec = raecMap.get(upper);
     const readiness = readinessMap.get(upper);
-    const regime = raec?.current_regime ?? s.current_regime ?? null;
+    const regime = raec?.latest_regime ?? s.latest_regime ?? null;
     const health = computeHealth(regime, readiness, freshnessRows);
     const book = bookFromId(s.strategy_id);
     const isAlpaca = book === "alpaca";

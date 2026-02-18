@@ -242,7 +242,7 @@ def get_risk_controls(conn, start: str | None, end: str | None) -> dict[str, Any
     regimes = _rows(
         conn,
         f"""
-        SELECT ny_date, as_of_utc, regime_id, reason_codes_json
+        SELECT ny_date, as_of_utc, regime_id, regime_label, reason_codes_json
         FROM regime_daily
         {where}
         ORDER BY ny_date, as_of_utc
@@ -515,7 +515,7 @@ def get_journal(
                 NULL AS delta_pct,
                 NULL AS target_pct,
                 NULL AS current_pct,
-                rd.regime_id AS regime,
+                COALESCE(CAST(rd.regime_label AS VARCHAR), rd.regime_id) AS regime,
                 'decision' AS source
             FROM decision_intents di
             LEFT JOIN regime_daily rd ON di.ny_date = rd.ny_date
@@ -957,13 +957,17 @@ def get_strategy_matrix(conn) -> dict[str, Any]:
     latest_regime_rows = _rows(
         conn,
         """
-        SELECT regime_id
+        SELECT regime_id, regime_label
         FROM regime_daily
         ORDER BY ny_date DESC, as_of_utc DESC
         LIMIT 1
         """,
     )
-    latest_regime = latest_regime_rows[0]["regime_id"] if latest_regime_rows else None
+    latest_regime = (
+        (latest_regime_rows[0].get("regime_label") or latest_regime_rows[0]["regime_id"])
+        if latest_regime_rows
+        else None
+    )
 
     # Exposure from portfolio_positions (latest date, grouped by strategy_id)
     exposure = _rows(

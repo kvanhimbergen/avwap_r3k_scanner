@@ -88,7 +88,7 @@ function extractRaecEvents(data: KeyValue | null, strategyId: string): RaecRebal
 
 function extractRaecSummary(data: KeyValue | null, strategyId: string): any {
   if (!data) return null;
-  const byStrategy: any[] = (data as any)?.summary?.by_strategy ?? [];
+  const byStrategy: any[] = (data as any)?.by_strategy ?? [];
   return byStrategy.find((s: any) => (s.strategy_id as string).toUpperCase() === strategyId.toUpperCase()) ?? null;
 }
 
@@ -163,7 +163,7 @@ export function StrategyTearsheet() {
   const tradeData = extractTradeAnalytics(trades.data?.data ?? null, strategyId);
 
   // Derive regime
-  const regime: string | null = raecSummary?.current_regime ?? null;
+  const regime: string | null = raecSummary?.latest_regime ?? null;
 
   // Derive health
   const health = !readinessData?.state_file_exists
@@ -227,7 +227,7 @@ export function StrategyTearsheet() {
           strategyId: sid,
           shortName: subMeta.shortName,
           subtitle: subMeta.subtitle,
-          regime: sub?.current_regime ?? null,
+          regime: sub?.latest_regime ?? null,
           rebalances: sub?.rebalances ?? 0,
         };
       })

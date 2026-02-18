@@ -29,19 +29,20 @@ function computeSystemHealth(rows: FreshnessRow[]): { level: StatusLevel; label:
   return { level: "ok", label: "All systems nominal" };
 }
 
-/** Extract latest regime from risk controls. */
+/** Extract latest regime label from risk controls. */
 function extractRegime(riskData: Record<string, any> | null): string | null {
   if (!riskData) return null;
   const regimes = (riskData.regimes ?? []) as Array<Record<string, unknown>>;
   if (regimes.length === 0) return null;
-  return String(regimes[regimes.length - 1].regime_id ?? "");
+  const latest = regimes[regimes.length - 1];
+  return String(latest.regime_label ?? latest.regime_id ?? "");
 }
 
 function regimeClass(regime: string): string {
-  const lower = regime.toLowerCase();
-  if (lower.includes("risk_on") || lower.includes("risk-on")) return "risk-on";
-  if (lower.includes("risk_off") || lower.includes("risk-off")) return "risk-off";
-  if (lower.includes("transition")) return "transition";
+  const upper = regime.toUpperCase();
+  if (upper === "RISK_ON") return "risk-on";
+  if (upper === "RISK_OFF" || upper === "STRESSED") return "risk-off";
+  if (upper === "NEUTRAL" || upper === "TRANSITION") return "transition";
   return "";
 }
 
