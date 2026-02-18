@@ -44,8 +44,10 @@ export function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="app-shell">
       <aside className="app-sidebar">
-        <h1 className="brand">Strategy Ops</h1>
-        <p className="brand-sub">AVWAP + S2 Analytics</p>
+        <div>
+          <h1 className="brand">Strategy Ops</h1>
+          <p className="brand-sub">AVWAP + S2 Analytics</p>
+        </div>
         <nav className="nav-list">
           {NAV_SECTIONS.map((section) => (
             <div key={section.label}>
