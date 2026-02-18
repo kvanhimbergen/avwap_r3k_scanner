@@ -13,6 +13,11 @@ export function HelpPage() {
           401(k) strategies. 6) Use <strong>Readiness</strong> before market open to verify all strategies have valid
           state.
         </p>
+        <ul style={{ margin: "8px 0 0", paddingLeft: 20, fontSize: "0.8rem", color: "var(--text-tertiary)", lineHeight: 1.7 }}>
+          <li>Start with <strong>Portfolio Overview</strong> for a unified view of capital, exposure, and P&amp;L across all strategies.</li>
+          <li>Check <strong>Strategy Matrix</strong> weekly to ensure no unintended symbol overlap or concentration.</li>
+          <li>Review <strong>Slippage</strong> weekly to monitor execution quality trends.</li>
+        </ul>
       </div>
 
       <div className="table-card">
@@ -75,6 +80,26 @@ export function HelpPage() {
               <td>P&amp;L</td>
               <td>Allocation drift tracking and rebalance frequency analysis.</td>
               <td>Act if drift exceeds thresholds consistently or rebalance frequency drops.</td>
+            </tr>
+            <tr>
+              <td>Portfolio Overview</td>
+              <td>Unified view of capital, exposure, positions, and P&amp;L across all strategies.</td>
+              <td>Act if exposure exceeds limits, cash drops below threshold, or P&amp;L shows anomalies.</td>
+            </tr>
+            <tr>
+              <td>Strategy Matrix</td>
+              <td>Cross-strategy comparison with symbol overlap detection and exposure breakdown.</td>
+              <td>Act if symbol overlap creates unintended concentration across strategies.</td>
+            </tr>
+            <tr>
+              <td>Slippage</td>
+              <td>Execution quality analysis — how actual fills compare to benchmarks, broken down by liquidity and time of day.</td>
+              <td>Act if mean slippage exceeds 10 bps or shows a worsening trend.</td>
+            </tr>
+            <tr>
+              <td>Trade Analytics</td>
+              <td>Cross-strategy trade frequency, symbol concentration, and activity analysis.</td>
+              <td>Review weekly for concentration risk or unusual trading patterns.</td>
             </tr>
           </tbody>
         </table>

@@ -1023,6 +1023,11 @@ def get_strategy_matrix(conn) -> dict[str, Any]:
         """,
     )
 
+    # Ensure LIST columns are plain Python lists (DuckDB returns numpy arrays)
+    for row in overlap:
+        if "strategy_ids" in row and hasattr(row["strategy_ids"], "tolist"):
+            row["strategy_ids"] = row["strategy_ids"].tolist()
+
     return {
         "strategies": strategies,
         "symbol_overlap": overlap,

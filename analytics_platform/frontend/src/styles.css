@@ -534,3 +534,77 @@ tbody tr:hover {
   box-shadow: var(--shadow-md) !important;
   font-size: 0.8rem !important;
 }
+
+/* === Phase 5/6: Portfolio & Analytics Styles === */
+
+.portfolio-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.slippage-good { color: #0f9d58; font-weight: 600; }
+.slippage-warn { color: #dd6b20; font-weight: 600; }
+.slippage-bad { color: #db4437; font-weight: 600; }
+
+.matrix-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.matrix-card {
+  padding: 1rem;
+  border-radius: 8px;
+  background: var(--card-bg, #1e1e2e);
+  border-left: 4px solid var(--border, #333);
+}
+
+.matrix-card h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+}
+
+.matrix-card div {
+  font-size: 0.85rem;
+  margin-bottom: 0.25rem;
+  color: var(--text-secondary, #a0a0b0);
+}
+
+.matrix-card.type-s1 { border-left-color: #1f6feb; }
+.matrix-card.type-s2 { border-left-color: #8b5cf6; }
+.matrix-card.type-raec { border-left-color: #0f9d58; }
+
+.weight-bar {
+  height: 4px;
+  background: #1f6feb;
+  border-radius: 2px;
+  margin-top: 2px;
+}
+
+.pie-card {
+  display: flex;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.overlap-highlight {
+  background: #dd6b2020;
+  border-radius: 4px;
+  padding: 0.1rem 0.3rem;
+}
+
+.strategy-type-badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.strategy-type-badge.s1 { background: #1f6feb20; color: #1f6feb; }
+.strategy-type-badge.s2 { background: #8b5cf620; color: #8b5cf6; }
+.strategy-type-badge.raec { background: #0f9d5820; color: #0f9d58; }

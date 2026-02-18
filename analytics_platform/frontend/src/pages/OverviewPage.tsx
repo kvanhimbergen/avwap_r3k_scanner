@@ -17,6 +17,7 @@ export function OverviewPage() {
   const timeseries = usePolling(() => api.decisionsTimeseries(), 45_000);
   const freshness = usePolling(() => api.freshness(), 60_000);
   const raec = usePolling(() => api.raecDashboard(), 45_000);
+  const portfolio = usePolling(() => api.portfolioOverview(), 60_000);
 
   if (overview.loading || timeseries.loading || freshness.loading) {
     return <LoadingState text="Loading overview..." />;
@@ -39,6 +40,20 @@ export function OverviewPage() {
       <h2 className="page-title">Overview</h2>
       {dateRange && <p className="page-subtitle">{dateRange}</p>}
       {!dateRange && <div style={{ marginBottom: 24 }} />}
+
+      {portfolio.data && !portfolio.error && (() => {
+        const pData = (portfolio.data.data as Record<string, any>) ?? {};
+        const latest = pData.latest ?? {};
+        const fmt = (v: number | null) => v != null ? `$${v.toLocaleString(undefined, {maximumFractionDigits: 0})}` : "—";
+        return (
+          <div className="kpi-grid" style={{ marginBottom: "1.5rem" }}>
+            <KpiCard label="Portfolio Capital" value={fmt(latest.capital_total)} />
+            <KpiCard label="Net Exposure" value={fmt(latest.net_exposure)} />
+            <KpiCard label="Strategies Active" value={(pData.exposure_by_strategy ?? []).length} />
+            <KpiCard label="Realized P&L Today" value={fmt(latest.realized_pnl)} />
+          </div>
+        );
+      })()}
 
       <FreshnessBanner rows={freshnessRows} />
 
