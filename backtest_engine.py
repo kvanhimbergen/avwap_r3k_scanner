@@ -330,6 +330,7 @@ def _enforce_entry_guardrails(
     trade_risk: float,
     effective_max_positions: int | None = None,
     effective_max_gross_exposure_abs: float | None = None,
+    effective_max_gross_exposure_pct: float | None = None,
 ) -> None:
     run_id = _get_run_id(scan_cfg)
 
@@ -360,7 +361,10 @@ def _enforce_entry_guardrails(
     if trade_risk > max_risk_abs + EPSILON:
         _guardrail_violation("max_risk_per_trade_abs", round(trade_risk, 6), max_risk_abs, run_id)
 
-    max_gross_exposure_pct = float(getattr(scan_cfg, "BACKTEST_MAX_GROSS_EXPOSURE_PCT", 1.0))
+    base_max_gross_exposure_pct = float(getattr(scan_cfg, "BACKTEST_MAX_GROSS_EXPOSURE_PCT", 1.0))
+    max_gross_exposure_pct = base_max_gross_exposure_pct
+    if effective_max_gross_exposure_pct is not None:
+        max_gross_exposure_pct = min(base_max_gross_exposure_pct, float(effective_max_gross_exposure_pct))
     projected_gross = gross_exposure + abs(notional)
     if equity_before > 0 and (
         projected_gross / equity_before > max_gross_exposure_pct + EPSILON
@@ -552,6 +556,37 @@ def run_backtest(
         risk_controls_cache[date_ny] = result
         return result
 
+    dynamic_exposure_enabled = bool(getattr(cfg, "DYNAMIC_EXPOSURE_ENABLED", False))
+    target_portfolio_vol = float(getattr(cfg, "TARGET_PORTFOLIO_VOL", 0.15))
+    exposure_ceiling = float(getattr(cfg, "MAX_GROSS_EXPOSURE_CEILING", 1.0))
+    exposure_floor = float(getattr(cfg, "MIN_GROSS_EXPOSURE_FLOOR", 0.2))
+    vol_lookback_days = int(getattr(cfg, "PORTFOLIO_VOL_LOOKBACK_DAYS", 20))
+
+    def _compute_dynamic_exposure_pct() -> float | None:
+        if not dynamic_exposure_enabled:
+            return None
+        if len(equity_curve) < 2:
+            return None
+        from portfolio.dynamic_exposure import (
+            compute_realized_portfolio_vol,
+            compute_target_exposure,
+        )
+        equities = [row["equity"] for row in equity_curve]
+        daily_returns = [
+            (equities[i] - equities[i - 1]) / equities[i - 1]
+            for i in range(1, len(equities))
+            if equities[i - 1] > 0
+        ]
+        realized_vol = compute_realized_portfolio_vol(daily_returns, vol_lookback_days)
+        result = compute_target_exposure(
+            realized_vol,
+            target_portfolio_vol,
+            1.0,
+            floor=exposure_floor,
+            ceiling=exposure_ceiling,
+        )
+        return result.target_exposure
+
     output_dir = Path(getattr(cfg, "BACKTEST_OUTPUT_DIR", DEFAULT_OUTPUT_DIR))
     data_path = Path(getattr(cfg, "BACKTEST_OHLCV_PATH", DEFAULT_OHLCV_PATH))
     history = load_ohlcv_history(data_path)
@@ -731,6 +766,7 @@ def run_backtest(
                     trade_risk=base_trade_risk,
                     effective_max_positions=effective_max_positions,
                     effective_max_gross_exposure_abs=effective_max_gross_exposure_abs,
+                    effective_max_gross_exposure_pct=_compute_dynamic_exposure_pct(),
                 )
                 qty = base_qty
                 if risk_controls_result is not None:
@@ -1262,6 +1298,7 @@ def run_backtest(
                     trade_risk=base_trade_risk,
                     effective_max_positions=effective_max_positions,
                     effective_max_gross_exposure_abs=effective_max_gross_exposure_abs,
+                    effective_max_gross_exposure_pct=_compute_dynamic_exposure_pct(),
                 )
                 qty = base_qty
                 if risk_controls_result is not None:

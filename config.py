@@ -216,6 +216,13 @@ class CFG:
     MAX_SECTOR_EXPOSURE_PCT: float = 0.3
     MAX_CORRELATED_CLUSTER_EXPOSURE_PCT: float = 0.4
 
+    # Dynamic gross exposure (Phase 6)
+    DYNAMIC_EXPOSURE_ENABLED: bool = False
+    TARGET_PORTFOLIO_VOL: float = 0.15
+    MAX_GROSS_EXPOSURE_CEILING: float = 1.0
+    MIN_GROSS_EXPOSURE_FLOOR: float = 0.2
+    PORTFOLIO_VOL_LOOKBACK_DAYS: int = 20
+
     # Cross-sectional scoring (Phase 3)
     CROSS_SECTIONAL_ENABLED: bool = False
     CROSS_SECTIONAL_TOP_DECILE: float = 0.1

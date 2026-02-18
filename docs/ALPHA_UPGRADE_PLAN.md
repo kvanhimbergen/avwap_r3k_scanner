@@ -303,19 +303,19 @@ Enforce `MAX_SECTOR_EXPOSURE_PCT` (e.g., 30%) at portfolio level. If existing Te
 
 ## Phase 6: Dynamic Gross Exposure
 
-**Scope: Medium** | **Status: TODO**
+**Scope: Medium** | **Status: DONE**
 
 **Objective:** Scale portfolio gross exposure inversely with realized portfolio volatility. Low vol + RISK_ON = higher exposure. Vol spike + regime deterioration = lower exposure.
 
 ### Tasks
 
-- [ ] Create `portfolio/dynamic_exposure.py` — Gross exposure target computation, vol-targeting, regime-adaptive scaling
-- [ ] Modify `portfolio/risk_controls.py` — `build_risk_controls()` incorporates dynamic exposure target; `max_gross_exposure` becomes a function of realized portfolio vol
-- [ ] Modify `execution_v2/buy_loop.py` — Query dynamic exposure module before sizing
-- [ ] Modify `backtest_engine.py` — `max_gross_exposure_pct` (~line 416) becomes dynamic per day
-- [ ] Modify `config.py` — Add `DYNAMIC_EXPOSURE_ENABLED`, `TARGET_PORTFOLIO_VOL` (e.g., 0.15), `MAX_GROSS_EXPOSURE_CEILING`, `MIN_GROSS_EXPOSURE_FLOOR`, `PORTFOLIO_VOL_LOOKBACK_DAYS`
-- [ ] Modify `analytics/risk_attribution.py` — Track `target_exposure`, `actual_exposure`, `portfolio_vol`
-- [ ] Create `tests/test_dynamic_exposure.py`
+- [x] Create `portfolio/dynamic_exposure.py` — Gross exposure target computation, vol-targeting, regime-adaptive scaling
+- [x] Modify `portfolio/risk_controls.py` — `build_risk_controls()` incorporates dynamic exposure target; `max_gross_exposure` becomes a function of realized portfolio vol
+- [x] Modify `execution_v2/buy_loop.py` — Query dynamic exposure module before sizing
+- [x] Modify `backtest_engine.py` — `max_gross_exposure_pct` (~line 416) becomes dynamic per day
+- [x] Modify `config.py` — Add `DYNAMIC_EXPOSURE_ENABLED`, `TARGET_PORTFOLIO_VOL` (e.g., 0.15), `MAX_GROSS_EXPOSURE_CEILING`, `MIN_GROSS_EXPOSURE_FLOOR`, `PORTFOLIO_VOL_LOOKBACK_DAYS`
+- [x] Modify `analytics/risk_attribution.py` — Track `target_exposure`, `actual_exposure`, `portfolio_vol`
+- [x] Create `tests/test_dynamic_exposure.py`
 
 ### Vol-Targeting Formula
 
@@ -340,11 +340,11 @@ The dynamic exposure target replaces the static `base_max_gross_exposure` in `bu
 
 ### Verification
 
-- [ ] Gross exposure varies over time in backtest equity curve
-- [ ] Attribution events include portfolio vol and target exposure
+- [x] Gross exposure varies over time in backtest equity curve
+- [x] Attribution events include portfolio vol and target exposure
 - [ ] Max drawdown improves vs Phase 5 backtest
-- [ ] Floor/ceiling caps never violated
-- [ ] Feature flag off = identical to pre-Phase-6 behavior
+- [x] Floor/ceiling caps never violated
+- [x] Feature flag off = identical to pre-Phase-6 behavior
 
 ---
 

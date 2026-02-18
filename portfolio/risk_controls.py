@@ -5,7 +5,7 @@ import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 FEATURE_FLAG_ENV = "E2_REGIME_RISK_MODULATION"
 
@@ -56,6 +56,12 @@ def build_risk_controls(
     enabled: bool | None = None,
     write_ledger: bool = True,
     regime_model_version: str = "e1",
+    daily_pnl_series: Sequence[float] | None = None,
+    dynamic_exposure_enabled: bool = False,
+    target_portfolio_vol: float = 0.15,
+    exposure_floor: float = 0.2,
+    exposure_ceiling: float = 1.0,
+    vol_lookback_days: int = 20,
 ) -> RiskControlResult:
     if enabled is None:
         enabled = risk_modulation_enabled()
@@ -89,8 +95,8 @@ def build_risk_controls(
         max_drawdown_pct_block=max_drawdown_pct_block,
     )
 
-    risk_multiplier = _clamp(float(throttle.get("risk_multiplier", 0.0)))
-    risk_multiplier = min(risk_multiplier, drawdown_multiplier)
+    regime_risk_multiplier = _clamp(float(throttle.get("risk_multiplier", 0.0)))
+    risk_multiplier = min(regime_risk_multiplier, drawdown_multiplier)
 
     max_positions_multiplier = throttle.get("max_new_positions_multiplier")
     max_positions = None
@@ -98,7 +104,21 @@ def build_risk_controls(
         max_positions = max(0, int(math.floor(base_max_positions * float(max_positions_multiplier))))
 
     max_gross_exposure = None
-    if base_max_gross_exposure is not None:
+    if dynamic_exposure_enabled and daily_pnl_series is not None:
+        from portfolio.dynamic_exposure import (
+            compute_realized_portfolio_vol,
+            compute_target_exposure,
+        )
+        realized_vol = compute_realized_portfolio_vol(daily_pnl_series, vol_lookback_days)
+        exposure_result = compute_target_exposure(
+            realized_vol,
+            target_portfolio_vol,
+            regime_risk_multiplier,
+            floor=exposure_floor,
+            ceiling=exposure_ceiling,
+        )
+        max_gross_exposure = exposure_result.target_exposure
+    elif base_max_gross_exposure is not None:
         max_gross_exposure = float(base_max_gross_exposure) * risk_multiplier
 
     per_position_cap = None

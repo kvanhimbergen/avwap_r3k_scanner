@@ -138,6 +138,9 @@ def build_attribution_event(
     min_qty: int | None,
     source: str,
     correlation_penalty: float = 0.0,
+    target_exposure: float | None = None,
+    actual_exposure: float | None = None,
+    portfolio_vol: float | None = None,
 ) -> dict[str, Any]:
     baseline_notional = price * baseline_qty
     modulated_notional = price * modulated_qty
@@ -215,6 +218,11 @@ def build_attribution_event(
             "throttle_reason": risk_controls.throttle_reason if risk_controls else None,
         },
         "correlation_penalty": float(correlation_penalty),
+        "dynamic_exposure": {
+            "target_exposure": target_exposure,
+            "actual_exposure": actual_exposure,
+            "portfolio_vol": portfolio_vol,
+        },
     }
 
 
