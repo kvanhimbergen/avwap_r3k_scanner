@@ -72,10 +72,38 @@ class AVWAPFeatures:
         return cls(**{k: v for k, v in d.items() if k in valid})
 
 
+@dataclass(frozen=True)
+class RegimeE2Features:
+    """E2 multi-factor regime metrics (one row per date)."""
+
+    SCHEMA_VERSION: int = 1
+
+    spy_vol: float = 0.0
+    spy_drawdown: float = 0.0
+    spy_trend: float = 0.0
+    breadth: float = 0.0
+    credit_spread_z: float = 0.0
+    vix_term_structure: float = 0.0
+    gld_relative_strength: float = 0.0
+    tlt_relative_strength: float = 0.0
+    regime_label: str = ""
+    regime_score: float = 0.0
+    confidence: float = 0.0
+
+    def to_dict(self) -> dict:
+        return {f.name: getattr(self, f.name) for f in fields(self) if f.name != "SCHEMA_VERSION"}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> RegimeE2Features:
+        valid = {f.name for f in fields(cls)} - {"SCHEMA_VERSION"}
+        return cls(**{k: v for k, v in d.items() if k in valid})
+
+
 FEATURE_SCHEMAS: dict[str, type] = {
     "trend_features": TrendFeatures,
     "regime_features": RegimeFeatures,
     "avwap_features": AVWAPFeatures,
+    "regime_e2_features": RegimeE2Features,
 }
 
 

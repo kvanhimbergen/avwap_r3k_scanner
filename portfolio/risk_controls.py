@@ -13,6 +13,7 @@ RECORD_TYPE_THROTTLE = "PORTFOLIO_THROTTLE"
 RECORD_TYPE_RISK_CONTROLS = "PORTFOLIO_RISK_CONTROLS"
 RECORD_TYPE_REGIME_SIGNAL = "REGIME_E1_SIGNAL"
 RECORD_TYPE_REGIME_SKIPPED = "REGIME_E1_SKIPPED"
+RECORD_TYPE_REGIME_E2_SIGNAL = "REGIME_E2_SIGNAL"
 
 SCHEMA_VERSION = 1
 
@@ -54,6 +55,7 @@ def build_risk_controls(
     as_of_utc: str | None = None,
     enabled: bool | None = None,
     write_ledger: bool = True,
+    regime_model_version: str = "e1",
 ) -> RiskControlResult:
     if enabled is None:
         enabled = risk_modulation_enabled()
@@ -79,6 +81,7 @@ def build_risk_controls(
     throttle, throttle_reasons, source, resolved_ny_date = _resolve_regime_throttle(
         repo_root=repo_root,
         ny_date=ny_date,
+        regime_model_version=regime_model_version,
     )
 
     drawdown_multiplier, drawdown_reasons = _drawdown_guardrail_multiplier(
@@ -232,6 +235,7 @@ def _resolve_regime_throttle(
     *,
     repo_root: Path,
     ny_date: str,
+    regime_model_version: str = "e1",
 ) -> tuple[dict[str, Any], list[str], str, str]:
     throttle_record, throttle_errors = _read_latest_record(
         _throttle_path(repo_root, ny_date), RECORD_TYPE_THROTTLE, "throttle_ledger"
@@ -241,6 +245,23 @@ def _resolve_regime_throttle(
         reasons = list(throttle.get("reasons") or []) + throttle_errors
         resolved_ny_date = throttle_record.get("resolved_ny_date") or ny_date
         return throttle, _ordered_reasons(reasons), "PORTFOLIO_THROTTLE", resolved_ny_date
+
+    # E2 path: try E2 ledger first when configured
+    if regime_model_version == "e2":
+        e2_record, e2_errors = _read_latest_record(
+            _regime_e2_path(repo_root, ny_date),
+            RECORD_TYPE_REGIME_E2_SIGNAL,
+            "regime_e2_ledger",
+        )
+        if e2_record is not None:
+            throttle = _regime_e2_to_throttle(
+                e2_record.get("regime_score"),
+                e2_record.get("regime_label"),
+                e2_record.get("confidence"),
+            )
+            reasons = list(throttle.get("reasons") or []) + throttle_errors + e2_errors
+            resolved_ny_date = e2_record.get("resolved_ny_date") or ny_date
+            return throttle, _ordered_reasons(reasons), "REGIME_E2", resolved_ny_date
 
     regime_record, regime_errors = _read_latest_regime_record(
         _regime_path(repo_root, ny_date)
@@ -322,6 +343,10 @@ def _throttle_path(repo_root: Path, ny_date: str) -> Path:
 
 def _regime_path(repo_root: Path, ny_date: str) -> Path:
     return repo_root / "ledger" / "REGIME_E1" / f"{ny_date}.jsonl"
+
+
+def _regime_e2_path(repo_root: Path, ny_date: str) -> Path:
+    return repo_root / "ledger" / "REGIME_E2" / f"{ny_date}.jsonl"
 
 
 def _risk_controls_path(repo_root: Path, ny_date: str) -> Path:
@@ -409,6 +434,45 @@ def _regime_to_throttle(regime_label: str | None, confidence: float | None) -> d
     return {
         "schema_version": SCHEMA_VERSION,
         "regime_label": regime_label,
+        "confidence": confidence,
+        "risk_multiplier": _clamp(risk_multiplier),
+        "max_new_positions_multiplier": _clamp(max_new_positions_multiplier),
+        "reasons": reasons,
+    }
+
+
+def _regime_e2_to_throttle(
+    regime_score: float | None,
+    regime_label: str | None,
+    confidence: float | None,
+) -> dict[str, Any]:
+    """E2 continuous-score throttle: regime_score maps linearly to risk."""
+    reasons: list[str] = []
+
+    if regime_score is None:
+        reasons.append("missing_regime")
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "regime_label": regime_label,
+            "regime_score": regime_score,
+            "confidence": confidence,
+            "risk_multiplier": 0.0,
+            "max_new_positions_multiplier": 0.0,
+            "reasons": reasons,
+        }
+
+    risk_multiplier = _clamp(regime_score)
+    max_new_positions_multiplier = _clamp(regime_score)
+
+    if confidence is not None and confidence < 0.6:
+        risk_multiplier *= 0.5
+        max_new_positions_multiplier *= 0.5
+        reasons.append("low_confidence_haircut")
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "regime_label": regime_label,
+        "regime_score": regime_score,
         "confidence": confidence,
         "risk_multiplier": _clamp(risk_multiplier),
         "max_new_positions_multiplier": _clamp(max_new_positions_multiplier),

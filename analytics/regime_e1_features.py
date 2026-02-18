@@ -32,6 +32,11 @@ class RegimeFeatureSet:
     breadth: float
     signals: dict[str, Any]
     inputs_snapshot: dict[str, Any]
+    # E2 extensions (backward-compatible defaults)
+    credit_spread_z: float = 0.0
+    vix_term_structure: float = 0.0
+    gld_relative_strength: float = 0.0
+    tlt_relative_strength: float = 0.0
 
 
 @dataclass(frozen=True)

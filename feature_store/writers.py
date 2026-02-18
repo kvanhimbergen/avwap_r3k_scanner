@@ -60,6 +60,27 @@ def write_feature_partition(
     return parquet_path
 
 
+def write_regime_e2_features(
+    base_dir: Path,
+    date_str: str,
+    features_dict: dict,
+    version: int | None = None,
+) -> Path:
+    """Persist E2 regime features for a single date.
+
+    Wraps the dict as a single-row DataFrame and writes via
+    ``write_feature_partition``.
+    """
+    df = pd.DataFrame([features_dict])
+    return write_feature_partition(
+        base_dir=base_dir,
+        date_str=date_str,
+        feature_type="regime_e2_features",
+        df=df,
+        version=version,
+    )
+
+
 def write_cross_sectional_distributions(
     base_dir: Path,
     date_str: str,

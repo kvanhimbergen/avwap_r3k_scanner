@@ -193,23 +193,23 @@ New flow: build rows -> compute z-scores across day's candidates -> filter to to
 
 ## Phase 4: Multi-Factor Regime Model
 
-**Scope: Large** | **Status: TODO**
+**Scope: Large** | **Status: DONE**
 
 **Objective:** Replace the current E1 classifier (hard thresholds on SPY vol/drawdown/trend/breadth producing discrete RISK_ON/NEUTRAL/RISK_OFF) with a multi-factor model including credit spread proxy (HYG/LQD ratio), VIX term structure, and regime transition smoothing to prevent whipsaw.
 
 ### Tasks
 
-- [ ] Create `analytics/regime_e2_features.py` — Extended feature set: all E1 features + credit_spread (HYG-LQD ratio z-score), vix_term_structure (VIX-VIX3M), cross-asset momentum (GLD, TLT RS)
-- [ ] Create `analytics/regime_e2_classifier.py` — Continuous regime score (0.0-1.0) instead of discrete labels, multi-factor weighting
-- [ ] Create `analytics/regime_transition.py` — Transition smoothing: require N consecutive days of new regime before flipping (prevents single-day whipsaw)
-- [ ] Modify `analytics/regime_e1_features.py` — Add credit and VIX features to `RegimeFeatureSet` (backward compatible with defaults)
-- [ ] Modify `portfolio/risk_controls.py` — `_regime_to_throttle()` accepts continuous regime score; interpolates instead of discrete {1.0, 0.6, 0.2} mapping
-- [ ] Modify `config.py` — Add `REGIME_MODEL_VERSION` (`"e1"` | `"e2"`), `REGIME_TRANSITION_SMOOTHING_DAYS`, `REGIME_CREDIT_SPREAD_LOOKBACK`
-- [ ] Modify `scan_engine.py` — Ensure `BENCHMARK_TICKERS` (HYG, LQD, GLD, TLT) are always backfilled in history cache
-- [ ] Modify `feature_store/writers.py` — Persist regime E2 features
-- [ ] Create `tests/test_regime_e2_features.py`
-- [ ] Create `tests/test_regime_e2_classifier.py`
-- [ ] Create `tests/test_regime_transition.py`
+- [x] Create `analytics/regime_e2_features.py` — Extended feature set: all E1 features + credit_spread (HYG-LQD ratio z-score), vix_term_structure (VIX-VIX3M), cross-asset momentum (GLD, TLT RS)
+- [x] Create `analytics/regime_e2_classifier.py` — Continuous regime score (0.0-1.0) instead of discrete labels, multi-factor weighting
+- [x] Create `analytics/regime_transition.py` — Transition smoothing: require N consecutive days of new regime before flipping (prevents single-day whipsaw)
+- [x] Modify `analytics/regime_e1_features.py` — Add credit and VIX features to `RegimeFeatureSet` (backward compatible with defaults)
+- [x] Modify `portfolio/risk_controls.py` — `_regime_to_throttle()` accepts continuous regime score; interpolates instead of discrete {1.0, 0.6, 0.2} mapping
+- [x] Modify `config.py` — Add `REGIME_MODEL_VERSION` (`"e1"` | `"e2"`), `REGIME_TRANSITION_SMOOTHING_DAYS`, `REGIME_CREDIT_SPREAD_LOOKBACK`
+- [x] Modify `scan_engine.py` — Ensure `BENCHMARK_TICKERS` (HYG, LQD, GLD, TLT) are always backfilled in history cache
+- [x] Modify `feature_store/writers.py` — Persist regime E2 features
+- [x] Create `tests/test_regime_e2_features.py`
+- [x] Create `tests/test_regime_e2_classifier.py`
+- [x] Create `tests/test_regime_transition.py`
 
 ### Regime Transition Smoothing
 
@@ -243,10 +243,10 @@ E1 remains default. `REGIME_MODEL_VERSION=e2` activates new model. Both write to
 
 ### Verification
 
-- [ ] E2 produces fewer regime transitions than E1 on same data
-- [ ] Risk controls smoothly interpolate between regimes
-- [ ] All E1 tests pass (E1 is default)
-- [ ] Fail-open: missing HYG/LQD data degrades gracefully to E1 behavior
+- [x] E2 produces fewer regime transitions than E1 on same data
+- [x] Risk controls smoothly interpolate between regimes
+- [x] All E1 tests pass (E1 is default)
+- [x] Fail-open: missing HYG/LQD data degrades gracefully to E1 behavior
 - [ ] Backtest with E2 shows reduced portfolio volatility during regime transitions
 
 ---

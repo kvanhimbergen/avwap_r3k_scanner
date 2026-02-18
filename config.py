@@ -204,6 +204,11 @@ class CFG:
     BACKTEST_EMBARGO_DAYS: int = 3
     BACKTEST_USE_FEATURE_STORE: bool = False
 
+    # Multi-factor regime model (Phase 4)
+    REGIME_MODEL_VERSION: str = "e1"
+    REGIME_TRANSITION_SMOOTHING_DAYS: int = 5
+    REGIME_CREDIT_SPREAD_LOOKBACK: int = 63
+
     # Cross-sectional scoring (Phase 3)
     CROSS_SECTIONAL_ENABLED: bool = False
     CROSS_SECTIONAL_TOP_DECILE: float = 0.1
