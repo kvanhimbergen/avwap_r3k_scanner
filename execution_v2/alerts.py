@@ -24,6 +24,7 @@ def send_alert(
     message: str,
     level: str = "info",
     symbol: Optional[str] = None,
+    project: str = "AVWAP",
 ) -> None:
     """
     Send an alert. This must never raise.
@@ -37,7 +38,7 @@ def send_alert(
             prefix += f" [{symbol}]"
 
         text = f"{prefix} {title}\n{message}"
-        slack_alert(level.upper(), title, message, component="EXEC_V2")
+        slack_alert(level.upper(), title, message, component="Trading", project=project)
 
     except Exception:
         _safe_print("[alerts] Slack alert failed:")

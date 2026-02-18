@@ -287,6 +287,7 @@ def send_blocked_alert(
     blocked_symbols: list[str],
     reason_codes: list[str],
     slack_sender,
+    project: str = "AVWAP",
 ) -> None:
     if not blocked_symbols:
         return
@@ -296,9 +297,10 @@ def send_blocked_alert(
         "WARNING",
         "Portfolio decision enforcement blocked entries",
         f"enforcement=1 date_ny={date_ny} blocked=[{symbols_str}] reasons=[{reasons_str}]",
-        component="EXECUTION_V2",
+        component="Trading",
         throttle_key="portfolio_decision_enforce_blocked",
         throttle_seconds=300,
+        project=project,
     )
 
 

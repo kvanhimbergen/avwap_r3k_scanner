@@ -1139,6 +1139,7 @@ def _finalize_portfolio_enforcement(
     records: list[dict],
     date_ny: str,
     context: portfolio_decision_enforce.DecisionContext | None,
+    project: str = "AVWAP",
 ) -> None:
     if not context:
         return
@@ -1150,10 +1151,13 @@ def _finalize_portfolio_enforcement(
         blocked_symbols=blocked_symbols,
         reason_codes=reason_codes,
         slack_sender=slack_alert,
+        project=project,
     )
 
 
 def run_once(cfg) -> None:
+    if not hasattr(cfg, "project"):
+        cfg.project = "RAEC 401k" if cfg.execution_mode == "SCHWAB_401K_MANUAL" else "AVWAP"
     if cfg.execution_mode == "ALPACA_PAPER":
         api_key = (os.getenv("APCA_API_KEY_ID") or "").strip()
         api_secret = (os.getenv("APCA_API_SECRET_KEY") or "").strip()
@@ -1453,12 +1457,14 @@ def run_once(cfg) -> None:
             dry_run=(cfg.dry_run if cfg.execution_mode != "PAPER_SIM" else True),
             market_open=market_is_open,
             execution_mode=cfg.execution_mode,
+            project=cfg.project,
         )
         maybe_send_daily_summary(
             dry_run=(cfg.dry_run if cfg.execution_mode != "PAPER_SIM" else True),
             market_open=market_is_open,
             execution_mode=cfg.execution_mode,
             ledger_path=ledger_path,
+            project=cfg.project,
         )
 
         if cfg.execution_mode == "SCHWAB_401K_MANUAL" and not market_is_open:
@@ -1617,7 +1623,7 @@ def run_once(cfg) -> None:
             allowlist = live_gate.parse_allowlist()
             caps = live_gate.CapsConfig.from_env()
             kill_switch_active, kill_reason = live_gate.is_kill_switch_active()
-            live_gate.notify_kill_switch(kill_switch_active)
+            live_gate.notify_kill_switch(kill_switch_active, project=cfg.project)
             paper_active = not kill_switch_active
             paper_reason = "alpaca_paper_enabled" if paper_active else f"kill switch active ({kill_reason})"
             positions_count = None
@@ -1703,8 +1709,8 @@ def run_once(cfg) -> None:
                         live_active = False
                         live_reason = f"positions unavailable ({type(exc).__name__})"
 
-            live_gate.notify_kill_switch(gate_result.kill_switch_active)
-            live_gate.notify_live_status(live_active)
+            live_gate.notify_kill_switch(gate_result.kill_switch_active, project=cfg.project)
+            live_gate.notify_live_status(live_active, project=cfg.project)
 
             mode = "LIVE" if live_active else "DRY_RUN"
             status = "PASS" if live_active else "FAIL"
@@ -2234,6 +2240,7 @@ def run_once(cfg) -> None:
                     records=enforcement_records,
                     date_ny=decision_record["ny_date"],
                     context=enforcement_context,
+                    project=cfg.project,
                 )
                 return
             now_utc = datetime.now(timezone.utc)
@@ -2407,9 +2414,10 @@ def run_once(cfg) -> None:
                             f"SL={intent.stop_loss} TP={intent.take_profit} "
                             f"boh_at={_format_ts(intent.boh_confirmed_at)} reason={candidate_notes}"
                         ),
-                        component="EXECUTION_V2",
+                        component="Trading",
                         throttle_key=f"submit_{intent.symbol}",
                         throttle_seconds=60,
+                        project=cfg.project,
                     )
                     order_info = None
                     if order_id:
@@ -2561,9 +2569,10 @@ def run_once(cfg) -> None:
                         "ERROR",
                         f"Execution error for {intent.symbol}",
                         f"{type(exc).__name__}: {exc}",
-                        component="EXECUTION_V2",
+                        component="Trading",
                         throttle_key=f"submit_error_{intent.symbol}",
                         throttle_seconds=300,
+                        project=cfg.project,
                     )
 
             _log(
@@ -2573,6 +2582,7 @@ def run_once(cfg) -> None:
                 records=enforcement_records,
                 date_ny=decision_record["ny_date"],
                 context=enforcement_context,
+                project=cfg.project,
             )
             return
 
@@ -2745,9 +2755,10 @@ def run_once(cfg) -> None:
                         "SL=managed TP=managed "
                         f"boh_at={_format_ts(intent.boh_confirmed_at)} reason={candidate_notes}"
                     ),
-                    component="EXECUTION_V2",
+                    component="Trading",
                     throttle_key=f"submit_{intent.symbol}",
                     throttle_seconds=60,
+                    project=cfg.project,
                 )
                 if order_id_str and not effective_dry_run:
                     store.update_external_order_id(key, order_id_str)
@@ -2785,15 +2796,17 @@ def run_once(cfg) -> None:
                     "ERROR",
                     f"Execution error for {intent.symbol}",
                     f"{type(exc).__name__}: {exc}",
-                    component="EXECUTION_V2",
+                    component="Trading",
                     throttle_key=f"submit_error_{intent.symbol}",
                     throttle_seconds=300,
+                    project=cfg.project,
                 )
 
         _finalize_portfolio_enforcement(
             records=enforcement_records,
             date_ny=decision_record["ny_date"],
             context=enforcement_context,
+            project=cfg.project,
         )
         trim_intents = store.pop_trim_intents()
         if not trim_intents:
@@ -2861,9 +2874,10 @@ def run_once(cfg) -> None:
                         f"reason={reason} qty={total_qty} "
                         f"price={current_price} stop={stop_price}"
                     ),
-                    component="EXECUTION_V2",
+                    component="Trading",
                     throttle_key=f"close_{symbol}",
                     throttle_seconds=60,
+                    project=cfg.project,
                 )
                 continue
 
@@ -3016,9 +3030,10 @@ def run_once(cfg) -> None:
                     f"reason={reason} qty={qty} pct={pct:.2f} "
                     f"price={current_price} stop={stop_price}"
                 ),
-                component="EXECUTION_V2",
+                component="Trading",
                 throttle_key=f"trim_{symbol}_{reason}",
                 throttle_seconds=60,
+                project=cfg.project,
             )
     except Exception as exc:
         errors.append(
@@ -3105,6 +3120,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     cfg = _parse_args()
     cfg.execution_mode = _resolve_execution_mode()
+    cfg.project = "RAEC 401k" if cfg.execution_mode == "SCHWAB_401K_MANUAL" else "AVWAP"
     if cfg.config_check:
         ok, issues = run_config_check()
         if ok:
@@ -3123,11 +3139,12 @@ def main() -> None:
 
     slack_alert(
         "INFO",
-        "Execution V2 started",
+        "Execution started",
         f"execution_mode={cfg.execution_mode} dry_run={cfg.dry_run} poll_seconds={cfg.poll_seconds}",
-        component="EXECUTION_V2",
+        component="Trading",
         throttle_key="execution_v2_start",
         throttle_seconds=300,
+        project=cfg.project,
     )
 
     if cfg.run_once:
@@ -3142,11 +3159,12 @@ def main() -> None:
             _log(f"ERROR: unexpected exception: {exc}")
             slack_alert(
                 "ERROR",
-                "Execution V2 exception",
+                "Execution exception",
                 f"{type(exc).__name__}: {exc}",
-                component="EXECUTION_V2",
+                component="Trading",
                 throttle_key="execution_v2_exception",
                 throttle_seconds=300,
+                project=cfg.project,
             )
 
         if cfg.run_once:

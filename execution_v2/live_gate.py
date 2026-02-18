@@ -167,7 +167,7 @@ def resolve_live_mode(
     )
 
 
-def notify_live_status(live_enabled: bool) -> None:
+def notify_live_status(live_enabled: bool, *, project: str = "AVWAP") -> None:
     from alerts.slack import slack_alert
 
     global _LAST_LIVE_ENABLED
@@ -178,14 +178,15 @@ def notify_live_status(live_enabled: bool) -> None:
             "INFO",
             "Live trading enabled",
             "Live trading gate passed. Orders will be submitted live.",
-            component="EXECUTION_V2",
+            component="Trading",
             throttle_key="live_trading_enabled",
             throttle_seconds=300,
+            project=project,
         )
     _LAST_LIVE_ENABLED = live_enabled
 
 
-def notify_kill_switch(active: bool) -> None:
+def notify_kill_switch(active: bool, *, project: str = "AVWAP") -> None:
     from alerts.slack import slack_alert
 
     global _LAST_KILL_SWITCH_ACTIVE
@@ -196,9 +197,10 @@ def notify_kill_switch(active: bool) -> None:
             "WARNING",
             "Kill switch active",
             "Kill switch is active. Live orders are disabled.",
-            component="EXECUTION_V2",
+            component="Trading",
             throttle_key="kill_switch_active",
             throttle_seconds=300,
+            project=project,
         )
     _LAST_KILL_SWITCH_ACTIVE = active
 

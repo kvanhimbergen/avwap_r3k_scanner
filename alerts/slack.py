@@ -86,6 +86,7 @@ def slack_alert(
     *,
     throttle_key: Optional[str] = None,
     throttle_seconds: int = 0,
+    project: str = "AVWAP",
 ) -> None:
     """
     Non-blocking Slack alert via Incoming Webhook.
@@ -105,7 +106,7 @@ def slack_alert(
         if throttle_key and should_throttle(throttle_key, throttle_seconds):
             return
 
-        prefix = f"[AVWAP][{component}][{level}]"
+        prefix = f"[{project}][{component}][{level}]"
         text = f"{prefix} {title}\n{message}".strip()
 
         payload: dict = {"text": text}
@@ -134,6 +135,7 @@ def send_verbose_alert(
     *,
     throttle_key: Optional[str] = None,
     throttle_seconds: int = 0,
+    project: str = "AVWAP",
 ) -> None:
     try:
         if not slack_verbose_enabled():
@@ -145,6 +147,7 @@ def send_verbose_alert(
             component=component,
             throttle_key=throttle_key,
             throttle_seconds=throttle_seconds,
+            project=project,
         )
     except Exception as exc:
         _debug(f"Verbose slack alert suppressed ({type(exc).__name__}: {exc})")
@@ -231,12 +234,26 @@ def build_dry_run_daily_summary(ledger_path: str, date_ny: str) -> str:
     return "\n".join(lines)
 
 
+_MODE_DISPLAY_NAMES: dict[str, str] = {
+    "SCHWAB_401K_MANUAL": "Schwab 401k (Manual)",
+    "ALPACA_PAPER": "Alpaca Paper Trading",
+    "DRY_RUN": "Dry Run",
+    "PAPER_SIM": "Paper Simulation",
+    "LIVE": "Live",
+}
+
+
+def _display_mode(mode: str) -> str:
+    return _MODE_DISPLAY_NAMES.get(mode, mode)
+
+
 def maybe_send_heartbeat(
     *,
     dry_run: bool,
     market_open: bool,
-    component: str = "EXECUTION_V2",
+    component: str = "Trading",
     execution_mode: Optional[str] = None,
+    project: str = "AVWAP",
 ) -> None:
     minutes = int(os.getenv("SLACK_HEARTBEAT_MINUTES", "60"))
     if minutes <= 0:
@@ -246,20 +263,21 @@ def maybe_send_heartbeat(
         mode = execution_mode
     else:
         mode = "DRY_RUN" if dry_run else "LIVE"
-    market_status = "OPEN" if market_open else "CLOSED"
+    market_status = "Open" if market_open else "Closed"
     freshness = "PASS" if status else "FAIL"
     message = (
-        f"mode={mode}\n"
+        f"mode={_display_mode(mode)}\n"
         f"market={market_status}\n"
         f"watchlist_freshness={freshness} ({detail})"
     )
     slack_alert(
         "INFO",
-        "Execution heartbeat",
+        "Heartbeat",
         message,
         component=component,
         throttle_key="slack_heartbeat",
         throttle_seconds=minutes * 60,
+        project=project,
     )
 
 
@@ -281,9 +299,10 @@ def maybe_send_daily_summary(
     *,
     dry_run: bool,
     market_open: bool,
-    component: str = "EXECUTION_V2",
+    component: str = "Trading",
     execution_mode: Optional[str] = None,
     ledger_path: Optional[str] = None,
+    project: str = "AVWAP",
 ) -> None:
     global _LAST_DAILY_SUMMARY_DATE
     global _LAST_MARKET_OPEN
@@ -306,13 +325,14 @@ def maybe_send_daily_summary(
         return
 
     resolved_mode = execution_mode or ("DRY_RUN" if dry_run else "LIVE")
+    display = _display_mode(resolved_mode)
     if resolved_mode == "DRY_RUN":
         ledger_path = ledger_path or os.getenv(
             "DRY_RUN_LEDGER_PATH",
             "/root/avwap_r3k_scanner/state/dry_run_ledger.json",
         )
         message = build_dry_run_daily_summary(ledger_path, today)
-        title = "Daily execution summary (DRY_RUN)"
+        title = f"Daily summary ({display})"
     elif resolved_mode == "ALPACA_PAPER":
         from execution_v2 import alpaca_paper
 
@@ -326,18 +346,18 @@ def maybe_send_daily_summary(
         message = "\n".join(
             [
                 f"Date (NY): {today}",
-                f"Execution mode: {resolved_mode}",
+                f"Execution mode: {display}",
                 f"Orders submitted: {summary['orders']}",
                 f"Fills received: {summary['fills']}",
                 f"Ledger: {summary['ledger_path']}",
             ]
         )
-        title = "Daily execution summary (ALPACA_PAPER)"
+        title = f"Daily summary ({display})"
     else:
         message = "Date (NY): {date}\nLive summary unavailable (no persistent live ledger found).".format(
             date=today
         )
-        title = "Daily execution summary (LIVE)"
+        title = f"Daily summary ({display})"
 
-    slack_alert("INFO", title, message, component=component)
+    slack_alert("INFO", title, message, component=component, project=project)
     _LAST_DAILY_SUMMARY_DATE = today

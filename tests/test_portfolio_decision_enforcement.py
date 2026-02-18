@@ -145,7 +145,7 @@ def test_slack_alert_summary_ordering() -> None:
 
     calls: list[tuple] = []
 
-    def _slack_sender(level, title, message, component, throttle_key, throttle_seconds) -> None:
+    def _slack_sender(level, title, message, component, throttle_key, throttle_seconds, **kwargs) -> None:
         calls.append((level, title, message, component, throttle_key, throttle_seconds))
 
     portfolio_decision_enforce.send_blocked_alert(
