@@ -10,6 +10,19 @@ async function get<T>(path: string): Promise<ApiEnvelope<T>> {
   return (await response.json()) as ApiEnvelope<T>;
 }
 
+async function post<T>(path: string, body: unknown): Promise<ApiEnvelope<T>> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `API ${path} failed with status ${response.status}`);
+  }
+  return (await response.json()) as ApiEnvelope<T>;
+}
+
 export const api = {
   health: () => get<KeyValue>("/api/v1/health"),
   freshness: () => get<{ rows: FreshnessRow[] }>("/api/v1/freshness"),
@@ -69,6 +82,16 @@ export const api = {
     get<KeyValue>(`/api/v1/portfolio/history${toQuery(args ?? {})}`),
 
   strategyMatrix: () => get<KeyValue>("/api/v1/strategies/matrix"),
+
+  postFills: (body: {
+    date: string;
+    strategy_id: string;
+    fees: number;
+    notes: string | null;
+    fills: Array<{ side: string; symbol: string; qty: number | null; price: number }>;
+  }) => post<KeyValue>("/api/v1/fills", body),
+
+  getFills: (date: string) => get<KeyValue>(`/api/v1/fills${toQuery({ date })}`),
 };
 
 function toQuery(params: Record<string, unknown>): string {

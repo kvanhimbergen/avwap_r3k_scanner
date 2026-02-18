@@ -29,6 +29,7 @@ const NAV_SECTIONS = [
     items: [
       { to: "/raec", label: "Dashboard" },
       { to: "/raec/readiness", label: "Readiness" },
+      { to: "/raec/log-fills", label: "Log Fills" },
     ],
   },
   {

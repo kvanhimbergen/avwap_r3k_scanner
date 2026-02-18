@@ -5,6 +5,7 @@ import { BacktestsPage } from "./pages/BacktestsPage";
 import { DecisionsPage } from "./pages/DecisionsPage";
 import { HelpPage } from "./pages/HelpPage";
 import { JournalPage } from "./pages/JournalPage";
+import { LogFillsPage } from "./pages/LogFillsPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { PnlPage } from "./pages/PnlPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
@@ -29,6 +30,7 @@ export function App() {
         <Route path="/backtests" element={<BacktestsPage />} />
         <Route path="/raec" element={<RaecDashboardPage />} />
         <Route path="/raec/readiness" element={<ReadinessPage />} />
+        <Route path="/raec/log-fills" element={<LogFillsPage />} />
         <Route path="/journal" element={<JournalPage />} />
         <Route path="/pnl" element={<PnlPage />} />
         <Route path="/portfolio" element={<PortfolioPage />} />

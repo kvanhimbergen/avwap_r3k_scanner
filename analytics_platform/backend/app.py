@@ -3,18 +3,51 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import contextlib
+import json
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, field_validator
 
 from analytics_platform.backend.api import queries
 from analytics_platform.backend.config import Settings
 from analytics_platform.backend.db import connect_ro
 from analytics_platform.backend.models import ApiEnvelope, BuildResult, utc_now_iso
 from analytics_platform.backend.readmodels.build_readmodels import build_readmodels
+
+
+# ── Pydantic models for POST /api/v1/fills ──────────────────────
+class FillItem(BaseModel):
+    side: str
+    symbol: str
+    qty: Optional[float] = None
+    price: float = Field(gt=0)
+
+    @field_validator("side")
+    @classmethod
+    def _normalise_side(cls, v: str) -> str:
+        v = v.strip().upper()
+        if v not in ("BUY", "SELL"):
+            raise ValueError("side must be BUY or SELL")
+        return v
+
+    @field_validator("symbol")
+    @classmethod
+    def _normalise_symbol(cls, v: str) -> str:
+        return v.strip().upper()
+
+
+class PostFillsRequest(BaseModel):
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    strategy_id: str = "RAEC_401K_COORD"
+    fees: float = 0.0
+    notes: Optional[str] = None
+    fills: list[FillItem] = Field(min_length=1)
 
 
 class AnalyticsRuntime:
@@ -81,7 +114,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=["http://localhost:8788", "http://127.0.0.1:8788", "*"],
         allow_credentials=False,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 
@@ -335,6 +368,86 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             media_type="text/csv",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    # ── Manual fills endpoints ────────────────────────────────
+
+    @app.post("/api/v1/fills")
+    async def post_fills(body: PostFillsRequest) -> dict:
+        from execution_v2 import book_ids
+        from tools.log_fills import (
+            append_records,
+            build_manual_fill_id,
+            load_existing_fill_ids,
+        )
+
+        runtime: AnalyticsRuntime = app.state.runtime
+        repo_root = runtime.settings.repo_root
+        book_id = book_ids.SCHWAB_401K_MANUAL
+        date_ny = body.date
+        ts_utc = datetime.now(timezone.utc).isoformat()
+
+        ledger_path = repo_root / "ledger" / "MANUAL_FILLS" / f"{date_ny}.jsonl"
+        existing_ids = load_existing_fill_ids(ledger_path)
+
+        records: list[dict] = []
+        skipped = 0
+        for fill in body.fills:
+            fill_id = build_manual_fill_id(
+                date_ny=date_ny,
+                book_id=book_id,
+                strategy_id=body.strategy_id,
+                symbol=fill.symbol,
+                side=fill.side,
+                qty=fill.qty,
+                price=fill.price,
+            )
+            if fill_id in existing_ids:
+                skipped += 1
+                continue
+            existing_ids.add(fill_id)
+            record = {
+                "book_id": book_id,
+                "date_ny": date_ny,
+                "fees": body.fees,
+                "fill_id": fill_id,
+                "notes": body.notes,
+                "price": fill.price,
+                "qty": fill.qty,
+                "record_type": "MANUAL_FILL",
+                "schema_version": 1,
+                "side": fill.side,
+                "strategy_id": body.strategy_id,
+                "symbol": fill.symbol,
+                "ts_utc": ts_utc,
+            }
+            records.append(record)
+
+        if records:
+            await asyncio.to_thread(append_records, ledger_path, records)
+
+        response_records = [
+            {"fill_id": r["fill_id"], "symbol": r["symbol"], "side": r["side"], "qty": r["qty"], "price": r["price"]}
+            for r in records
+        ]
+        return _envelope(runtime, {"logged": len(records), "skipped": skipped, "records": response_records})
+
+    @app.get("/api/v1/fills")
+    def get_fills(
+        date: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        repo_root = runtime.settings.repo_root
+        ledger_path = repo_root / "ledger" / "MANUAL_FILLS" / f"{date}.jsonl"
+
+        records: list[dict] = []
+        if ledger_path.exists():
+            text = ledger_path.read_text(encoding="utf-8")
+            for line in text.splitlines():
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+
+        return _envelope(runtime, {"records": records})
 
     @app.get("/")
     def root() -> JSONResponse:
