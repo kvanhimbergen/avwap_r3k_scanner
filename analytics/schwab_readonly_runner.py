@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from analytics.schwab_readonly_adapter import SchwabReadonlyFixtureAdapter
@@ -35,11 +36,12 @@ def _load_fixture_meta(fixture_dir: Path) -> dict:
 def run_snapshot_and_reconciliation(
     *,
     repo_root: Path,
-    fixture_dir: Path,
+    fixture_dir: Path | None = None,
     book_id: str,
     as_of_utc: str,
     ny_date: str | None = None,
     require_enabled: bool = True,
+    live: bool = False,
 ) -> SchwabReadonlyRunResult:
     config = load_schwab_readonly_oauth_config()
     if require_enabled and not config.enabled:
@@ -49,11 +51,28 @@ def run_snapshot_and_reconciliation(
     if ny_date and ny_date != derived_ny_date:
         raise RuntimeError("ny_date does not match as_of_utc")
 
-    adapter = SchwabReadonlyFixtureAdapter.from_fixture_dir(
-        fixture_dir,
-        book_id=book_id,
-        as_of_utc=as_of_utc,
-    )
+    if live:
+        from analytics.schwab_readonly_live_adapter import SchwabReadonlyLiveAdapter
+        from analytics.schwab_token_health import check_token_health
+
+        health = check_token_health(config.token_path)
+        if not health.healthy:
+            raise RuntimeError(f"Schwab token unhealthy: {health.reason}")
+
+        adapter = SchwabReadonlyLiveAdapter.from_config(
+            config,
+            book_id=book_id,
+            as_of_utc=as_of_utc,
+        )
+    else:
+        if fixture_dir is None:
+            raise RuntimeError("fixture_dir required when not using --live")
+        adapter = SchwabReadonlyFixtureAdapter.from_fixture_dir(
+            fixture_dir,
+            book_id=book_id,
+            as_of_utc=as_of_utc,
+        )
+
     account_snapshot, positions_snapshot, orders_snapshot = adapter.load_all_snapshots()
 
     snapshot_result = write_snapshot_records(
@@ -78,30 +97,45 @@ def run_snapshot_and_reconciliation(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Schwab read-only snapshot ingestion + reconciliation")
-    parser.add_argument("--fixture-dir", required=True, help="Path to Schwab read-only fixtures")
+
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--fixture-dir", help="Path to Schwab read-only fixtures")
+    source_group.add_argument("--live", action="store_true", help="Use live Schwab API")
+
     parser.add_argument("--repo-root", default=str(Path(__file__).resolve().parents[1]))
     parser.add_argument("--book-id", default="SCHWAB_401K_MANUAL")
     parser.add_argument("--as-of-utc", default="")
     parser.add_argument("--ny-date", default="")
 
     args = parser.parse_args()
-    fixture_dir = Path(args.fixture_dir)
-    meta = _load_fixture_meta(fixture_dir)
 
-    as_of_utc = args.as_of_utc.strip() or str(meta.get("as_of_utc") or "").strip()
-    if not as_of_utc:
-        parser.error("--as-of-utc required (or include as_of_utc in fixtures meta.json)")
-
-    ny_date = args.ny_date.strip() or str(meta.get("ny_date") or "").strip() or None
-
-    result = run_snapshot_and_reconciliation(
-        repo_root=Path(args.repo_root),
-        fixture_dir=fixture_dir,
-        book_id=args.book_id,
-        as_of_utc=as_of_utc,
-        ny_date=ny_date,
-        require_enabled=True,
-    )
+    if args.live:
+        as_of_utc = args.as_of_utc.strip() or datetime.now(tz=timezone.utc).isoformat()
+        ny_date = args.ny_date.strip() or None
+        result = run_snapshot_and_reconciliation(
+            repo_root=Path(args.repo_root),
+            book_id=args.book_id,
+            as_of_utc=as_of_utc,
+            ny_date=ny_date,
+            require_enabled=True,
+            live=True,
+        )
+    else:
+        fixture_dir = Path(args.fixture_dir)
+        meta = _load_fixture_meta(fixture_dir)
+        as_of_utc = args.as_of_utc.strip() or str(meta.get("as_of_utc") or "").strip()
+        if not as_of_utc:
+            parser.error("--as-of-utc required (or include as_of_utc in fixtures meta.json)")
+        ny_date = args.ny_date.strip() or str(meta.get("ny_date") or "").strip() or None
+        result = run_snapshot_and_reconciliation(
+            repo_root=Path(args.repo_root),
+            fixture_dir=fixture_dir,
+            book_id=args.book_id,
+            as_of_utc=as_of_utc,
+            ny_date=ny_date,
+            require_enabled=True,
+            live=False,
+        )
 
     print(f"ledger_path={result.ledger_path}")
     print(f"snapshots_written={result.snapshots_written}")

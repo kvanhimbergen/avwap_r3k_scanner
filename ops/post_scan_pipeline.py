@@ -7,9 +7,11 @@ Runs after the daily AVWAP scan completes.  Executes these steps in order:
 2. regime_throttle_writer → ledger/PORTFOLIO_THROTTLE/{date}.jsonl
 3. s2_letf_orb_aggro      → ledger/STRATEGY_SIGNALS/S2_LETF_ORB_AGGRO/{date}.jsonl
 4. raec_401k_coordinator   → ledger/RAEC_REBALANCE/RAEC_401K_COORD/{date}.jsonl
+5. schwab_readonly_sync   → (optional) live Schwab account sync
 
 Steps 1→2 are sequential (throttle reads regime output).
 Steps 3 and 4 are independent but run sequentially for log clarity.
+Step 5 is optional — fails gracefully if credentials are missing or API is down.
 
 Usage:
     python ops/post_scan_pipeline.py                       # auto-detect today (NY)
@@ -54,6 +56,15 @@ STEPS = [
             "--asof", date,
         ],
     },
+    {
+        "name": "schwab_readonly_sync",
+        "optional": True,
+        "args": lambda date: [
+            sys.executable, "-m", "analytics.schwab_readonly_runner",
+            "--live",
+            "--ny-date", date,
+        ],
+    },
 ]
 
 
@@ -67,13 +78,18 @@ def run_pipeline(date: str, *, dry_run: bool = False) -> None:
         if dry_run and step["name"] == "raec_401k_coordinator":
             cmd.append("--dry-run")
         label = f"[{i}/{len(STEPS)}] {step['name']}"
+        optional = step.get("optional", False)
         print(f"{label}: running ...", flush=True)
         print(f"  cmd: {' '.join(cmd)}", flush=True)
         result = subprocess.run(cmd, check=False)
         if result.returncode != 0:
-            print(f"{label}: FAILED (exit {result.returncode})", flush=True)
-            sys.exit(result.returncode)
-        print(f"{label}: OK", flush=True)
+            if optional:
+                print(f"{label}: SKIPPED (optional, exit {result.returncode})", flush=True)
+            else:
+                print(f"{label}: FAILED (exit {result.returncode})", flush=True)
+                sys.exit(result.returncode)
+        else:
+            print(f"{label}: OK", flush=True)
     print("Pipeline complete.", flush=True)
 
 
