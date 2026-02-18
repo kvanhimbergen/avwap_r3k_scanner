@@ -52,6 +52,12 @@ export const api = {
 
   pnl: (args?: { start?: string; end?: string; strategy_id?: string }) =>
     get<KeyValue>(`/api/v1/pnl${toQuery(args ?? {})}`),
+
+  slippage: (args?: { start?: string; end?: string; strategy_id?: string }) =>
+    get<KeyValue>(`/api/v1/execution/slippage${toQuery(args ?? {})}`),
+
+  tradeAnalytics: (args?: { start?: string; end?: string; strategy_id?: string }) =>
+    get<KeyValue>(`/api/v1/analytics/trades${toQuery(args ?? {})}`),
 };
 
 function toQuery(params: Record<string, unknown>): string {

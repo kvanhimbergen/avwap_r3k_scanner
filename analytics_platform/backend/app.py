@@ -253,6 +253,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload = queries.get_pnl(conn, start, end, strategy_id)
         return _envelope(runtime, payload)
 
+    @app.get("/api/v1/execution/slippage")
+    def execution_slippage(
+        start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        strategy_id: str | None = None,
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_slippage_dashboard(conn, start, end, strategy_id)
+        return _envelope(runtime, payload)
+
+    @app.get("/api/v1/analytics/trades")
+    def analytics_trades(
+        start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        strategy_id: str | None = None,
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_trade_analytics(conn, start, end, strategy_id)
+        return _envelope(runtime, payload)
+
     @app.get("/api/v1/exports/{dataset}.csv")
     def export_dataset(
         dataset: str,

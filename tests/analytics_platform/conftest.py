@@ -179,6 +179,59 @@ def sample_repo(tmp_path: Path) -> Path:
         json.dumps(raec_coordinator_run) + "\n", encoding="utf-8"
     )
 
+    # --- Execution slippage fixture ---
+    (tmp_path / "ledger" / "EXECUTION_SLIPPAGE").mkdir(parents=True)
+    slippage_records = [
+        {"schema_version":1,"record_type":"EXECUTION_SLIPPAGE","date_ny":"2026-02-10","symbol":"AAPL","strategy_id":"S1_AVWAP_CORE","expected_price":185.50,"ideal_fill_price":185.45,"actual_fill_price":185.52,"slippage_bps":3.78,"adv_shares_20d":55000000.0,"liquidity_bucket":"mega","fill_ts_utc":"2026-02-10T15:30:00+00:00","time_of_day_bucket":"10:30-11:00"},
+        {"schema_version":1,"record_type":"EXECUTION_SLIPPAGE","date_ny":"2026-02-10","symbol":"CRWD","strategy_id":"S1_AVWAP_CORE","expected_price":320.00,"ideal_fill_price":319.80,"actual_fill_price":320.45,"slippage_bps":20.32,"adv_shares_20d":900000.0,"liquidity_bucket":"mid","fill_ts_utc":"2026-02-10T14:45:00+00:00","time_of_day_bucket":"09:45-10:00"},
+        {"schema_version":1,"record_type":"EXECUTION_SLIPPAGE","date_ny":"2026-02-10","symbol":"TQQQ","strategy_id":"S2_LETF_ORB_AGGRO","expected_price":75.00,"ideal_fill_price":74.95,"actual_fill_price":75.08,"slippage_bps":17.35,"adv_shares_20d":3500000.0,"liquidity_bucket":"large","fill_ts_utc":"2026-02-10T14:35:00+00:00","time_of_day_bucket":"09:35-10:00"},
+    ]
+    (tmp_path / "ledger" / "EXECUTION_SLIPPAGE" / "2026-02-10.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in slippage_records) + "\n", encoding="utf-8"
+    )
+
+    # --- Portfolio risk attribution fixture ---
+    (tmp_path / "ledger" / "PORTFOLIO_RISK_ATTRIBUTION").mkdir(parents=True)
+    risk_attribution_record = {
+        "record_type": "PORTFOLIO_RISK_ATTRIBUTION",
+        "schema_version": 1,
+        "date_ny": "2026-02-10",
+        "ts_utc": "2026-02-10T21:00:00+00:00",
+        "decision_id": "risk-attr-001",
+        "strategy_id": "S1_AVWAP_CORE",
+        "symbol": "AAPL",
+        "action": "SIZE_REDUCE",
+        "reason_codes": ["regime_transition", "vol_spike"],
+        "pct_delta": -15.0,
+        "baseline_exposure": 50000.0,
+    }
+    (tmp_path / "ledger" / "PORTFOLIO_RISK_ATTRIBUTION" / "2026-02-10.jsonl").write_text(
+        json.dumps(risk_attribution_record) + "\n", encoding="utf-8"
+    )
+
+    # --- Portfolio snapshot fixture ---
+    (tmp_path / "analytics" / "artifacts" / "portfolio_snapshots").mkdir(parents=True, exist_ok=True)
+    portfolio_snapshot = {
+        "schema_version": 2,
+        "date_ny": "2026-02-10",
+        "run_id": "fixture-run-001",
+        "strategy_ids": ["S1_AVWAP_CORE", "S2_LETF_ORB_AGGRO"],
+        "capital": {"total": 100000.0, "cash": 45000.0, "invested": 55000.0},
+        "gross_exposure": 55000.0,
+        "net_exposure": 42000.0,
+        "positions": [
+            {"strategy_id": "S1_AVWAP_CORE", "symbol": "AAPL", "qty": 100, "avg_price": 180.0, "mark_price": 185.50, "notional": 18550.0},
+            {"strategy_id": "S1_AVWAP_CORE", "symbol": "MSFT", "qty": 50, "avg_price": 410.0, "mark_price": 420.0, "notional": 21000.0},
+            {"strategy_id": "S2_LETF_ORB_AGGRO", "symbol": "TQQQ", "qty": 200, "avg_price": 75.0, "mark_price": 77.25, "notional": 15450.0},
+        ],
+        "pnl": {"realized_today": 150.0, "unrealized": 2000.0, "fees_today": 2.50},
+        "metrics": {},
+        "provenance": {"ledger_paths": [], "input_hashes": {}},
+    }
+    (tmp_path / "analytics" / "artifacts" / "portfolio_snapshots" / "2026-02-10.json").write_text(
+        json.dumps(portfolio_snapshot, indent=2) + "\n", encoding="utf-8"
+    )
+
     return tmp_path
 
 

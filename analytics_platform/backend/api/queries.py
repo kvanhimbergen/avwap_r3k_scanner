@@ -316,6 +316,9 @@ EXPORT_TABLES = {
     "raec_allocations": ("raec_allocations", "ny_date"),
     "raec_intents": ("raec_intents", "ny_date"),
     "raec_coordinator_runs": ("raec_coordinator_runs", "ny_date"),
+    "execution_slippage": ("execution_slippage", "date_ny"),
+    "portfolio_snapshots": ("portfolio_snapshots", "date_ny"),
+    "portfolio_positions": ("portfolio_positions", "date_ny"),
 }
 
 
@@ -644,4 +647,195 @@ def get_pnl(conn, start: str | None, end: str | None, strategy_id: str | None = 
     return {
         "by_strategy": by_strategy,
         "allocation_drift": drift,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Slippage Dashboard
+# ---------------------------------------------------------------------------
+
+def _slippage_where(
+    start: str | None, end: str | None, strategy_id: str | None
+) -> tuple[str, list[Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if start:
+        clauses.append("date_ny >= ?")
+        params.append(start)
+    if end:
+        clauses.append("date_ny <= ?")
+        params.append(end)
+    if strategy_id:
+        clauses.append("strategy_id = ?")
+        params.append(strategy_id)
+    if not clauses:
+        return "", params
+    return " WHERE " + " AND ".join(clauses), params
+
+
+def get_slippage_dashboard(
+    conn, start: str | None, end: str | None, strategy_id: str | None = None
+) -> dict[str, Any]:
+    where, params = _slippage_where(start, end, strategy_id)
+
+    summary = _rows(
+        conn,
+        f"""
+        SELECT
+            COUNT(*) AS total,
+            AVG(slippage_bps) AS mean_bps,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY slippage_bps) AS median_bps,
+            PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY slippage_bps) AS p95_bps
+        FROM execution_slippage
+        {where}
+        """,
+        params,
+    )
+
+    by_bucket = _rows(
+        conn,
+        f"""
+        SELECT liquidity_bucket,
+               COUNT(*) AS count,
+               AVG(slippage_bps) AS mean_bps,
+               MIN(slippage_bps) AS min_bps,
+               MAX(slippage_bps) AS max_bps
+        FROM execution_slippage
+        {where}
+        GROUP BY liquidity_bucket
+        ORDER BY liquidity_bucket
+        """,
+        params,
+    )
+
+    by_time = _rows(
+        conn,
+        f"""
+        SELECT time_of_day_bucket,
+               COUNT(*) AS count,
+               AVG(slippage_bps) AS mean_bps,
+               MIN(slippage_bps) AS min_bps,
+               MAX(slippage_bps) AS max_bps
+        FROM execution_slippage
+        {where}
+        GROUP BY time_of_day_bucket
+        ORDER BY time_of_day_bucket
+        """,
+        params,
+    )
+
+    by_symbol = _rows(
+        conn,
+        f"""
+        SELECT symbol,
+               COUNT(*) AS count,
+               AVG(slippage_bps) AS mean_bps
+        FROM execution_slippage
+        {where}
+        GROUP BY symbol
+        ORDER BY ABS(AVG(slippage_bps)) DESC
+        LIMIT 10
+        """,
+        params,
+    )
+
+    trend = _rows(
+        conn,
+        f"""
+        SELECT date_ny,
+               AVG(slippage_bps) AS mean_bps,
+               COUNT(*) AS count
+        FROM execution_slippage
+        {where}
+        GROUP BY date_ny
+        ORDER BY date_ny
+        """,
+        params,
+    )
+
+    return {
+        "summary": summary[0] if summary else {},
+        "by_bucket": by_bucket,
+        "by_time": by_time,
+        "by_symbol": by_symbol,
+        "trend": trend,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Trade Analytics
+# ---------------------------------------------------------------------------
+
+def get_trade_analytics(
+    conn, start: str | None, end: str | None, strategy_id: str | None = None
+) -> dict[str, Any]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if start:
+        clauses.append("ny_date >= ?")
+        params.append(start)
+    if end:
+        clauses.append("ny_date <= ?")
+        params.append(end)
+    if strategy_id:
+        clauses.append("strategy_id = ?")
+        params.append(strategy_id)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+
+    combined_cte = f"""
+        WITH combined AS (
+            SELECT strategy_id, symbol, side, ny_date FROM decision_intents
+            UNION ALL
+            SELECT strategy_id, symbol, side, ny_date FROM raec_intents
+        )
+    """
+
+    per_strategy = _rows(
+        conn,
+        f"""
+        {combined_cte}
+        SELECT strategy_id,
+               COUNT(*) AS trade_count,
+               COUNT(DISTINCT symbol) AS unique_symbols,
+               SUM(CASE WHEN side='BUY' THEN 1 ELSE 0 END) AS buys,
+               SUM(CASE WHEN side='SELL' THEN 1 ELSE 0 END) AS sells
+        FROM combined
+        {where}
+        GROUP BY strategy_id
+        ORDER BY trade_count DESC
+        """,
+        params,
+    )
+
+    daily_frequency = _rows(
+        conn,
+        f"""
+        {combined_cte}
+        SELECT ny_date, COUNT(*) AS count
+        FROM combined
+        {where}
+        GROUP BY ny_date
+        ORDER BY ny_date
+        """,
+        params,
+    )
+
+    symbol_concentration = _rows(
+        conn,
+        f"""
+        {combined_cte}
+        SELECT symbol, COUNT(*) AS count
+        FROM combined
+        {where}
+        GROUP BY symbol
+        ORDER BY count DESC
+        LIMIT 15
+        """,
+        params,
+    )
+
+    return {
+        "per_strategy": per_strategy,
+        "daily_frequency": daily_frequency,
+        "symbol_concentration": symbol_concentration,
     }

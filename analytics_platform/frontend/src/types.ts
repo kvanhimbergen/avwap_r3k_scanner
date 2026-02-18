@@ -78,3 +78,37 @@ export interface AllocationSnapshot {
   weight_pct: number;
   alloc_type: string;
 }
+
+export interface SlippageSummary {
+  mean_bps: number;
+  median_bps: number;
+  p95_bps: number;
+  total: number;
+}
+
+export interface SlippageBucket {
+  liquidity_bucket: string;
+  count: number;
+  mean_bps: number;
+  min_bps: number;
+  max_bps: number;
+}
+
+export interface SlippageTimeBucket {
+  time_of_day_bucket: string;
+  count: number;
+  mean_bps: number;
+}
+
+export interface TradeAnalyticsStrategy {
+  strategy_id: string;
+  trade_count: number;
+  unique_symbols: number;
+  buys: number;
+  sells: number;
+}
+
+export interface SymbolConcentration {
+  symbol: string;
+  count: number;
+}

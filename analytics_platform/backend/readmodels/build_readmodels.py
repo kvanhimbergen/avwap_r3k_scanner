@@ -102,6 +102,11 @@ def build_readmodels(settings: Settings) -> BuildResult:
     raec_intent_rows: list[dict[str, Any]] = []
     raec_coordinator_rows: list[dict[str, Any]] = []
 
+    slippage_rows: list[dict[str, Any]] = []
+    snapshot_rows: list[dict[str, Any]] = []
+    position_rows: list[dict[str, Any]] = []
+    risk_attr_rows: list[dict[str, Any]] = []
+
     backtest_run_rows: list[dict[str, Any]] = []
     backtest_metric_rows: list[dict[str, Any]] = []
     backtest_equity_rows: list[dict[str, Any]] = []
@@ -143,6 +148,14 @@ def build_readmodels(settings: Settings) -> BuildResult:
         SourceHealth(
             source_name="portfolio_decision_latest",
             source_glob=str(settings.state_dir / "portfolio_decision_latest.json"),
+        ),
+        SourceHealth(
+            source_name="execution_slippage",
+            source_glob=str(settings.ledger_dir / "EXECUTION_SLIPPAGE" / "*.jsonl"),
+        ),
+        SourceHealth(
+            source_name="portfolio_snapshots",
+            source_glob=str(settings.repo_root / "analytics" / "artifacts" / "portfolio_snapshots" / "*.json"),
         ),
     ]
 
@@ -599,6 +612,109 @@ def build_readmodels(settings: Settings) -> BuildResult:
             latest_source.last_error = str(exc)
             warnings.append(f"STATE latest decision parse error {latest_file}: {exc}")
 
+    # EXECUTION_SLIPPAGE
+    slippage_source = sources[8]
+    slippage_dir = settings.ledger_dir / "EXECUTION_SLIPPAGE"
+    slippage_files = sorted(slippage_dir.glob("*.jsonl")) if slippage_dir.exists() else []
+    slippage_source.file_count = len(slippage_files)
+    if slippage_files:
+        slippage_source.latest_mtime_utc = _iso_mtime(slippage_files[-1])
+    for path in slippage_files:
+        try:
+            entries = _iter_jsonl(path)
+        except Exception as exc:  # noqa: BLE001
+            slippage_source.parse_status = "error"
+            slippage_source.last_error = str(exc)
+            warnings.append(f"EXECUTION_SLIPPAGE parse error {path}: {exc}")
+            continue
+        slippage_source.row_count += len(entries)
+        for rec in entries:
+            if rec.get("record_type") != "EXECUTION_SLIPPAGE":
+                continue
+            slippage_rows.append(
+                {
+                    "date_ny": str(rec.get("date_ny") or ""),
+                    "symbol": str(rec.get("symbol") or "").upper(),
+                    "strategy_id": str(rec.get("strategy_id") or ""),
+                    "expected_price": rec.get("expected_price"),
+                    "ideal_fill_price": rec.get("ideal_fill_price"),
+                    "actual_fill_price": rec.get("actual_fill_price"),
+                    "slippage_bps": rec.get("slippage_bps"),
+                    "adv_shares_20d": rec.get("adv_shares_20d"),
+                    "liquidity_bucket": rec.get("liquidity_bucket"),
+                    "fill_ts_utc": rec.get("fill_ts_utc"),
+                    "time_of_day_bucket": rec.get("time_of_day_bucket"),
+                    "source_file": str(path),
+                }
+            )
+
+    # PORTFOLIO_SNAPSHOTS
+    snapshot_source = sources[9]
+    snapshot_dir = settings.repo_root / "analytics" / "artifacts" / "portfolio_snapshots"
+    snapshot_files = sorted(snapshot_dir.glob("*.json")) if snapshot_dir.exists() else []
+    snapshot_source.file_count = len(snapshot_files)
+    if snapshot_files:
+        snapshot_source.latest_mtime_utc = _iso_mtime(snapshot_files[-1])
+    for path in snapshot_files:
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except Exception as exc:  # noqa: BLE001
+            snapshot_source.parse_status = "error"
+            snapshot_source.last_error = str(exc)
+            warnings.append(f"PORTFOLIO_SNAPSHOTS parse error {path}: {exc}")
+            continue
+        snapshot_source.row_count += 1
+        capital = payload.get("capital") or {}
+        pnl = payload.get("pnl") or {}
+        date_ny = str(payload.get("date_ny") or "")
+        snapshot_rows.append(
+            {
+                "date_ny": date_ny,
+                "run_id": payload.get("run_id"),
+                "strategy_ids_json": json.dumps(payload.get("strategy_ids") or []),
+                "capital_total": capital.get("total"),
+                "capital_cash": capital.get("cash"),
+                "capital_invested": capital.get("invested"),
+                "gross_exposure": payload.get("gross_exposure"),
+                "net_exposure": payload.get("net_exposure"),
+                "realized_pnl": pnl.get("realized_today"),
+                "unrealized_pnl": pnl.get("unrealized"),
+                "fees_today": pnl.get("fees_today"),
+                "source_file": str(path),
+            }
+        )
+        for pos in payload.get("positions") or []:
+            position_rows.append(
+                {
+                    "date_ny": date_ny,
+                    "strategy_id": str(pos.get("strategy_id") or ""),
+                    "symbol": str(pos.get("symbol") or "").upper(),
+                    "qty": pos.get("qty"),
+                    "avg_price": pos.get("avg_price"),
+                    "mark_price": pos.get("mark_price"),
+                    "notional": pos.get("notional"),
+                }
+            )
+
+    # PORTFOLIO_RISK_ATTRIBUTION
+    risk_attr_dir = settings.ledger_dir / "PORTFOLIO_RISK_ATTRIBUTION"
+    risk_attr_files = sorted(risk_attr_dir.glob("*.jsonl")) if risk_attr_dir.exists() else []
+    for path in risk_attr_files:
+        try:
+            entries = _iter_jsonl(path)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"PORTFOLIO_RISK_ATTRIBUTION parse error {path}: {exc}")
+            continue
+        for rec in entries:
+            risk_attr_rows.append(
+                {
+                    "date_ny": str(rec.get("date_ny") or ""),
+                    "record_json": json.dumps(rec, sort_keys=True, separators=(",", ":")),
+                    "source_file": str(path),
+                }
+            )
+
     for source in sources:
         freshness_rows.append(
             {
@@ -636,6 +752,10 @@ def build_readmodels(settings: Settings) -> BuildResult:
         "raec_allocations": len(raec_allocation_rows),
         "raec_intents": len(raec_intent_rows),
         "raec_coordinator_runs": len(raec_coordinator_rows),
+        "execution_slippage": len(slippage_rows),
+        "portfolio_snapshots": len(snapshot_rows),
+        "portfolio_positions": len(position_rows),
+        "risk_attribution": len(risk_attr_rows),
         "freshness_health": len(freshness_rows),
     }
 
@@ -816,6 +936,64 @@ def build_readmodels(settings: Settings) -> BuildResult:
             _ensure_columns(
                 raec_coordinator_rows,
                 ["ny_date", "ts_utc", "capital_split_json", "sub_results_json"],
+            ),
+        )
+        _write_table(
+            conn,
+            "execution_slippage",
+            _ensure_columns(
+                slippage_rows,
+                [
+                    "date_ny",
+                    "symbol",
+                    "strategy_id",
+                    "expected_price",
+                    "ideal_fill_price",
+                    "actual_fill_price",
+                    "slippage_bps",
+                    "adv_shares_20d",
+                    "liquidity_bucket",
+                    "fill_ts_utc",
+                    "time_of_day_bucket",
+                    "source_file",
+                ],
+            ),
+        )
+        _write_table(
+            conn,
+            "portfolio_snapshots",
+            _ensure_columns(
+                snapshot_rows,
+                [
+                    "date_ny",
+                    "run_id",
+                    "strategy_ids_json",
+                    "capital_total",
+                    "capital_cash",
+                    "capital_invested",
+                    "gross_exposure",
+                    "net_exposure",
+                    "realized_pnl",
+                    "unrealized_pnl",
+                    "fees_today",
+                    "source_file",
+                ],
+            ),
+        )
+        _write_table(
+            conn,
+            "portfolio_positions",
+            _ensure_columns(
+                position_rows,
+                ["date_ny", "strategy_id", "symbol", "qty", "avg_price", "mark_price", "notional"],
+            ),
+        )
+        _write_table(
+            conn,
+            "risk_attribution",
+            _ensure_columns(
+                risk_attr_rows,
+                ["date_ny", "record_json", "source_file"],
             ),
         )
         _write_table(
