@@ -32,12 +32,16 @@ def compute_size_shares(
     dist_pct: float,
     cfg: SizingConfig,
     atr_pct: Optional[float] = None,
+    correlation_penalty: float = 0.0,
 ) -> int:
     """
     Returns integer share quantity.
 
     dist_pct and atr_pct are used as volatility proxies.
     Larger extension => smaller size.
+
+    correlation_penalty: float in [0, 1). Reduces allocation by (1 - penalty).
+    Default 0.0 preserves backward compatibility.
     """
     if account_equity <= 0:
         raise ValueError("account_equity must be positive")
@@ -55,8 +59,11 @@ def compute_size_shares(
     # Risk scaler: more extended => smaller allocation
     risk_scale = max(0.25, 1.0 - norm)
 
+    # Clamp correlation penalty to valid range
+    corr_pen = max(0.0, min(float(correlation_penalty), 1.0))
+
     # Dollar allocation
-    dollar_alloc = account_equity * cfg.base_risk_pct * risk_scale
+    dollar_alloc = account_equity * cfg.base_risk_pct * risk_scale * (1.0 - corr_pen)
 
     # Hard cap
     max_dollars = account_equity * cfg.max_position_pct

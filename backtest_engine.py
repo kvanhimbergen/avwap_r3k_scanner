@@ -201,6 +201,95 @@ def _risk_per_share(entry_price: float, stop: float, direction: str) -> float:
     return max(sign * (entry_price - stop), 0.01)
 
 
+def _compute_correlation_penalty(
+    *,
+    candidate_symbol: str,
+    positions: dict[str, dict],
+    history: pd.DataFrame,
+    session_date: pd.Timestamp,
+    cfg,
+) -> float:
+    """Compute correlation penalty for a candidate relative to open positions.
+
+    Returns 0.0 on any failure (fail-open) or when the feature is disabled.
+    """
+    if not getattr(cfg, "CORRELATION_AWARE_SIZING_ENABLED", False):
+        return 0.0
+    if not positions:
+        return 0.0
+    try:
+        from analytics.correlation_matrix import compute_rolling_correlation
+        from execution_v2.correlation_sizing import correlation_penalty as _corr_pen
+
+        open_syms = list(positions.keys())
+        all_syms = open_syms + [candidate_symbol]
+        lookback = getattr(cfg, "CORRELATION_LOOKBACK_DAYS", 60)
+
+        # Build OHLCV slice from history for all_syms
+        if isinstance(history.index, pd.MultiIndex):
+            df = history.reset_index()
+        else:
+            df = history.copy()
+
+        # Normalise column names
+        col_map = {}
+        for c in df.columns:
+            cl = str(c).lower()
+            if cl == "date":
+                col_map[c] = "Date"
+            elif cl == "symbol":
+                col_map[c] = "Symbol"
+            elif cl == "close":
+                col_map[c] = "Close"
+        df = df.rename(columns=col_map)
+
+        corr_matrix = compute_rolling_correlation(df, all_syms, lookback_days=lookback)
+        if corr_matrix.empty:
+            return 0.0
+
+        threshold = getattr(cfg, "CORRELATION_PENALTY_THRESHOLD", 0.6)
+        return _corr_pen(candidate_symbol, open_syms, corr_matrix, threshold=threshold)
+    except Exception as exc:
+        print(f"WARN: correlation penalty failed for {candidate_symbol}: {exc}")
+        return 0.0
+
+
+def _check_backtest_sector_cap(
+    *,
+    candidate_symbol: str,
+    positions: dict[str, dict],
+    sector_map: dict[str, str],
+    cfg,
+    gross_exposure: float,
+) -> tuple[bool, str]:
+    """Check sector cap for backtest entries. Returns (allowed, reason)."""
+    if not getattr(cfg, "CORRELATION_AWARE_SIZING_ENABLED", False):
+        return True, ""
+    if not sector_map:
+        return True, ""
+    cand_sector = sector_map.get(candidate_symbol, "")
+    if not cand_sector:
+        return True, ""
+    try:
+        from execution_v2.correlation_sizing import check_sector_cap
+
+        open_pos_dicts = [
+            {"symbol": sym, "notional": abs(pos.get("qty", 0.0) * pos.get("entry_price", 0.0))}
+            for sym, pos in positions.items()
+        ]
+        max_sector_pct = getattr(cfg, "MAX_SECTOR_EXPOSURE_PCT", 0.3)
+        return check_sector_cap(
+            candidate_sector=cand_sector,
+            open_positions=open_pos_dicts,
+            sector_map=sector_map,
+            max_sector_pct=max_sector_pct,
+            gross_exposure=gross_exposure,
+        )
+    except Exception as exc:
+        print(f"WARN: sector cap check failed for {candidate_symbol}: {exc}")
+        return True, ""
+
+
 def _get_run_id(scan_cfg) -> str | None:
     for attr in ("RUN_ID", "BACKTEST_RUN_ID"):
         if hasattr(scan_cfg, attr):
@@ -583,9 +672,30 @@ def run_backtest(
                 ):
                     entries_missed_limit += 1
                     continue
+                # Phase 5: Sector cap check
+                gross_exposure = _compute_gross_exposure(history, positions, session_date)
+                sector_allowed, sector_reason = _check_backtest_sector_cap(
+                    candidate_symbol=symbol,
+                    positions=positions,
+                    sector_map=sector_map,
+                    cfg=cfg,
+                    gross_exposure=gross_exposure,
+                )
+                if not sector_allowed:
+                    continue
+
+                # Phase 5: Correlation penalty
+                corr_penalty_val = _compute_correlation_penalty(
+                    candidate_symbol=symbol,
+                    positions=positions,
+                    history=history,
+                    session_date=session_date,
+                    cfg=cfg,
+                )
+
                 equity_before = cash + _compute_positions_value(history, positions, session_date)
                 risk_per_share = _risk_per_share(entry_price, entry["stop"], direction)
-                dollar_risk = equity_before * risk_per_trade_pct
+                dollar_risk = equity_before * risk_per_trade_pct * (1.0 - corr_penalty_val)
                 base_qty = math.floor(dollar_risk / risk_per_share)
                 if base_qty < 1:
                     entries_skipped_size_zero += 1
@@ -597,7 +707,6 @@ def run_backtest(
                 if _direction_sign(direction) > 0 and base_notional > cash + EPSILON:
                     entries_skipped_cash += 1
                     continue
-                gross_exposure = _compute_gross_exposure(history, positions, session_date)
                 base_trade_risk = risk_per_share * base_qty
                 risk_controls_result = _resolve_risk_controls(session_date.date().isoformat())
                 effective_max_positions = None
@@ -662,6 +771,7 @@ def run_backtest(
                                 drawdown_threshold=drawdown_threshold,
                                 min_qty=min_qty,
                                 source="backtest_engine",
+                                correlation_penalty=corr_penalty_val,
                             )
                             risk_attribution.write_attribution_event(event)
                         except Exception as exc:
@@ -1093,9 +1203,30 @@ def run_backtest(
                 ):
                     entries_missed_limit += 1
                     continue
+                # Phase 5: Sector cap check
+                gross_exposure = _compute_gross_exposure(history, positions, session_date)
+                sector_allowed_sc, sector_reason_sc = _check_backtest_sector_cap(
+                    candidate_symbol=symbol,
+                    positions=positions,
+                    sector_map=sector_map,
+                    cfg=cfg,
+                    gross_exposure=gross_exposure,
+                )
+                if not sector_allowed_sc:
+                    continue
+
+                # Phase 5: Correlation penalty
+                corr_penalty_val_sc = _compute_correlation_penalty(
+                    candidate_symbol=symbol,
+                    positions=positions,
+                    history=history,
+                    session_date=session_date,
+                    cfg=cfg,
+                )
+
                 equity_before = cash + _compute_positions_value(history, positions, session_date)
                 risk_per_share = _risk_per_share(entry_price, float(row["Stop_Loss"]), direction)
-                dollar_risk = equity_before * risk_per_trade_pct
+                dollar_risk = equity_before * risk_per_trade_pct * (1.0 - corr_penalty_val_sc)
                 base_qty = math.floor(dollar_risk / risk_per_share)
                 if base_qty < 1:
                     entries_skipped_size_zero += 1
@@ -1107,7 +1238,6 @@ def run_backtest(
                 if _direction_sign(direction) > 0 and base_notional > cash + EPSILON:
                     entries_skipped_cash += 1
                     continue
-                gross_exposure = _compute_gross_exposure(history, positions, session_date)
                 base_trade_risk = risk_per_share * base_qty
                 risk_controls_result = _resolve_risk_controls(session_date.date().isoformat())
                 effective_max_positions = None
@@ -1172,6 +1302,7 @@ def run_backtest(
                                 drawdown_threshold=drawdown_threshold,
                                 min_qty=min_qty,
                                 source="backtest_engine",
+                                correlation_penalty=corr_penalty_val_sc,
                             )
                             risk_attribution.write_attribution_event(event)
                         except Exception as exc:

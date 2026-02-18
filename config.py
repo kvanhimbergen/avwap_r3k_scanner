@@ -209,6 +209,13 @@ class CFG:
     REGIME_TRANSITION_SMOOTHING_DAYS: int = 5
     REGIME_CREDIT_SPREAD_LOOKBACK: int = 63
 
+    # Correlation-aware sizing (Phase 5)
+    CORRELATION_AWARE_SIZING_ENABLED: bool = False
+    CORRELATION_LOOKBACK_DAYS: int = 60
+    CORRELATION_PENALTY_THRESHOLD: float = 0.6
+    MAX_SECTOR_EXPOSURE_PCT: float = 0.3
+    MAX_CORRELATED_CLUSTER_EXPOSURE_PCT: float = 0.4
+
     # Cross-sectional scoring (Phase 3)
     CROSS_SECTIONAL_ENABLED: bool = False
     CROSS_SECTIONAL_TOP_DECILE: float = 0.1

@@ -18,6 +18,7 @@ import pandas as pd
 
 from execution_v2.boh import boh_confirmed_option2
 from execution_v2.config_types import EntryIntent
+from config import cfg as scan_cfg
 from execution_v2.sizing import SizingConfig, compute_size_shares
 from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 from execution_v2 import exits
@@ -48,6 +49,7 @@ REASON_BOH_NOT_CONFIRMED = "boh_not_confirmed"
 REASON_INVALID_CANDIDATE_ROW = "invalid_candidate_row"
 REASON_EXISTING_OPEN_ORDERS = "existing_open_orders"
 REASON_RISK_CONTROLS_BLOCKED = "risk_controls_blocked"
+REASON_SECTOR_CAP_BLOCKED = "sector_cap_blocked"
 REASON_OTHER_REJECTED = "other_rejected"
 
 _KNOWN_REJECTION_REASONS = {
@@ -56,6 +58,7 @@ _KNOWN_REJECTION_REASONS = {
     REASON_INVALID_CANDIDATE_ROW,
     REASON_EXISTING_OPEN_ORDERS,
     REASON_RISK_CONTROLS_BLOCKED,
+    REASON_SECTOR_CAP_BLOCKED,
     REASON_OTHER_REJECTED,
 }
 
@@ -475,11 +478,82 @@ def evaluate_and_create_entry_intents(
                         f"bar_close={bar_close} pct={pct_diff:.4f}"
                     )
 
+        # Phase 5: Correlation-aware sizing (fail-open)
+        corr_penalty_value = 0.0
+        if getattr(scan_cfg, "CORRELATION_AWARE_SIZING_ENABLED", False):
+            try:
+                from execution_v2.correlation_sizing import correlation_penalty as _corr_pen, check_sector_cap
+                _corr_mod = importlib.import_module("analytics.correlation_matrix")
+                compute_rolling_correlation = _corr_mod.compute_rolling_correlation
+
+                open_syms = [
+                    str(getattr(pos, "symbol", "")).upper()
+                    for pos in current_positions
+                ]
+                if open_syms:
+                    # Build position dicts for sector cap check
+                    open_pos_dicts = [
+                        {
+                            "symbol": str(getattr(pos, "symbol", "")).upper(),
+                            "notional": abs(
+                                float(getattr(pos, "avg_price", 0.0))
+                                * float(getattr(pos, "size_shares", 0.0))
+                            ),
+                        }
+                        for pos in current_positions
+                    ]
+                    # Sector cap check
+                    sector_map = getattr(scan_cfg, "_sector_map", {})
+                    cand_sector = sector_map.get(cand.symbol, "")
+                    if cand_sector:
+                        allowed, reason = check_sector_cap(
+                            candidate_sector=cand_sector,
+                            open_positions=open_pos_dicts,
+                            sector_map=sector_map,
+                            max_sector_pct=getattr(scan_cfg, "MAX_SECTOR_EXPOSURE_PCT", 0.3),
+                            gross_exposure=gross_exposure,
+                        )
+                        if not allowed:
+                            print(f"CORRELATION_BLOCK symbol={cand.symbol} {reason}")
+                            if rejection_telemetry is not None:
+                                rejection_telemetry.record_rejected(cand.symbol, REASON_SECTOR_CAP_BLOCKED)
+                            continue
+
+                    # Compute correlation penalty
+                    daily_bars_for_corr = md.get_daily_bars(cand.symbol)
+                    if daily_bars_for_corr is not None and hasattr(daily_bars_for_corr, "__len__") and len(daily_bars_for_corr) > 0:
+                        try:
+                            all_syms = open_syms + [cand.symbol]
+                            # Try to build OHLCV DataFrame from available bars
+                            ohlcv_frames = []
+                            for sym in all_syms:
+                                sym_bars = md.get_daily_bars(sym)
+                                if sym_bars is not None and hasattr(sym_bars, "__len__") and len(sym_bars) > 0:
+                                    if isinstance(sym_bars, pd.DataFrame):
+                                        frame = sym_bars.copy()
+                                        frame["Symbol"] = sym
+                                        ohlcv_frames.append(frame)
+                            if ohlcv_frames:
+                                ohlcv_df = pd.concat(ohlcv_frames, ignore_index=True)
+                                lookback = getattr(scan_cfg, "CORRELATION_LOOKBACK_DAYS", 60)
+                                corr_matrix = compute_rolling_correlation(ohlcv_df, all_syms, lookback_days=lookback)
+                                if not corr_matrix.empty:
+                                    threshold = getattr(scan_cfg, "CORRELATION_PENALTY_THRESHOLD", 0.6)
+                                    corr_penalty_value = _corr_pen(
+                                        cand.symbol, open_syms, corr_matrix,
+                                        threshold=threshold,
+                                    )
+                        except Exception as exc:
+                            print(f"WARN: correlation penalty computation failed for {cand.symbol}: {exc}")
+            except Exception as exc:
+                print(f"WARN: correlation-aware sizing failed for {cand.symbol}: {exc}")
+
         base_size = compute_size_shares(
             account_equity=account_equity,
             price=price_for_sizing,
             dist_pct=abs(cand.dist_pct),
             cfg=cfg.sizing_cfg,
+            correlation_penalty=corr_penalty_value,
         )
         if base_size <= 0:
             if rejection_telemetry is not None:

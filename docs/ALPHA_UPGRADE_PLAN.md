@@ -253,22 +253,22 @@ E1 remains default. `REGIME_MODEL_VERSION=e2` activates new model. Both write to
 
 ## Phase 5: Correlation-Aware Sizing
 
-**Scope: Medium** | **Status: TODO**
+**Scope: Medium** | **Status: DONE**
 
 **Objective:** Measure pairwise correlation within the open book, penalize concentrated correlated exposure, enforce sector caps. Five highly correlated tech stocks is functionally one concentrated bet.
 
 ### Tasks
 
-- [ ] Create `analytics/correlation_matrix.py` — Rolling pairwise correlation computation (60-day default), sector-level aggregation
-- [ ] Create `execution_v2/correlation_sizing.py` — Correlation penalty function, sector cap enforcement
-- [ ] Modify `execution_v2/sizing.py` — `compute_size_shares()` gains `correlation_penalty` param. Formula becomes: `dollar_alloc = equity * base_risk_pct * risk_scale * (1 - correlation_penalty)`
-- [ ] Modify `execution_v2/buy_loop.py` — Before sizing, compute correlation of candidate with open positions, pass penalty
-- [ ] Modify `backtest_engine.py` — Same logic in entry fill path (~line 562-614)
-- [ ] Modify `config.py` — Add `CORRELATION_AWARE_SIZING_ENABLED`, `CORRELATION_LOOKBACK_DAYS`, `CORRELATION_PENALTY_THRESHOLD` (0.6 default), `MAX_SECTOR_EXPOSURE_PCT` (0.3 default), `MAX_CORRELATED_CLUSTER_EXPOSURE_PCT`
-- [ ] Modify `analytics/risk_attribution.py` — Add `correlation_penalty` to attribution events
-- [ ] Modify `feature_store/writers.py` — Store daily correlation matrices (candidates + open positions only)
-- [ ] Create `tests/test_correlation_matrix.py`
-- [ ] Create `tests/test_correlation_sizing.py`
+- [x] Create `analytics/correlation_matrix.py` — Rolling pairwise correlation computation (60-day default), sector-level aggregation
+- [x] Create `execution_v2/correlation_sizing.py` — Correlation penalty function, sector cap enforcement
+- [x] Modify `execution_v2/sizing.py` — `compute_size_shares()` gains `correlation_penalty` param. Formula becomes: `dollar_alloc = equity * base_risk_pct * risk_scale * (1 - correlation_penalty)`
+- [x] Modify `execution_v2/buy_loop.py` — Before sizing, compute correlation of candidate with open positions, pass penalty
+- [x] Modify `backtest_engine.py` — Same logic in entry fill path (~line 562-614)
+- [x] Modify `config.py` — Add `CORRELATION_AWARE_SIZING_ENABLED`, `CORRELATION_LOOKBACK_DAYS`, `CORRELATION_PENALTY_THRESHOLD` (0.6 default), `MAX_SECTOR_EXPOSURE_PCT` (0.3 default), `MAX_CORRELATED_CLUSTER_EXPOSURE_PCT`
+- [x] Modify `analytics/risk_attribution.py` — Add `correlation_penalty` to attribution events
+- [x] Modify `feature_store/writers.py` — Store daily correlation matrices (candidates + open positions only)
+- [x] Create `tests/test_correlation_matrix.py`
+- [x] Create `tests/test_correlation_sizing.py`
 
 ### Correlation Penalty
 
@@ -293,11 +293,11 @@ Enforce `MAX_SECTOR_EXPOSURE_PCT` (e.g., 30%) at portfolio level. If existing Te
 
 ### Verification
 
-- [ ] Sizing reduced for candidates correlated with existing positions
-- [ ] Sector caps enforced (BLOCK reason in portfolio decisions)
-- [ ] Correlation matrices persisted in feature store
-- [ ] Risk attribution events include correlation penalty
-- [ ] Feature flag off = identical to pre-Phase-5 behavior
+- [x] Sizing reduced for candidates correlated with existing positions
+- [x] Sector caps enforced (BLOCK reason in portfolio decisions)
+- [x] Correlation matrices persisted in feature store
+- [x] Risk attribution events include correlation penalty
+- [x] Feature flag off = identical to pre-Phase-5 behavior
 
 ---
 

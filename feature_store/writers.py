@@ -134,3 +134,47 @@ def write_cross_sectional_distributions(
         json.dump(payload, f, indent=2, sort_keys=True)
     os.replace(tmp_path, out_path)
     return out_path
+
+
+def write_correlation_matrix(
+    base_dir: Path,
+    date_str: str,
+    corr_df: pd.DataFrame,
+    version: int | None = None,
+) -> Path:
+    """Persist a daily correlation matrix as Parquet.
+
+    Layout: base_dir/v{version}/{date_str}/correlation_matrix.parquet
+    Sidecar: base_dir/v{version}/{date_str}/correlation_matrix_meta.json
+
+    The DataFrame is stored with the index (symbol names) as a column
+    so it can be round-tripped.
+    """
+    store = get_store_path(base_dir, version)
+    partition_dir = store / date_str
+    os.makedirs(partition_dir, exist_ok=True)
+
+    # Preserve symbol index as a column for round-trip fidelity
+    write_df = corr_df.copy()
+    write_df.index.name = "symbol"
+    write_df = write_df.reset_index()
+
+    parquet_path = partition_dir / "correlation_matrix.parquet"
+    tmp_parquet = parquet_path.with_suffix(".parquet.tmp")
+    write_df.to_parquet(tmp_parquet, index=False, engine="pyarrow", compression="snappy")
+    os.replace(tmp_parquet, parquet_path)
+
+    meta_payload = {
+        "date": date_str,
+        "git_sha": git_sha(),
+        "feature_type": "correlation_matrix",
+        "symbols": list(corr_df.columns),
+        "matrix_size": len(corr_df),
+    }
+    meta_path = partition_dir / "correlation_matrix_meta.json"
+    tmp_meta = meta_path.with_suffix(".json.tmp")
+    with open(tmp_meta, "w") as f:
+        json.dump(meta_payload, f, indent=2, sort_keys=True)
+    os.replace(tmp_meta, meta_path)
+
+    return parquet_path

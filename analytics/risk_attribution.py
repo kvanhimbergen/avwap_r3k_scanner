@@ -137,6 +137,7 @@ def build_attribution_event(
     drawdown_threshold: float | None,
     min_qty: int | None,
     source: str,
+    correlation_penalty: float = 0.0,
 ) -> dict[str, Any]:
     baseline_notional = price * baseline_qty
     modulated_notional = price * modulated_qty
@@ -213,6 +214,7 @@ def build_attribution_event(
             "per_position_cap": risk_controls.per_position_cap if risk_controls else None,
             "throttle_reason": risk_controls.throttle_reason if risk_controls else None,
         },
+        "correlation_penalty": float(correlation_penalty),
     }
 
 
