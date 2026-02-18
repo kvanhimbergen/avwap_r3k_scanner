@@ -8,6 +8,8 @@ const NAV_ITEMS = [
   { to: "/decisions", label: "Decisions" },
   { to: "/risk", label: "Risk" },
   { to: "/backtests", label: "Backtests" },
+  { to: "/readiness", label: "Readiness" },
+  { to: "/pnl", label: "P&L" },
   { to: "/help", label: "Help" },
 ];
 

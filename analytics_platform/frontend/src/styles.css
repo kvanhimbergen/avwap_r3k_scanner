@@ -214,6 +214,79 @@ th {
   border-color: #f2c4c4;
 }
 
+/* Readiness page */
+.readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.readiness-card {
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.readiness-card h4 {
+  margin: 0 0 4px;
+}
+
+.readiness-ok {
+  border: 2px solid #0f9d58;
+}
+
+.readiness-warn {
+  border: 2px solid #dd6b20;
+}
+
+.readiness-error {
+  border: 2px solid #c0392b;
+}
+
+.readiness-check {
+  color: #0f9d58;
+  font-weight: 700;
+}
+
+.readiness-x {
+  color: #c0392b;
+  font-weight: 700;
+}
+
+.regime-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.regime-badge.risk-on {
+  background: #eaf8f1;
+  color: #127a47;
+}
+
+.regime-badge.transition {
+  background: #fff4e8;
+  color: #9a4c11;
+}
+
+.regime-badge.risk-off {
+  background: #fff2f2;
+  color: #8e1f1f;
+}
+
+.warning-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--warning);
+  font-size: 0.85rem;
+}
+
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -225,7 +298,8 @@ th {
   }
 
   .kpi-grid,
-  .two-col {
+  .two-col,
+  .readiness-grid {
     grid-template-columns: 1fr;
   }
 }

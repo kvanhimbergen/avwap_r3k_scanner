@@ -5,6 +5,8 @@ import { BacktestsPage } from "./pages/BacktestsPage";
 import { DecisionsPage } from "./pages/DecisionsPage";
 import { HelpPage } from "./pages/HelpPage";
 import { OverviewPage } from "./pages/OverviewPage";
+import { PnlPage } from "./pages/PnlPage";
+import { ReadinessPage } from "./pages/ReadinessPage";
 import { RiskPage } from "./pages/RiskPage";
 import { S2SignalsPage } from "./pages/S2SignalsPage";
 import { StrategiesPage } from "./pages/StrategiesPage";
@@ -19,6 +21,8 @@ export function App() {
         <Route path="/decisions" element={<DecisionsPage />} />
         <Route path="/risk" element={<RiskPage />} />
         <Route path="/backtests" element={<BacktestsPage />} />
+        <Route path="/readiness" element={<ReadinessPage />} />
+        <Route path="/pnl" element={<PnlPage />} />
         <Route path="/help" element={<HelpPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
