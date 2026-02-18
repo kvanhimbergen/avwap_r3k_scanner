@@ -7,16 +7,17 @@ import csv
 import json
 import re
 from pathlib import Path
-from types import ModuleType
 
-from strategies import raec_401k, raec_401k_v2, raec_401k_v3, raec_401k_v4, raec_401k_v5, raec_401k_coordinator
+from strategies import raec_401k, raec_401k_v2, raec_401k_coordinator
+from strategies import raec_401k_v3, raec_401k_v4, raec_401k_v5  # noqa: F401 — ensure registration
+from strategies.raec_401k_registry import get as _get_strategy
 
-_STRATEGY_MODULES: dict[str, ModuleType] = {
+_STRATEGY_MODULES: dict[str, object] = {
     "v1": raec_401k,
     "v2": raec_401k_v2,
-    "v3": raec_401k_v3,
-    "v4": raec_401k_v4,
-    "v5": raec_401k_v5,
+    "v3": _get_strategy("RAEC_401K_V3"),
+    "v4": _get_strategy("RAEC_401K_V4"),
+    "v5": _get_strategy("RAEC_401K_V5"),
     "coord": raec_401k_coordinator,
 }
 DEFAULT_STRATEGY_KEY = "v1"
@@ -241,7 +242,7 @@ def _resolve_csv_source(raw: str, *, repo_root: Path) -> Path:
     return path
 
 
-def _resolve_strategy_module(key: str) -> ModuleType:
+def _resolve_strategy_module(key: str) -> object:
     normalized = (key or DEFAULT_STRATEGY_KEY).strip().lower()
     if normalized not in _STRATEGY_MODULES:
         supported = ", ".join(sorted(_STRATEGY_MODULES))

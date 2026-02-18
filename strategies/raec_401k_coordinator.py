@@ -8,12 +8,13 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from types import ModuleType
 
 from data.prices import PriceProvider, get_default_price_provider
 from execution_v2 import book_ids, book_router
 from execution_v2.schwab_manual_adapter import slack_post_enabled
-from strategies import raec_401k_v3, raec_401k_v4, raec_401k_v5
+from strategies import raec_401k_v3, raec_401k_v4, raec_401k_v5  # noqa: F401 — ensure registration
+from strategies.raec_401k_base import BaseRAECStrategy
+from strategies.raec_401k_registry import get as _get_strategy
 from utils.atomic_write import atomic_write_text
 
 
@@ -21,17 +22,18 @@ BOOK_ID = book_ids.SCHWAB_401K_MANUAL
 STRATEGY_ID = "RAEC_401K_COORD"
 # Combined universe across all sub-strategies (for allocs compatibility)
 DEFAULT_UNIVERSE = tuple(dict.fromkeys([
-    *raec_401k_v3.DEFAULT_UNIVERSE, *raec_401k_v4.DEFAULT_UNIVERSE,
-    *raec_401k_v5.DEFAULT_UNIVERSE,
+    *_get_strategy("RAEC_401K_V3").DEFAULT_UNIVERSE,
+    *_get_strategy("RAEC_401K_V4").DEFAULT_UNIVERSE,
+    *_get_strategy("RAEC_401K_V5").DEFAULT_UNIVERSE,
 ]))
 FALLBACK_CASH_SYMBOL = "BIL"
 
 DEFAULT_CAPITAL_SPLIT: dict[str, float] = {"v3": 0.40, "v4": 0.30, "v5": 0.30}
 
-SUB_STRATEGIES: dict[str, ModuleType] = {
-    "v3": raec_401k_v3,
-    "v4": raec_401k_v4,
-    "v5": raec_401k_v5,
+SUB_STRATEGIES: dict[str, BaseRAECStrategy] = {
+    "v3": _get_strategy("RAEC_401K_V3"),
+    "v4": _get_strategy("RAEC_401K_V4"),
+    "v5": _get_strategy("RAEC_401K_V5"),
 }
 
 
@@ -112,11 +114,11 @@ def run_coordinator(
 
     # Run each sub-strategy with dry_run=True, allow_state_write=True
     sub_results: dict[str, object] = {}
-    for key, module in SUB_STRATEGIES.items():
+    for key, strategy in SUB_STRATEGIES.items():
         pct = split.get(key, 0.0) * 100.0
         sub_cap = cap * split.get(key, 0.0)
         print(f"[COORD] Running {key.upper()} ({pct:.1f}% of portfolio = ${sub_cap:,.0f})...")
-        result = module.run_strategy(
+        result = strategy.run_strategy(
             asof_date=asof_date,
             repo_root=repo_root,
             price_provider=provider,
@@ -134,7 +136,7 @@ def run_coordinator(
             rebalanced.append(key)
             if not dry_run:
                 adapter = adapter_override or book_router.select_trading_client(BOOK_ID)
-                module = SUB_STRATEGIES[key]
+                strategy = SUB_STRATEGIES[key]
                 ticket_message = _build_sub_ticket(key=key, result=result, split=split, cap=cap)
                 summary_intents = result.intents
                 if not summary_intents:
@@ -145,7 +147,7 @@ def run_coordinator(
                             "target_pct": 0.0,
                             "current_pct": 0.0,
                             "delta_pct": 0.0,
-                            "strategy_id": module.STRATEGY_ID,
+                            "strategy_id": strategy.STRATEGY_ID,
                             "intent_id": "coord-notice",
                         }
                     ]
@@ -200,10 +202,10 @@ def _build_sub_ticket(
 ) -> str:
     pct = split.get(key, 0.0) * 100.0
     sub_cap = cap * split.get(key, 0.0)
-    module = SUB_STRATEGIES[key]
+    strategy = SUB_STRATEGIES[key]
     lines = [
         f"[COORD {key.upper()}] ({pct:.1f}% of portfolio = ${sub_cap:,.0f})",
-        f"Strategy: {module.STRATEGY_ID}",
+        f"Strategy: {strategy.STRATEGY_ID}",
         f"Regime: {result.regime}",
     ]
     if result.intents:
