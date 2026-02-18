@@ -22,6 +22,7 @@ export function S2SignalsPage() {
   return (
     <section>
       <h2 className="page-title">S2 Signal Audit</h2>
+      <p className="page-subtitle">S2 eligibility, selection, and reason code analysis</p>
       <div className="helper-card">
         <h3 className="helper-title">How To Read This</h3>
         <p className="helper-text">

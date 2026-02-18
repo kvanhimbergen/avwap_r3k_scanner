@@ -31,6 +31,7 @@ export function BacktestsPage() {
   return (
     <section>
       <h2 className="page-title">Backtests & Replay</h2>
+      <p className="page-subtitle">Historical strategy replay and equity curve analysis</p>
       <div className="helper-card">
         <h3 className="helper-title">How To Read This</h3>
         <p className="helper-text">
@@ -82,7 +83,7 @@ export function BacktestsPage() {
               <XAxis dataKey="x_value" />
               <YAxis />
               <Tooltip />
-              <Line type="monotone" dataKey="equity" stroke="#0f9d58" dot={false} />
+              <Line type="monotone" dataKey="equity" stroke="var(--green)" dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>

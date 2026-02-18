@@ -248,7 +248,7 @@ export function LogFillsPage() {
             <tbody>
               {recentFills.map((r, i) => (
                 <tr key={i}>
-                  <td style={{ color: r.side === "BUY" ? "#0f9d58" : "#d93025", fontWeight: 600 }}>
+                  <td className={r.side === "BUY" ? "side-buy" : "side-sell"}>
                     {String(r.side)}
                   </td>
                   <td className="mono">{String(r.symbol)}</td>

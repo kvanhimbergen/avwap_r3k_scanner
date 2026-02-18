@@ -11,6 +11,6 @@ describe("App layout", () => {
         <App />
       </MemoryRouter>
     );
-    expect(screen.getByText("Strategy Ops")).toBeInTheDocument();
+    expect(screen.getByText("Strategy Command")).toBeInTheDocument();
   });
 });
