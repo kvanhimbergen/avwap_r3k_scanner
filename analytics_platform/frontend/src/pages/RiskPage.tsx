@@ -38,7 +38,7 @@ export function RiskPage() {
 
   // Compute risk summary KPIs
   const latestControl = controls[0] as Record<string, any> | undefined;
-  const latestRegime = regimes[0] as Record<string, any> | undefined;
+  const latestRegime = regimes.length > 0 ? regimes[regimes.length - 1] as Record<string, any> : undefined;
   const totalRebalances = byStrategy.reduce((sum: number, s: any) => sum + (s.rebalance_count ?? 0), 0);
   const totalRegimeChanges = byStrategy.reduce((sum: number, s: any) => sum + (s.regime_changes ?? 0), 0);
 

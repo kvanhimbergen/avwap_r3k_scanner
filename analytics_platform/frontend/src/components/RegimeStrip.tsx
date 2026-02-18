@@ -42,7 +42,7 @@ function regimeClass(regime: string): string {
   const upper = regime.toUpperCase();
   if (upper === "RISK_ON") return "risk-on";
   if (upper === "RISK_OFF" || upper === "STRESSED") return "risk-off";
-  if (upper === "NEUTRAL" || upper === "TRANSITION") return "transition";
+  if (upper === "NEUTRAL" || upper === "TRANSITION" || upper === "DATA_GAP") return "transition";
   return "";
 }
 

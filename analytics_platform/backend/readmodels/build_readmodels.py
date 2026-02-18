@@ -374,12 +374,20 @@ def build_readmodels(settings: Settings) -> BuildResult:
             continue
         regime_source.row_count += len(entries)
         for rec in entries:
+            # regime_label exists on REGIME_E1_SIGNAL records; for SKIPPED records derive from record_type
+            label = rec.get("regime_label")
+            if not label:
+                rt = rec.get("record_type") or ""
+                if "SKIPPED" in rt:
+                    label = "DATA_GAP"
+                else:
+                    label = None
             regime_rows.append(
                 {
                     "ny_date": str(rec.get("resolved_ny_date") or rec.get("ny_date") or rec.get("requested_ny_date") or ""),
                     "as_of_utc": rec.get("as_of_utc"),
                     "regime_id": rec.get("regime_id"),
-                    "regime_label": rec.get("regime_label"),
+                    "regime_label": label,
                     "record_type": rec.get("record_type"),
                     "reason_codes_json": json.dumps(rec.get("reason_codes") or [], sort_keys=True),
                     "inputs_snapshot_json": json.dumps(rec.get("inputs_snapshot") or {}, sort_keys=True),
