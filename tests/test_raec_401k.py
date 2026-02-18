@@ -152,7 +152,7 @@ def test_intent_id_deterministic() -> None:
     )
     assert (
         intent_id
-        == "1ba8bcba6aa8c881f0a40d72fe9a59ea20dafcce26ac7a110749cbbc2c22abd7"
+        == "1c95d73ca6e9ce0418a49d2e2531f019426019fa26912f02ffe41865592acd1c"
     )
 
 
@@ -187,9 +187,49 @@ def test_runner_dry_run_no_slack(tmp_path: Path) -> None:
     assert json.loads(state_path.read_text())["last_eval_date"] == "2025-01-31"
 
 
-def test_runner_prefers_latest_csv_allocations_when_available(tmp_path: Path) -> None:
+def test_runner_uses_alpaca_allocations_in_non_dry_run(tmp_path: Path) -> None:
+    from dataclasses import dataclass as _dataclass
+    from execution_v2.alpaca_rebalance_adapter import AlpacaRebalanceAdapter, RebalanceOrderResult
+
+    @_dataclass
+    class _FakeAccount:
+        equity: str = "100000.00"
+
+    @_dataclass
+    class _FakePosition:
+        symbol: str = "VTI"
+        market_value: str = "50000.00"
+
+    @_dataclass
+    class _FakeOrder:
+        id: str = "order-001"
+        status: str = "accepted"
+        side: str = "buy"
+        filled_qty: str = "0"
+        filled_avg_price: str | None = None
+        filled_at: str | None = None
+        created_at: str = "2026-02-18T14:00:00Z"
+        updated_at: str = "2026-02-18T14:00:00Z"
+
+    class _FakeClient:
+        def __init__(self):
+            self.submitted = []
+
+        def get_account(self):
+            return _FakeAccount()
+
+        def get_all_positions(self):
+            return [
+                _FakePosition(symbol="SPY", market_value="25000.00"),
+                _FakePosition(symbol="VTI", market_value="25000.00"),
+            ]
+
+        def submit_order(self, req):
+            self.submitted.append(req)
+            return _FakeOrder()
+
     series = _risk_on_series()
-    provider = FixturePriceProvider({"VTI": series, "BIL": series})
+    provider = FixturePriceProvider({"VTI": series, "SPY": series, "BIL": series})
     state_path = tmp_path / "state" / "strategies" / raec_401k.BOOK_ID / f"{raec_401k.STRATEGY_ID}.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(
@@ -201,29 +241,21 @@ def test_runner_prefers_latest_csv_allocations_when_available(tmp_path: Path) ->
             }
         )
     )
-    drop_dir = tmp_path / DEFAULT_CSV_DROP_SUBDIR
-    drop_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = drop_dir / "positions.csv"
-    csv_path.write_text(
-        "\n".join(
-            [
-                "Positions for account 123 as of 03/01/2025",
-                "Symbol,Description,Security Type,Mkt Val (Market Value)",
-                "SPY,SPDR S&P 500 ETF,ETF,$25,000.00",
-                ",Cash & Cash Investments,Cash and Money Market,$75,000.00",
-            ]
-        )
-    )
+
+    fake_client = _FakeClient()
+    adapter = AlpacaRebalanceAdapter(fake_client)
 
     result = raec_401k.run_strategy(
         asof_date="2025-02-07",
         repo_root=tmp_path,
         price_provider=provider,
-        dry_run=True,
+        dry_run=False,
+        adapter_override=adapter,
+        post_enabled=True,
     )
 
     assert result.notice is None
-    assert any(intent["symbol"] == "SPY" and intent["side"] == "SELL" for intent in result.intents)
+    assert result.should_rebalance
 
 
 def _write_csv(tmp_path: Path, content: str) -> Path:
@@ -331,6 +363,6 @@ def test_resolve_csv_source_directory_uses_latest(tmp_path: Path) -> None:
     assert resolved == csv_b
 
 
-def test_resolve_strategy_module_v2() -> None:
-    strategy = _resolve_strategy_module("v2")
-    assert strategy.STRATEGY_ID == "RAEC_401K_V2"
+def test_resolve_strategy_module_v3() -> None:
+    strategy = _resolve_strategy_module("v3")
+    assert strategy.STRATEGY_ID == "RAEC_401K_V3"

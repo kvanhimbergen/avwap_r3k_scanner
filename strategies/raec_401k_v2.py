@@ -1,4 +1,4 @@
-"""RAEC 401(k) Strategy v2 (dynamic factor rotation, manual execution)."""
+"""RAEC 401(k) Strategy v2 (dynamic factor rotation, Alpaca paper trading)."""
 
 from __future__ import annotations
 
@@ -15,11 +15,11 @@ from typing import Any, Iterable
 
 from data.prices import PriceProvider, get_default_price_provider
 from execution_v2 import book_ids, book_router
-from execution_v2.schwab_manual_adapter import slack_post_enabled
+from execution_v2.alpaca_rebalance_adapter import AlpacaRebalanceAdapter
 from utils.atomic_write import atomic_write_text
 
 
-BOOK_ID = book_ids.SCHWAB_401K_MANUAL
+BOOK_ID = book_ids.ALPACA_PAPER
 STRATEGY_ID = "RAEC_401K_V2"
 
 RISK_UNIVERSE = ("QQQ", "VTI", "SPY", "IWM", "QUAL", "MTUM", "VTV", "VEA", "VWO")
@@ -493,29 +493,19 @@ def _load_current_allocations(state: dict, universe: set[str]) -> tuple[dict[str
     return filtered, None
 
 
-def _load_latest_csv_allocations(
-    *,
-    repo_root: Path,
+def _load_alpaca_allocations(
+    adapter: AlpacaRebalanceAdapter,
+    cash_symbol: str,
     universe: set[str],
 ) -> dict[str, float] | None:
-    if os.getenv("RAEC_AUTO_SYNC_ALLOCATIONS_FROM_CSV", "1").strip() not in {"1", "true", "TRUE", "yes", "YES"}:
-        return None
     try:
-        from strategies import raec_401k_allocs
-
-        csv_path = raec_401k_allocs._latest_csv_in_directory(
-            repo_root / raec_401k_allocs.DEFAULT_CSV_DROP_SUBDIR
-        )
-        parsed = raec_401k_allocs.parse_schwab_positions_csv(csv_path)
+        raw = adapter.get_current_allocations(cash_symbol)
     except Exception:
         return None
-
     filtered: dict[str, float] = {}
-    for symbol, pct in parsed.items():
-        normalized = str(symbol).upper()
-        if normalized not in universe:
-            continue
-        filtered[normalized] = float(pct)
+    for symbol, pct in raw.items():
+        if symbol in universe:
+            filtered[symbol] = pct
     return filtered or None
 
 
@@ -641,7 +631,7 @@ def _build_ticket_message(
     notice: str | None,
 ) -> str:
     lines = [
-        "RAEC 401(k) Dynamic Rebalance Ticket",
+        "RAEC 401(k) Dynamic Alpaca Rebalance Ticket",
         f"Strategy: {STRATEGY_ID}",
         f"Book: {BOOK_ID}",
         f"As-of (NY): {asof_date}",
@@ -665,12 +655,7 @@ def _build_ticket_message(
     else:
         lines.append("Order intents: none (allocations at target or missing current allocs).")
     lines.append("")
-    lines.append("Checklist:")
-    lines.append("- [ ] Confirm regime + top momentum roster.")
-    lines.append("- [ ] Execute trades manually in Schwab 401(k).")
-    lines.append("- [ ] Reply with execution status + intent_id.")
-    lines.append("")
-    lines.append("Reply protocol: EXECUTED / PARTIAL / SKIPPED / ERROR with intent_id.")
+    lines.append("Execution: Alpaca Paper Trading (automated).")
     return "\n".join(lines)
 
 
@@ -698,8 +683,20 @@ def run_strategy(
 
     state_path = _state_path(repo_root)
     state = _load_state(state_path)
-    current_allocs = _load_latest_csv_allocations(repo_root=repo_root, universe=universe_set)
-    notice = None
+
+    # Build adapter for Alpaca position queries and order execution
+    if adapter_override is not None:
+        adapter = adapter_override
+    elif not dry_run:
+        trading_client = book_router.select_trading_client(BOOK_ID)
+        adapter = AlpacaRebalanceAdapter(trading_client)
+    else:
+        adapter = None
+
+    current_allocs: dict[str, float] | None = None
+    notice: str | None = None
+    if not dry_run and adapter is not None:
+        current_allocs = _load_alpaca_allocations(adapter, cash_symbol, universe_set)
     if current_allocs is None:
         current_allocs, notice = _load_current_allocations(state, universe_set)
     if current_allocs is None:
@@ -718,6 +715,12 @@ def run_strategy(
     intents: list[dict] = []
     if should_rebalance and not notice:
         intents = _build_intents(asof_date=asof_date, targets=targets, current=current_allocs)
+        # Attach ref_price for Alpaca share quantity computation
+        for intent in intents:
+            sym = intent["symbol"]
+            series = provider.get_daily_close_series(sym)
+            if series:
+                intent["ref_price"] = series[-1][1]
 
     ticket_message = _build_ticket_message(
         asof_date=asof_date,
@@ -729,13 +732,17 @@ def run_strategy(
         notice=notice,
     )
 
-    posting_enabled = slack_post_enabled() if post_enabled is None else post_enabled
+    if post_enabled is None:
+        posting_enabled = os.getenv("ALPACA_REBALANCE_ENABLED", "1").strip().lower() in {
+            "1", "true", "yes",
+        }
+    else:
+        posting_enabled = post_enabled
     posted = False
     if should_rebalance:
         if dry_run:
             print(ticket_message)
         else:
-            adapter = adapter_override or book_router.select_trading_client(BOOK_ID)
             summary_intents = intents
             if not intents:
                 summary_intents = [
@@ -812,7 +819,7 @@ def run_strategy(
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run RAEC 401(k) dynamic manual strategy.")
+    parser = argparse.ArgumentParser(description="Run RAEC 401(k) V2 dynamic Alpaca paper strategy.")
     parser.add_argument("--asof", required=True, help="As-of date (YYYY-MM-DD)")
     parser.add_argument("--dry-run", action="store_true", default=False, help="Skip Slack post and ledger write")
     parser.add_argument(
@@ -849,7 +856,7 @@ def main(argv: list[str] | None = None) -> int:
 
     notice_str = (result.notice or "none").replace("\n", " ").strip()
     print(
-        "SCHWAB_401K_MANUAL: "
+        "ALPACA_PAPER: "
         f"tickets_sent={tickets_sent} "
         f"asof={result.asof_date} "
         f"should_rebalance={int(result.should_rebalance)} "

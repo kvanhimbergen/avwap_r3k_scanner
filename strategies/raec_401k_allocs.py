@@ -8,26 +8,23 @@ import json
 import re
 from pathlib import Path
 
-from strategies import raec_401k, raec_401k_v2, raec_401k_coordinator
+from strategies import raec_401k_coordinator
 from strategies import raec_401k_v3, raec_401k_v4, raec_401k_v5  # noqa: F401 — ensure registration
 from strategies.raec_401k_registry import get as _get_strategy
 
 _STRATEGY_MODULES: dict[str, object] = {
-    "v1": raec_401k,
-    "v2": raec_401k_v2,
     "v3": _get_strategy("RAEC_401K_V3"),
     "v4": _get_strategy("RAEC_401K_V4"),
     "v5": _get_strategy("RAEC_401K_V5"),
     "coord": raec_401k_coordinator,
 }
-DEFAULT_STRATEGY_KEY = "v1"
-DEFAULT_BOOK_ID = raec_401k.BOOK_ID
+DEFAULT_STRATEGY_KEY = "coord"
+DEFAULT_BOOK_ID = raec_401k_coordinator.BOOK_ID
 DEFAULT_UNIVERSE = tuple(dict.fromkeys([
-    *raec_401k.DEFAULT_UNIVERSE, *raec_401k_v2.DEFAULT_UNIVERSE,
     *raec_401k_v3.DEFAULT_UNIVERSE, *raec_401k_v4.DEFAULT_UNIVERSE,
     *raec_401k_v5.DEFAULT_UNIVERSE,
 ]))
-FALLBACK_CASH_SYMBOL = raec_401k.FALLBACK_CASH_SYMBOL
+FALLBACK_CASH_SYMBOL = raec_401k_v3.FALLBACK_CASH_SYMBOL
 
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9-]{0,5}$")
 DEFAULT_DESCRIPTION_MAPPING = {
@@ -256,7 +253,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--strategy",
         default=DEFAULT_STRATEGY_KEY,
         choices=sorted(_STRATEGY_MODULES),
-        help="Target strategy state to update (default: v1).",
+        help="Target strategy state to update (default: coord).",
     )
     parser.add_argument("--set", nargs="*", default=None, help="Allocations as SYMBOL=NUM ...")
     parser.add_argument("--from-json", default=None, help="Path to JSON {symbol: pct}")
