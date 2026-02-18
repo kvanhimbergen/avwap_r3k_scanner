@@ -275,6 +275,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload = queries.get_trade_analytics(conn, start, end, strategy_id)
         return _envelope(runtime, payload)
 
+    @app.get("/api/v1/portfolio/overview")
+    def portfolio_overview(
+        start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_portfolio_overview(conn, start, end)
+        return _envelope(runtime, payload)
+
+    @app.get("/api/v1/portfolio/positions")
+    def portfolio_positions(
+        date: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_portfolio_positions(conn, date)
+        return _envelope(runtime, payload)
+
+    @app.get("/api/v1/portfolio/history")
+    def portfolio_history(
+        start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_portfolio_history(conn, start, end)
+        return _envelope(runtime, payload)
+
+    @app.get("/api/v1/strategies/matrix")
+    def strategy_matrix() -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_strategy_matrix(conn)
+        return _envelope(runtime, payload)
+
     @app.get("/api/v1/exports/{dataset}.csv")
     def export_dataset(
         dataset: str,

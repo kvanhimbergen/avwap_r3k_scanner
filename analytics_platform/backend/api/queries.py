@@ -763,6 +763,273 @@ def get_slippage_dashboard(
 
 
 # ---------------------------------------------------------------------------
+# Portfolio Overview / Positions / History
+# ---------------------------------------------------------------------------
+
+
+def _portfolio_date_clause(
+    column: str, start: str | None, end: str | None
+) -> tuple[str, list[Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if start:
+        clauses.append(f"{column} >= ?")
+        params.append(start)
+    if end:
+        clauses.append(f"{column} <= ?")
+        params.append(end)
+    if not clauses:
+        return "", params
+    return " WHERE " + " AND ".join(clauses), params
+
+
+def get_portfolio_overview(
+    conn, start: str | None = None, end: str | None = None
+) -> dict[str, Any]:
+    # latest snapshot
+    latest_rows = _rows(
+        conn,
+        """
+        SELECT date_ny, capital_total, capital_cash, capital_invested,
+               gross_exposure, net_exposure, realized_pnl, unrealized_pnl, fees_today
+        FROM portfolio_snapshots
+        ORDER BY date_ny DESC
+        LIMIT 1
+        """,
+    )
+    latest = latest_rows[0] if latest_rows else {}
+    latest_date = latest.get("date_ny")
+
+    # positions for latest date with weight_pct
+    positions: list[dict[str, Any]] = []
+    if latest_date:
+        positions = _rows(
+            conn,
+            """
+            SELECT strategy_id, symbol, qty, avg_price, mark_price, notional,
+                   notional / SUM(notional) OVER () * 100 AS weight_pct
+            FROM portfolio_positions
+            WHERE date_ny = ?
+            ORDER BY notional DESC
+            """,
+            [latest_date],
+        )
+
+    # exposure by strategy
+    exposure_by_strategy: list[dict[str, Any]] = []
+    if latest_date:
+        exposure_by_strategy = _rows(
+            conn,
+            """
+            SELECT strategy_id, SUM(notional) AS notional
+            FROM portfolio_positions
+            WHERE date_ny = ?
+            GROUP BY strategy_id
+            ORDER BY strategy_id
+            """,
+            [latest_date],
+        )
+
+    # history time series
+    where, params = _portfolio_date_clause("date_ny", start, end)
+    history = _rows(
+        conn,
+        f"""
+        SELECT date_ny, capital_total, gross_exposure, net_exposure, realized_pnl
+        FROM portfolio_snapshots
+        {where}
+        ORDER BY date_ny ASC
+        """,
+        params,
+    )
+
+    return {
+        "latest": latest,
+        "positions": positions,
+        "exposure_by_strategy": exposure_by_strategy,
+        "history": history,
+    }
+
+
+def get_portfolio_positions(
+    conn, date: str | None = None
+) -> dict[str, Any]:
+    # resolve date
+    if date is None:
+        date_rows = _rows(
+            conn,
+            "SELECT MAX(date_ny) AS date_ny FROM portfolio_positions",
+        )
+        date = date_rows[0]["date_ny"] if date_rows and date_rows[0]["date_ny"] else None
+    if date is None:
+        return {"date_ny": None, "total_notional": 0, "by_strategy": []}
+
+    # all positions for this date
+    rows = _rows(
+        conn,
+        """
+        SELECT strategy_id, symbol, qty, avg_price, mark_price, notional
+        FROM portfolio_positions
+        WHERE date_ny = ?
+        ORDER BY strategy_id, notional DESC
+        """,
+        [date],
+    )
+
+    total_notional = sum(r["notional"] or 0 for r in rows)
+
+    # group by strategy_id
+    by_strategy: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        sid = r["strategy_id"]
+        r["weight_pct"] = (r["notional"] / total_notional * 100) if total_notional else 0
+        by_strategy.setdefault(sid, []).append(r)
+
+    return {
+        "date_ny": date,
+        "total_notional": total_notional,
+        "by_strategy": [
+            {"strategy_id": sid, "positions": positions}
+            for sid, positions in sorted(by_strategy.items())
+        ],
+    }
+
+
+def get_portfolio_history(
+    conn, start: str | None, end: str | None
+) -> dict[str, Any]:
+    where, params = _portfolio_date_clause("date_ny", start, end)
+    rows = _rows(
+        conn,
+        f"""
+        SELECT date_ny, capital_total, capital_cash, gross_exposure,
+               net_exposure, realized_pnl, unrealized_pnl
+        FROM portfolio_snapshots
+        {where}
+        ORDER BY date_ny ASC
+        """,
+        params,
+    )
+    return {"points": rows}
+
+
+def get_strategy_matrix(conn) -> dict[str, Any]:
+    # S1/S2 stats from decision_intents
+    decision_stats = _rows(
+        conn,
+        """
+        SELECT strategy_id,
+               COUNT(*) AS trade_count,
+               COUNT(DISTINCT symbol) AS unique_symbols
+        FROM decision_intents
+        GROUP BY strategy_id
+        ORDER BY strategy_id
+        """,
+    )
+
+    # RAEC stats: rebalance count from raec_rebalance_events
+    raec_rebalance_stats = _rows(
+        conn,
+        """
+        SELECT strategy_id,
+               COUNT(*) AS rebalance_count,
+               LAST(regime ORDER BY ny_date, ts_utc) AS latest_regime
+        FROM raec_rebalance_events
+        GROUP BY strategy_id
+        ORDER BY strategy_id
+        """,
+    )
+
+    # RAEC unique symbols from raec_intents
+    raec_symbol_stats = _rows(
+        conn,
+        """
+        SELECT strategy_id,
+               COUNT(DISTINCT symbol) AS unique_symbols
+        FROM raec_intents
+        GROUP BY strategy_id
+        ORDER BY strategy_id
+        """,
+    )
+    raec_symbol_map = {r["strategy_id"]: r["unique_symbols"] for r in raec_symbol_stats}
+
+    # Latest regime for S1/S2
+    latest_regime_rows = _rows(
+        conn,
+        """
+        SELECT regime_id
+        FROM regime_daily
+        ORDER BY ny_date DESC, as_of_utc DESC
+        LIMIT 1
+        """,
+    )
+    latest_regime = latest_regime_rows[0]["regime_id"] if latest_regime_rows else None
+
+    # Exposure from portfolio_positions (latest date, grouped by strategy_id)
+    exposure = _rows(
+        conn,
+        """
+        SELECT strategy_id, SUM(notional) AS notional
+        FROM portfolio_positions
+        WHERE date_ny = (SELECT MAX(date_ny) FROM portfolio_positions)
+        GROUP BY strategy_id
+        ORDER BY strategy_id
+        """,
+    )
+    exposure_map = {r["strategy_id"]: r["notional"] for r in exposure}
+
+    # Build unified strategy list
+    strategies: list[dict[str, Any]] = []
+
+    for row in decision_stats:
+        sid = row["strategy_id"]
+        strategies.append({
+            "strategy_id": sid,
+            "source": "decision",
+            "trade_count": row["trade_count"],
+            "unique_symbols": row["unique_symbols"],
+            "latest_regime": latest_regime,
+            "exposure": exposure_map.get(sid),
+        })
+
+    for row in raec_rebalance_stats:
+        sid = row["strategy_id"]
+        strategies.append({
+            "strategy_id": sid,
+            "source": "raec",
+            "rebalance_count": row["rebalance_count"],
+            "unique_symbols": raec_symbol_map.get(sid, 0),
+            "latest_regime": row["latest_regime"],
+            "exposure": exposure_map.get(sid),
+        })
+
+    # Symbol overlap: symbols that appear in multiple strategies
+    overlap = _rows(
+        conn,
+        """
+        WITH all_symbols AS (
+            SELECT strategy_id, symbol FROM decision_intents
+            UNION
+            SELECT strategy_id, symbol FROM raec_intents
+            UNION
+            SELECT strategy_id, symbol FROM portfolio_positions
+            WHERE date_ny = (SELECT MAX(date_ny) FROM portfolio_positions)
+        )
+        SELECT symbol, LIST(DISTINCT strategy_id ORDER BY strategy_id) AS strategy_ids
+        FROM all_symbols
+        GROUP BY symbol
+        HAVING COUNT(DISTINCT strategy_id) > 1
+        ORDER BY symbol
+        """,
+    )
+
+    return {
+        "strategies": strategies,
+        "symbol_overlap": overlap,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Trade Analytics
 # ---------------------------------------------------------------------------
 

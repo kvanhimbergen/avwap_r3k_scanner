@@ -58,6 +58,17 @@ export const api = {
 
   tradeAnalytics: (args?: { start?: string; end?: string; strategy_id?: string }) =>
     get<KeyValue>(`/api/v1/analytics/trades${toQuery(args ?? {})}`),
+
+  portfolioOverview: (args?: { start?: string; end?: string }) =>
+    get<KeyValue>(`/api/v1/portfolio/overview${toQuery(args ?? {})}`),
+
+  portfolioPositions: (args?: { date?: string }) =>
+    get<KeyValue>(`/api/v1/portfolio/positions${toQuery(args ?? {})}`),
+
+  portfolioHistory: (args?: { start?: string; end?: string }) =>
+    get<KeyValue>(`/api/v1/portfolio/history${toQuery(args ?? {})}`),
+
+  strategyMatrix: () => get<KeyValue>("/api/v1/strategies/matrix"),
 };
 
 function toQuery(params: Record<string, unknown>): string {

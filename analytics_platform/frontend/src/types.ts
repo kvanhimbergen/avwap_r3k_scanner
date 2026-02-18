@@ -112,3 +112,39 @@ export interface SymbolConcentration {
   symbol: string;
   count: number;
 }
+
+export interface PortfolioPosition {
+  strategy_id: string;
+  symbol: string;
+  qty: number;
+  avg_price: number | null;
+  mark_price: number | null;
+  notional: number;
+  weight_pct: number;
+}
+
+export interface PortfolioSummary {
+  date_ny: string;
+  capital_total: number;
+  capital_cash: number;
+  capital_invested: number;
+  gross_exposure: number;
+  net_exposure: number;
+  realized_pnl: number | null;
+  unrealized_pnl: number | null;
+  fees_today: number;
+}
+
+export interface StrategyMatrixRow {
+  strategy_id: string;
+  strategy_type: string;
+  trade_count: number;
+  unique_symbols: number;
+  current_regime: string | null;
+  exposure: number | null;
+}
+
+export interface SymbolOverlap {
+  symbol: string;
+  strategy_ids: string[];
+}

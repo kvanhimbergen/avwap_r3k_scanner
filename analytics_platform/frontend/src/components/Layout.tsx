@@ -11,6 +11,13 @@ const NAV_SECTIONS = [
     ],
   },
   {
+    label: "Portfolio",
+    items: [
+      { to: "/portfolio", label: "Overview" },
+      { to: "/strategies/matrix", label: "Strategy Matrix" },
+    ],
+  },
+  {
     label: "AVWAP + S2",
     items: [
       { to: "/strategies", label: "Strategies" },
@@ -22,6 +29,13 @@ const NAV_SECTIONS = [
     items: [
       { to: "/raec", label: "Dashboard" },
       { to: "/raec/readiness", label: "Readiness" },
+    ],
+  },
+  {
+    label: "Execution",
+    items: [
+      { to: "/execution/slippage", label: "Slippage" },
+      { to: "/analytics/trades", label: "Trade Analytics" },
     ],
   },
   {
