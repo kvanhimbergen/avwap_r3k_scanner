@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import csv
+import json
 from io import StringIO
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -310,6 +312,10 @@ EXPORT_TABLES = {
     "backtest_runs": ("backtest_runs", None),
     "backtest_metrics": ("backtest_metrics", None),
     "freshness": ("freshness_health", None),
+    "raec_rebalance_events": ("raec_rebalance_events", "ny_date"),
+    "raec_allocations": ("raec_allocations", "ny_date"),
+    "raec_intents": ("raec_intents", "ny_date"),
+    "raec_coordinator_runs": ("raec_coordinator_runs", "ny_date"),
 }
 
 
@@ -342,3 +348,300 @@ def export_dataset_csv(
     buffer = StringIO()
     frame.to_csv(buffer, index=False, quoting=csv.QUOTE_MINIMAL)
     return f"{dataset}.csv", buffer.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# RAEC Dashboard
+# ---------------------------------------------------------------------------
+
+def _raec_where(start: str | None, end: str | None, strategy_id: str | None) -> tuple[str, list[Any]]:
+    """Build WHERE clause for RAEC queries with optional date range + strategy filter."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if start:
+        clauses.append("ny_date >= ?")
+        params.append(start)
+    if end:
+        clauses.append("ny_date <= ?")
+        params.append(end)
+    if strategy_id:
+        clauses.append("strategy_id = ?")
+        params.append(strategy_id)
+    if not clauses:
+        return "", params
+    return " WHERE " + " AND ".join(clauses), params
+
+
+def get_raec_dashboard(conn, start: str | None, end: str | None, strategy_id: str | None = None) -> dict[str, Any]:
+    where, params = _raec_where(start, end, strategy_id)
+
+    by_strategy = _rows(
+        conn,
+        f"""
+        SELECT
+            strategy_id,
+            COUNT(*) AS events,
+            COALESCE(SUM(CASE WHEN should_rebalance THEN 1 ELSE 0 END), 0) AS rebalance_count,
+            MAX(ny_date) AS last_eval_date,
+            LAST(regime ORDER BY ny_date, ts_utc) AS latest_regime,
+            LAST(portfolio_vol_target ORDER BY ny_date, ts_utc) AS portfolio_vol_target
+        FROM raec_rebalance_events
+        {where}
+        GROUP BY strategy_id
+        ORDER BY strategy_id
+        """,
+        params,
+    )
+
+    total_events = sum(r["events"] for r in by_strategy)
+    total_rebalances = sum(r["rebalance_count"] for r in by_strategy)
+
+    regime_history = _rows(
+        conn,
+        f"""
+        SELECT ny_date, strategy_id, regime
+        FROM raec_rebalance_events
+        {where}
+        ORDER BY ny_date, ts_utc
+        """,
+        params,
+    )
+
+    # Latest allocations per strategy: most recent ny_date for each strategy
+    alloc_where_parts: list[str] = []
+    alloc_params: list[Any] = []
+    if strategy_id:
+        alloc_where_parts.append("strategy_id = ?")
+        alloc_params.append(strategy_id)
+    if start:
+        alloc_where_parts.append("ny_date >= ?")
+        alloc_params.append(start)
+    if end:
+        alloc_where_parts.append("ny_date <= ?")
+        alloc_params.append(end)
+    alloc_where = (" WHERE " + " AND ".join(alloc_where_parts)) if alloc_where_parts else ""
+
+    allocation_snapshots = _rows(
+        conn,
+        f"""
+        SELECT a.ny_date, a.strategy_id, a.alloc_type, a.symbol, a.weight_pct
+        FROM raec_allocations a
+        INNER JOIN (
+            SELECT strategy_id, MAX(ny_date) AS max_date
+            FROM raec_allocations
+            {alloc_where}
+            GROUP BY strategy_id
+        ) latest ON a.strategy_id = latest.strategy_id AND a.ny_date = latest.max_date
+        ORDER BY a.strategy_id, a.alloc_type, a.symbol
+        """,
+        alloc_params,
+    )
+
+    return {
+        "total_events": total_events,
+        "total_rebalances": total_rebalances,
+        "by_strategy": by_strategy,
+        "regime_history": regime_history,
+        "allocation_snapshots": allocation_snapshots,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Journal (unified trade intent log)
+# ---------------------------------------------------------------------------
+
+def get_journal(
+    conn,
+    *,
+    start: str | None,
+    end: str | None,
+    strategy_id: str | None = None,
+    symbol: str | None = None,
+    side: str | None = None,
+    limit: int = 500,
+) -> dict[str, Any]:
+    # Build shared filter clauses (applied to the CTE)
+    clauses: list[str] = []
+    params: list[Any] = []
+    if start:
+        clauses.append("j.ny_date >= ?")
+        params.append(start)
+    if end:
+        clauses.append("j.ny_date <= ?")
+        params.append(end)
+    if strategy_id:
+        clauses.append("j.strategy_id = ?")
+        params.append(strategy_id)
+    if symbol:
+        clauses.append("j.symbol = ?")
+        params.append(symbol.upper())
+    if side:
+        clauses.append("j.side = ?")
+        params.append(side.upper())
+
+    outer_where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    safe_limit = max(1, min(limit, 5000))
+
+    rows = _rows(
+        conn,
+        f"""
+        WITH journal AS (
+            SELECT
+                ri.ny_date,
+                ri.ts_utc,
+                ri.strategy_id,
+                ri.symbol,
+                ri.side,
+                ri.delta_pct,
+                ri.target_pct,
+                ri.current_pct,
+                re.regime,
+                'raec' AS source
+            FROM raec_intents ri
+            LEFT JOIN raec_rebalance_events re
+                ON ri.ny_date = re.ny_date AND ri.strategy_id = re.strategy_id
+
+            UNION ALL
+
+            SELECT
+                di.ny_date,
+                di.ts_utc,
+                di.strategy_id,
+                di.symbol,
+                di.side,
+                NULL AS delta_pct,
+                NULL AS target_pct,
+                NULL AS current_pct,
+                rd.regime_id AS regime,
+                'decision' AS source
+            FROM decision_intents di
+            LEFT JOIN regime_daily rd ON di.ny_date = rd.ny_date
+        )
+        SELECT j.*
+        FROM journal j
+        {outer_where}
+        ORDER BY j.ny_date DESC, j.ts_utc DESC
+        LIMIT ?
+        """,
+        params + [safe_limit],
+    )
+    return {"count": len(rows), "rows": rows}
+
+
+# ---------------------------------------------------------------------------
+# RAEC Readiness
+# ---------------------------------------------------------------------------
+
+_RAEC_STRATEGY_IDS = [
+    "RAEC_401K_V1",
+    "RAEC_401K_V2",
+    "RAEC_401K_V3",
+    "RAEC_401K_V4",
+    "RAEC_401K_V5",
+    "RAEC_401K_COORD",
+]
+
+_BOOK_ID = "SCHWAB_401K_MANUAL"
+
+
+def get_raec_readiness(conn, repo_root: Path) -> dict[str, Any]:
+    from datetime import date
+
+    today = date.today().isoformat()
+    strategies: list[dict[str, Any]] = []
+
+    for sid in _RAEC_STRATEGY_IDS:
+        state_file = repo_root / "state" / "strategies" / _BOOK_ID / f"{sid}.json"
+        warnings: list[str] = []
+        state_data: dict[str, Any] = {}
+
+        if state_file.exists():
+            try:
+                state_data = json.loads(state_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                warnings.append("state_file_corrupt")
+        else:
+            warnings.append("missing_state_file")
+
+        last_eval = state_data.get("last_eval_date")
+        last_regime = state_data.get("last_regime")
+        last_allocs = state_data.get("last_known_allocations")
+
+        if last_eval and last_eval < today:
+            warnings.append("stale_eval")
+        if not last_allocs:
+            warnings.append("no_allocations")
+
+        # Count ledger files for today
+        ledger_dir = repo_root / "ledger" / "RAEC_REBALANCE" / sid
+        today_ledger_count = 0
+        if ledger_dir.exists():
+            today_ledger_count = sum(
+                1 for f in ledger_dir.iterdir()
+                if f.name.startswith(today) and f.suffix == ".jsonl"
+            )
+
+        strategies.append({
+            "strategy_id": sid,
+            "state_file_exists": state_file.exists(),
+            "last_eval_date": last_eval,
+            "last_regime": last_regime,
+            "last_known_allocations": last_allocs,
+            "today_ledger_count": today_ledger_count,
+            "warnings": warnings,
+        })
+
+    coord = next((s for s in strategies if s["strategy_id"] == "RAEC_401K_COORD"), None)
+    return {
+        "strategies": strategies,
+        "coordinator": coord,
+    }
+
+
+# ---------------------------------------------------------------------------
+# RAEC P&L / Activity summary
+# ---------------------------------------------------------------------------
+
+def get_pnl(conn, start: str | None, end: str | None, strategy_id: str | None = None) -> dict[str, Any]:
+    where, params = _raec_where(start, end, strategy_id)
+
+    by_strategy = _rows(
+        conn,
+        f"""
+        SELECT
+            strategy_id,
+            COUNT(*) AS eval_count,
+            COALESCE(SUM(CASE WHEN should_rebalance THEN 1 ELSE 0 END), 0) AS rebalance_count,
+            COUNT(DISTINCT regime) AS regime_changes
+        FROM raec_rebalance_events
+        {where}
+        GROUP BY strategy_id
+        ORDER BY strategy_id
+        """,
+        params,
+    )
+
+    # Allocation drift: difference between total target weight and total current weight per day
+    drift_where, drift_params = _raec_where(start, end, strategy_id)
+    drift = _rows(
+        conn,
+        f"""
+        SELECT
+            ny_date,
+            strategy_id,
+            SUM(CASE WHEN alloc_type = 'target' THEN weight_pct ELSE 0 END) AS target_total,
+            SUM(CASE WHEN alloc_type = 'current' THEN weight_pct ELSE 0 END) AS current_total,
+            SUM(CASE WHEN alloc_type = 'target' THEN weight_pct ELSE 0 END)
+              - SUM(CASE WHEN alloc_type = 'current' THEN weight_pct ELSE 0 END) AS drift
+        FROM raec_allocations
+        {drift_where}
+        GROUP BY ny_date, strategy_id
+        ORDER BY ny_date, strategy_id
+        """,
+        drift_params,
+    )
+
+    return {
+        "by_strategy": by_strategy,
+        "allocation_drift": drift,
+    }
