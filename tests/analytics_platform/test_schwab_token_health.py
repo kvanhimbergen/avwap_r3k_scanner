@@ -111,3 +111,30 @@ class TestCheckTokenHealth:
         )
         result = check_token_health(str(path))
         assert not result.healthy
+
+    def test_nested_schwab_py_format(self, tmp_path):
+        """schwab-py stores token under a 'token' key."""
+        path = tmp_path / "token.json"
+        path.write_text(
+            json.dumps({
+                "creation_timestamp": time.time(),
+                "token": {"refresh_token": "abc", "access_token": "xyz"},
+            }),
+            encoding="utf-8",
+        )
+        result = check_token_health(str(path))
+        assert result.healthy
+        assert result.days_until_expiry > 6.9
+
+    def test_nested_format_missing_refresh_token(self, tmp_path):
+        path = tmp_path / "token.json"
+        path.write_text(
+            json.dumps({
+                "creation_timestamp": time.time(),
+                "token": {"access_token": "xyz"},
+            }),
+            encoding="utf-8",
+        )
+        result = check_token_health(str(path))
+        assert not result.healthy
+        assert "missing refresh_token" in result.reason

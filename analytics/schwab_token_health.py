@@ -52,7 +52,9 @@ def check_token_health(token_path: str) -> TokenHealthStatus:
             days_until_expiry=0.0,
         )
 
-    if "refresh_token" not in data:
+    # schwab-py nests the OAuth token under a "token" key
+    token_data = data.get("token", data)
+    if not isinstance(token_data, dict) or "refresh_token" not in token_data:
         return TokenHealthStatus(
             healthy=False,
             reason="token file missing refresh_token",
