@@ -17,7 +17,7 @@ export function S2SignalsPage() {
   if (signals.loading) return <LoadingState text="Loading S2 signals..." />;
   if (signals.error) return <ErrorState error={signals.error} />;
 
-  const rows = (signals.data?.data.rows ?? []) as Array<Record<string, unknown>>;
+  const rows = (signals.data?.data?.rows ?? []) as Array<Record<string, unknown>>;
 
   return (
     <section>

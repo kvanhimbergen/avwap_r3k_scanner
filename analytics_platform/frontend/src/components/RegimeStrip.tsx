@@ -50,7 +50,7 @@ export function RegimeStrip() {
   const risk = usePolling(() => api.riskControls(), 60_000);
   const [showPopover, setShowPopover] = useState(false);
 
-  const freshnessRows = (freshness.data?.data.rows ?? []) as FreshnessRow[];
+  const freshnessRows = (freshness.data?.data?.rows ?? []) as FreshnessRow[];
   const health = computeSystemHealth(freshnessRows);
   const riskData = (risk.data?.data ?? null) as Record<string, any> | null;
   const regime = extractRegime(riskData);

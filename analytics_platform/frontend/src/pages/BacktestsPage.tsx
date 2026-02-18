@@ -15,7 +15,7 @@ export function BacktestsPage() {
   );
 
   useEffect(() => {
-    const rows = (runs.data?.data.runs ?? []) as Array<Record<string, unknown>>;
+    const rows = (runs.data?.data?.runs ?? []) as Array<Record<string, unknown>>;
     if (!selectedRun && rows.length > 0) {
       setSelectedRun(String(rows[0].run_id));
     }
@@ -24,9 +24,9 @@ export function BacktestsPage() {
   if (runs.loading) return <LoadingState text="Loading backtest runs..." />;
   if (runs.error) return <ErrorState error={runs.error} />;
 
-  const runRows = (runs.data?.data.runs ?? []) as Array<Record<string, unknown>>;
-  const metrics = (detail.data?.data.metrics ?? []) as Array<Record<string, unknown>>;
-  const equity = (detail.data?.data.equity_curve ?? []) as Array<Record<string, unknown>>;
+  const runRows = (runs.data?.data?.runs ?? []) as Array<Record<string, unknown>>;
+  const metrics = (detail.data?.data?.metrics ?? []) as Array<Record<string, unknown>>;
+  const equity = (detail.data?.data?.equity_curve ?? []) as Array<Record<string, unknown>>;
 
   return (
     <section>

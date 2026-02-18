@@ -28,9 +28,9 @@ export function RiskPage() {
 
   if (risk.error) return <ErrorState error={risk.error} />;
 
-  const controls = (risk.data?.data.risk_controls ?? []) as Array<Record<string, unknown>>;
-  const regimes = (risk.data?.data.regimes ?? []) as Array<Record<string, unknown>>;
-  const decisionPoints = (decisions.data?.data.points ?? []) as TimePoint[];
+  const controls = (risk.data?.data?.risk_controls ?? []) as Array<Record<string, unknown>>;
+  const regimes = (risk.data?.data?.regimes ?? []) as Array<Record<string, unknown>>;
+  const decisionPoints = (decisions.data?.data?.points ?? []) as TimePoint[];
   const pnlData = (pnl.data?.data as Record<string, any>) ?? {};
   const allocationDrift: any[] = pnlData.allocation_drift ?? [];
   const byStrategy: any[] = pnlData.by_strategy ?? [];

@@ -27,7 +27,7 @@ export function SystemPage() {
   const freshness = usePolling(() => api.freshness(), 60_000);
   const health = usePolling(() => api.health(), 60_000);
 
-  const freshnessRows = (freshness.data?.data.rows ?? []) as FreshnessRow[];
+  const freshnessRows = (freshness.data?.data?.rows ?? []) as FreshnessRow[];
   const healthData = (health.data?.data ?? {}) as Record<string, unknown>;
 
   return (

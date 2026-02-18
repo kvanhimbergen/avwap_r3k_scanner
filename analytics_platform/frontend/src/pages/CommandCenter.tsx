@@ -333,7 +333,7 @@ function buildActivityFeed(
       time: fmtTime(row.ts_utc) || row.ny_date,
       type: row.posted ? "fill" : "info",
       strategyId: getMeta(row.strategy_id).shortName,
-      text: `${row.side} ${row.symbol} ${row.delta_pct > 0 ? "+" : ""}${row.delta_pct.toFixed(1)}%`,
+      text: `${row.side} ${row.symbol} ${row.delta_pct != null ? `${row.delta_pct > 0 ? "+" : ""}${row.delta_pct.toFixed(1)}%` : ""}`,
     });
   }
 
