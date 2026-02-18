@@ -8,10 +8,10 @@ import json
 import math
 import os
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from statistics import stdev
-from typing import Iterable
+from typing import Any, Iterable
 
 from data.prices import PriceProvider, get_default_price_provider
 from execution_v2 import book_ids, book_router
@@ -88,6 +88,45 @@ def _save_state(path: Path, state: dict) -> None:
     payload = json.dumps(state, sort_keys=True, indent=2)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, payload)
+
+
+def _write_raec_ledger(
+    result: RunResult,
+    *,
+    repo_root: Path,
+    targets: dict[str, float],
+    current_allocations: dict[str, float],
+    signals: dict[str, Any],
+    momentum_scores: list[dict[str, Any]],
+    build_git_sha: str | None = None,
+) -> None:
+    """Append a RAEC_REBALANCE_EVENT record to the strategy's ledger."""
+    ledger_dir = repo_root / "ledger" / "RAEC_REBALANCE" / STRATEGY_ID
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+    ledger_path = ledger_dir / f"{result.asof_date}.jsonl"
+    record = {
+        "record_type": "RAEC_REBALANCE_EVENT",
+        "ts_utc": datetime.now(timezone.utc).isoformat(),
+        "ny_date": result.asof_date,
+        "book_id": BOOK_ID,
+        "strategy_id": STRATEGY_ID,
+        "regime": result.regime,
+        "should_rebalance": result.should_rebalance,
+        "rebalance_trigger": "daily",
+        "targets": targets,
+        "current_allocations": current_allocations,
+        "intent_count": len(result.intents),
+        "intents": result.intents,
+        "signals": signals,
+        "momentum_scores": momentum_scores,
+        "portfolio_vol_target": TARGET_PORTFOLIO_VOL,
+        "portfolio_vol_realized": None,
+        "posted": result.posted,
+        "notice": result.notice,
+        "build_git_sha": build_git_sha,
+    }
+    with ledger_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
 
 
 def _parse_date(raw: str) -> date:
@@ -733,6 +772,17 @@ def run_strategy(
             )
             posted = result.sent > 0
 
+    run_result = RunResult(
+        asof_date=asof_date,
+        regime=signal.regime,
+        targets=targets,
+        intents=intents,
+        should_rebalance=should_rebalance,
+        posting_enabled=posting_enabled,
+        posted=posted,
+        notice=notice,
+    )
+
     if not dry_run or allow_state_write:
         state.update(
             {
@@ -744,17 +794,30 @@ def run_strategy(
         if notice is None:
             state["last_known_allocations"] = current_allocs
         _save_state(state_path, state)
+        _write_raec_ledger(
+            run_result,
+            repo_root=repo_root,
+            targets=targets,
+            current_allocations=current_allocs,
+            signals={
+                "close": signal.close,
+                "sma50": signal.sma50,
+                "sma200": signal.sma200,
+                "vol_20d": signal.vol_20d,
+                "vol_252d": signal.vol_252d,
+                "drawdown_63d": signal.drawdown_63d,
+                "trend_up": signal.trend_up,
+                "vol_high": signal.vol_high,
+                "crash_mode": signal.crash_mode,
+            },
+            momentum_scores=[
+                {"symbol": s, "score": feature_map[s].score, "mom_6m": feature_map[s].mom_6m}
+                for s in ranked_snapshot
+                if s in feature_map
+            ],
+        )
 
-    return RunResult(
-        asof_date=asof_date,
-        regime=signal.regime,
-        targets=targets,
-        intents=intents,
-        should_rebalance=should_rebalance,
-        posting_enabled=posting_enabled,
-        posted=posted,
-        notice=notice,
-    )
+    return run_result
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType
 
@@ -57,6 +58,41 @@ def _save_state(path: Path, state: dict) -> None:
     payload = json.dumps(state, sort_keys=True, indent=2)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, payload)
+
+
+def _write_raec_ledger(
+    coord_result: CoordinatorResult,
+    *,
+    repo_root: Path,
+    build_git_sha: str | None = None,
+) -> None:
+    """Append a RAEC_COORDINATOR_RUN record to the coordinator's ledger."""
+    ledger_dir = repo_root / "ledger" / "RAEC_REBALANCE" / STRATEGY_ID
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+    ledger_path = ledger_dir / f"{coord_result.asof_date}.jsonl"
+    sub_strategy_results = {}
+    for key, r in coord_result.sub_results.items():
+        sub_strategy_results[key] = {
+            "regime": r.regime,
+            "should_rebalance": r.should_rebalance,
+            "intent_count": len(r.intents),
+            "posted": r.posted,
+            "notice": r.notice,
+        }
+    record = {
+        "record_type": "RAEC_COORDINATOR_RUN",
+        "ts_utc": datetime.now(timezone.utc).isoformat(),
+        "ny_date": coord_result.asof_date,
+        "book_id": BOOK_ID,
+        "strategy_id": STRATEGY_ID,
+        "capital_split": coord_result.capital_split,
+        "sub_strategy_results": sub_strategy_results,
+        "rebalanced": coord_result.rebalanced,
+        "posted": coord_result.posted,
+        "build_git_sha": build_git_sha,
+    }
+    with ledger_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
 
 
 def run_coordinator(
@@ -132,6 +168,14 @@ def run_coordinator(
     total_count = len(sub_results)
     print(f"\nCOORD Summary: {' '.join(regime_parts)} | {rebal_count}/{total_count} rebalancing")
 
+    coord_result = CoordinatorResult(
+        asof_date=asof_date,
+        sub_results=sub_results,
+        capital_split=split,
+        rebalanced=rebalanced,
+        posted=posted,
+    )
+
     # Save coordinator state
     coord_state_path = _state_path(repo_root)
     coord_state = _load_state(coord_state_path)
@@ -142,14 +186,9 @@ def run_coordinator(
         "sub_rebalanced": rebalanced,
     })
     _save_state(coord_state_path, coord_state)
+    _write_raec_ledger(coord_result, repo_root=repo_root)
 
-    return CoordinatorResult(
-        asof_date=asof_date,
-        sub_results=sub_results,
-        capital_split=split,
-        rebalanced=rebalanced,
-        posted=posted,
-    )
+    return coord_result
 
 
 def _build_sub_ticket(
