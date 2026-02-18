@@ -1,0 +1,11 @@
+[Unit]
+Description=Run post-scan pipeline after daily scan (Mon-Fri 08:35 ET)
+
+[Timer]
+OnCalendar=Mon..Fri 08:35 America/New_York
+Persistent=true
+AccuracySec=1min
+Unit=post-scan.service
+
+[Install]
+WantedBy=timers.target

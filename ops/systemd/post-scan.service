@@ -1,0 +1,12 @@
+[Unit]
+Description=Post-scan daily pipeline (regime, throttle, S2, RAEC)
+After=scan.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/avwap_r3k_scanner
+ExecStart=/root/avwap_r3k_scanner/venv/bin/python -u /root/avwap_r3k_scanner/ops/post_scan_pipeline.py
+Environment=PYTHONPATH=/root/avwap_r3k_scanner
+EnvironmentFile=/root/avwap_r3k_scanner/.env
+StandardOutput=journal
+StandardError=journal

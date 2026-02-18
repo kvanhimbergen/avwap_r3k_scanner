@@ -21,6 +21,7 @@ echo "Running Python compile checks..."
 python -m py_compile \
   universe.py \
   run_scan.py \
+  ops/post_scan_pipeline.py \
   analytics_platform/backend/main.py \
   analytics_platform/backend/app.py \
   execution_v2/execution_main.py \
@@ -49,7 +50,7 @@ sudo systemctl restart execution.service
 sudo systemctl restart analytics-platform.service || true
 
 echo "Verifying timers..."
-sudo systemctl restart scan.timer execution-restart.timer >/dev/null 2>&1 || true
-systemctl list-timers --all | grep -E 'scan\.timer|execution-restart\.timer|NEXT|LEFT' || true
+sudo systemctl restart scan.timer execution-restart.timer post-scan.timer >/dev/null 2>&1 || true
+systemctl list-timers --all | grep -E 'scan\.timer|execution-restart\.timer|post-scan\.timer|NEXT|LEFT' || true
 
 echo "Deployment complete (SYSTEMD MODE)."

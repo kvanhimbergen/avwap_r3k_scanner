@@ -85,6 +85,26 @@ def main() -> int:
         else:
             checks.append(CheckResult("scan.timer.on_calendar", "FAIL", err or "unable to read"))
 
+        code, out, err = systemctl_show("post-scan.timer", "LoadState")
+        if code == 0 and out:
+            status = "PASS" if out == "loaded" else "FAIL"
+            checks.append(CheckResult("post-scan.timer.load_state", status, out))
+        else:
+            checks.append(CheckResult("post-scan.timer.load_state", "FAIL", err or "unable to read"))
+
+        code, out, err = systemctl_show("post-scan.timer", "TimersCalendar")
+        if code == 0 and out:
+            tz_ok = "America/New_York" in out
+            checks.append(
+                CheckResult(
+                    "post-scan.timer.on_calendar",
+                    "PASS" if tz_ok else "WARN",
+                    out,
+                )
+            )
+        else:
+            checks.append(CheckResult("post-scan.timer.on_calendar", "FAIL", err or "unable to read"))
+
         code, out, err = systemctl_show("execution.service", "LoadState")
         if code == 0 and out:
             status = "PASS" if out == "loaded" else "FAIL"
