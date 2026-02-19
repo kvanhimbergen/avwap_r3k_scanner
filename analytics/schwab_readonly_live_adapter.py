@@ -51,6 +51,7 @@ class SchwabReadonlyLiveAdapter:
             token_path=config.token_path,
             api_key=config.client_id,
             app_secret=config.client_secret,
+            enforce_enums=False,
         )
         return cls(
             client=client,
