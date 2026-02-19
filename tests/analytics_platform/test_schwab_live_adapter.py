@@ -294,4 +294,5 @@ class TestFromConfig:
             token_path="/tmp/token.json",
             api_key="test-id",
             app_secret="test-secret",
+            enforce_enums=False,
         )
