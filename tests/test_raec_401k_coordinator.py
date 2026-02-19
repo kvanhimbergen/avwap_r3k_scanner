@@ -334,6 +334,85 @@ def test_coordinator_partial_rebalance(tmp_path: Path) -> None:
     assert len(adapter.calls) == 2
 
 
+def test_coordinator_no_trades_posts_summary(tmp_path: Path) -> None:
+    """When no sub-strategy rebalances, a 'no trades today' message is posted."""
+    provider = _all_risk_on_provider()
+    asof_date = "2026-02-06"
+    asof = raec_401k_v3._parse_date(asof_date)
+    cash_symbol = "BIL"
+
+    # Pre-compute targets for each strategy and seed state at target
+    for module in (raec_401k_v3, raec_401k_v4, raec_401k_v5):
+        vti_series = module._sorted_series(provider.get_daily_close_series("VTI"), asof=asof)
+        if module is raec_401k_v5:
+            qqq_series = module._sorted_series(provider.get_daily_close_series("QQQ"), asof=asof)
+            signal = module._compute_anchor_signal(vti_series, qqq_series)
+        else:
+            signal = module._compute_anchor_signal(vti_series)
+        fm = module._load_symbol_features(provider=provider, asof=asof, cash_symbol=cash_symbol)
+        targets = module._targets_for_regime(signal=signal, feature_map=fm, cash_symbol=cash_symbol)
+
+        state_path = tmp_path / "state" / "strategies" / module.BOOK_ID / f"{module.STRATEGY_ID}.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps({
+            "last_eval_date": asof_date,
+            "last_regime": signal.regime,
+            "last_known_allocations": targets,
+        }))
+
+    adapter = _TrackingAdapter()
+    result = raec_401k_coordinator.run_coordinator(
+        asof_date=asof_date,
+        repo_root=tmp_path,
+        price_provider=provider,
+        dry_run=False,
+        adapter_override=adapter,
+    )
+    assert result.rebalanced == []
+    # Should get exactly one "no trades" message
+    assert len(adapter.calls) == 1
+    assert "No trades today" in adapter.calls[0]["message"]
+    assert "no-trades-summary" in result.posted
+
+
+def test_coordinator_no_trades_skipped_on_dry_run(tmp_path: Path) -> None:
+    """Dry run should NOT post the 'no trades' message."""
+    provider = _all_risk_on_provider()
+    asof_date = "2026-02-06"
+    asof = raec_401k_v3._parse_date(asof_date)
+    cash_symbol = "BIL"
+
+    for module in (raec_401k_v3, raec_401k_v4, raec_401k_v5):
+        vti_series = module._sorted_series(provider.get_daily_close_series("VTI"), asof=asof)
+        if module is raec_401k_v5:
+            qqq_series = module._sorted_series(provider.get_daily_close_series("QQQ"), asof=asof)
+            signal = module._compute_anchor_signal(vti_series, qqq_series)
+        else:
+            signal = module._compute_anchor_signal(vti_series)
+        fm = module._load_symbol_features(provider=provider, asof=asof, cash_symbol=cash_symbol)
+        targets = module._targets_for_regime(signal=signal, feature_map=fm, cash_symbol=cash_symbol)
+
+        state_path = tmp_path / "state" / "strategies" / module.BOOK_ID / f"{module.STRATEGY_ID}.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(json.dumps({
+            "last_eval_date": asof_date,
+            "last_regime": signal.regime,
+            "last_known_allocations": targets,
+        }))
+
+    adapter = _TrackingAdapter()
+    result = raec_401k_coordinator.run_coordinator(
+        asof_date=asof_date,
+        repo_root=tmp_path,
+        price_provider=provider,
+        dry_run=True,
+        adapter_override=adapter,
+    )
+    assert result.rebalanced == []
+    assert len(adapter.calls) == 0
+    assert result.posted == []
+
+
 def test_coordinator_cli_args() -> None:
     args = raec_401k_coordinator.parse_args(["--asof", "2026-02-17", "--dry-run"])
     assert args.asof == "2026-02-17"

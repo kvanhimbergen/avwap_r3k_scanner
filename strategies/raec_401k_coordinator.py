@@ -161,6 +161,35 @@ def run_coordinator(
                 if send_result.sent > 0:
                     posted.append(key)
 
+    # Post a "no trades" summary when nothing needs rebalancing
+    if not rebalanced and not dry_run:
+        adapter = adapter_override or book_router.select_trading_client(BOOK_ID)
+        no_trade_message = _build_no_trades_message(
+            asof_date=asof_date,
+            sub_results=sub_results,
+            split=split,
+        )
+        no_trade_intents = [
+            {
+                "symbol": "NOTICE",
+                "side": "INFO",
+                "target_pct": 0.0,
+                "current_pct": 0.0,
+                "delta_pct": 0.0,
+                "strategy_id": STRATEGY_ID,
+                "intent_id": f"coord-no-trades-{asof_date}",
+            }
+        ]
+        send_result = adapter.send_summary_ticket(
+            no_trade_intents,
+            message=no_trade_message,
+            ny_date=asof_date,
+            repo_root=repo_root,
+            post_enabled=posting_enabled,
+        )
+        if send_result.sent > 0:
+            posted.append("no-trades-summary")
+
     # Print summary
     regime_parts = []
     for key in ("v3", "v4", "v5"):
@@ -191,6 +220,26 @@ def run_coordinator(
     _write_raec_ledger(coord_result, repo_root=repo_root)
 
     return coord_result
+
+
+def _build_no_trades_message(
+    *,
+    asof_date: str,
+    sub_results: dict[str, object],
+    split: dict[str, float],
+) -> str:
+    lines = [
+        f"[COORD] No trades today ({asof_date})",
+        "",
+    ]
+    for key in ("v3", "v4", "v5"):
+        result = sub_results.get(key)
+        if result:
+            pct = split.get(key, 0.0) * 100.0
+            lines.append(f"  {key.upper()} ({pct:.0f}%): regime={result.regime}, rebalance=No")
+    lines.append("")
+    lines.append("All positions aligned with targets.")
+    return "\n".join(lines)
 
 
 def _build_sub_ticket(

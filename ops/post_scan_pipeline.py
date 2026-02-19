@@ -3,18 +3,19 @@
 
 Runs after the daily AVWAP scan completes.  Executes these steps in order:
 
-1. regime_e1_runner       → ledger/REGIME_E1/{date}.jsonl
-2. regime_throttle_writer → ledger/PORTFOLIO_THROTTLE/{date}.jsonl
-3. s2_letf_orb_aggro      → ledger/STRATEGY_SIGNALS/S2_LETF_ORB_AGGRO/{date}.jsonl
-4. s2_letf_orb_alpaca     → bracket orders from S2 candidates (Alpaca paper)
-5. raec_401k_coordinator  → ledger/RAEC_REBALANCE/RAEC_401K_COORD/{date}.jsonl
-6. raec_401k_v2           → Alpaca paper rebalance (V2 dynamic factor rotation)
-7. schwab_readonly_sync   → (optional) live Schwab account sync
+1. regime_e1_runner           → ledger/REGIME_E1/{date}.jsonl
+2. regime_throttle_writer     → ledger/PORTFOLIO_THROTTLE/{date}.jsonl
+3. schwab_readonly_sync       → (optional) live Schwab account sync
+4. schwab_seed_allocations    → (optional) seed RAEC state from Schwab positions
+5. s2_letf_orb_aggro          → ledger/STRATEGY_SIGNALS/S2_LETF_ORB_AGGRO/{date}.jsonl
+6. s2_letf_orb_alpaca         → bracket orders from S2 candidates (Alpaca paper)
+7. raec_401k_coordinator      → ledger/RAEC_REBALANCE/RAEC_401K_COORD/{date}.jsonl
+8. raec_401k_v2               → Alpaca paper rebalance (V2 dynamic factor rotation)
 
 Steps 1→2 are sequential (throttle reads regime output).
-Steps 3→4 are sequential (S2 bracket orders depend on candidate CSV from step 3).
-Steps 5 and 6 are independent but run sequentially for log clarity.
-Step 7 is optional — fails gracefully if credentials are missing or API is down.
+Steps 3→4 are optional — if Schwab API is down, RAEC falls back to stale state.
+Steps 5→6 are sequential (S2 bracket orders depend on candidate CSV from step 5).
+Steps 7 and 8 are independent but run sequentially for log clarity.
 
 Usage:
     python ops/post_scan_pipeline.py                       # auto-detect today (NY)
@@ -46,6 +47,23 @@ STEPS = [
         ],
     },
     {
+        "name": "schwab_readonly_sync",
+        "optional": True,
+        "args": lambda date: [
+            sys.executable, "-m", "analytics.schwab_readonly_runner",
+            "--live",
+            "--ny-date", date,
+        ],
+    },
+    {
+        "name": "schwab_seed_allocations",
+        "optional": True,
+        "args": lambda date: [
+            sys.executable, "-m", "analytics.schwab_seed_allocations",
+            "--ny-date", date,
+        ],
+    },
+    {
         "name": "s2_letf_orb_aggro",
         "args": lambda date: [
             sys.executable, "-m", "strategies.s2_letf_orb_aggro",
@@ -72,15 +90,6 @@ STEPS = [
         "args": lambda date: [
             sys.executable, "-m", "strategies.raec_401k_v2",
             "--asof", date,
-        ],
-    },
-    {
-        "name": "schwab_readonly_sync",
-        "optional": True,
-        "args": lambda date: [
-            sys.executable, "-m", "analytics.schwab_readonly_runner",
-            "--live",
-            "--ny-date", date,
         ],
     },
 ]

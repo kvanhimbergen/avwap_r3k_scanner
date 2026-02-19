@@ -468,11 +468,12 @@ class TestPipelineStepOrder:
         assert names == [
             "regime_e1_runner",
             "regime_throttle_writer",
+            "schwab_readonly_sync",
+            "schwab_seed_allocations",
             "s2_letf_orb_aggro",
             "s2_letf_orb_alpaca",
             "raec_401k_coordinator",
             "raec_401k_v2",
-            "schwab_readonly_sync",
         ]
 
     def test_s2_aggro_uses_leveraged_only(self) -> None:
