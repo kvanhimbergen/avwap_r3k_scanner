@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
 
 from setup_context import compute_setup_context_contract
-from tests.helpers import (
+from helpers import (
     assert_no_forbidden_keys,
     assert_numeric_features_finite,
     assert_trace_outputs_exist,

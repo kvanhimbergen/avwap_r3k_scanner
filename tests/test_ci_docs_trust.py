@@ -81,7 +81,11 @@ def test_run_id_stable_for_identical_inputs() -> None:
 
 def test_run_tests_entrypoint_covers_all_tests() -> None:
     tests_root = Path("tests")
-    from tests import run_tests
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("run_tests", tests_root / "run_tests.py")
+    run_tests = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(run_tests)
 
     declared = {path.name for path in run_tests.iter_test_files()}
     expected = {path.name for path in tests_root.glob("test_*.py")}
