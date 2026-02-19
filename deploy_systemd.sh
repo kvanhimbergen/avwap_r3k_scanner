@@ -25,6 +25,9 @@ python -m py_compile \
   analytics_platform/backend/main.py \
   analytics_platform/backend/app.py \
   execution_v2/execution_main.py \
+  execution_v2/alpaca_s2_bracket_adapter.py \
+  strategies/s2_letf_orb_alpaca.py \
+  strategies/raec_401k_v2.py \
   config.py
 
 echo "Ensuring cache directory exists..."

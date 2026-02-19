@@ -6,17 +6,20 @@ Runs after the daily AVWAP scan completes.  Executes these steps in order:
 1. regime_e1_runner       → ledger/REGIME_E1/{date}.jsonl
 2. regime_throttle_writer → ledger/PORTFOLIO_THROTTLE/{date}.jsonl
 3. s2_letf_orb_aggro      → ledger/STRATEGY_SIGNALS/S2_LETF_ORB_AGGRO/{date}.jsonl
-4. raec_401k_coordinator   → ledger/RAEC_REBALANCE/RAEC_401K_COORD/{date}.jsonl
-5. schwab_readonly_sync   → (optional) live Schwab account sync
+4. s2_letf_orb_alpaca     → bracket orders from S2 candidates (Alpaca paper)
+5. raec_401k_coordinator  → ledger/RAEC_REBALANCE/RAEC_401K_COORD/{date}.jsonl
+6. raec_401k_v2           → Alpaca paper rebalance (V2 dynamic factor rotation)
+7. schwab_readonly_sync   → (optional) live Schwab account sync
 
 Steps 1→2 are sequential (throttle reads regime output).
-Steps 3 and 4 are independent but run sequentially for log clarity.
-Step 5 is optional — fails gracefully if credentials are missing or API is down.
+Steps 3→4 are sequential (S2 bracket orders depend on candidate CSV from step 3).
+Steps 5 and 6 are independent but run sequentially for log clarity.
+Step 7 is optional — fails gracefully if credentials are missing or API is down.
 
 Usage:
     python ops/post_scan_pipeline.py                       # auto-detect today (NY)
     python ops/post_scan_pipeline.py --date 2026-02-18     # explicit date
-    python ops/post_scan_pipeline.py --dry-run              # suppress Slack posts
+    python ops/post_scan_pipeline.py --dry-run              # suppress execution
 """
 from __future__ import annotations
 
@@ -47,12 +50,27 @@ STEPS = [
         "args": lambda date: [
             sys.executable, "-m", "strategies.s2_letf_orb_aggro",
             "--asof", date,
+            "--universe-profile", "leveraged_only",
+        ],
+    },
+    {
+        "name": "s2_letf_orb_alpaca",
+        "args": lambda date: [
+            sys.executable, "-m", "strategies.s2_letf_orb_alpaca",
+            "--asof", date,
         ],
     },
     {
         "name": "raec_401k_coordinator",
         "args": lambda date: [
             sys.executable, "-m", "strategies.raec_401k_coordinator",
+            "--asof", date,
+        ],
+    },
+    {
+        "name": "raec_401k_v2",
+        "args": lambda date: [
+            sys.executable, "-m", "strategies.raec_401k_v2",
             "--asof", date,
         ],
     },
@@ -75,7 +93,9 @@ def _ny_today() -> str:
 def run_pipeline(date: str, *, dry_run: bool = False) -> None:
     for i, step in enumerate(STEPS, 1):
         cmd = step["args"](date)
-        if dry_run and step["name"] == "raec_401k_coordinator":
+        if dry_run and step["name"] in {
+            "raec_401k_coordinator", "s2_letf_orb_alpaca", "raec_401k_v2",
+        }:
             cmd.append("--dry-run")
         label = f"[{i}/{len(STEPS)}] {step['name']}"
         optional = step.get("optional", False)
