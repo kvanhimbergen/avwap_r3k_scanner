@@ -161,7 +161,7 @@ def _load_sent_intent_ids(path: Path) -> set[str]:
                     raise ValueError("ledger entry not a JSON object")
                 event = data.get("event")
                 if event != MANUAL_EVENT_TYPE:
-                    raise ValueError("unexpected ledger event")
+                    continue
                 intent_id = data.get("intent_id")
                 if not intent_id:
                     raise ValueError("ledger entry missing intent_id")

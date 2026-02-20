@@ -85,3 +85,41 @@ def test_manual_ticket_idempotency_and_ledger(tmp_path: Path) -> None:
         assert data["symbol"] in {"AAPL", "MSFT"}
         assert data["slack"]["permalink"] == "https://example"
         assert line == json.dumps(data, sort_keys=True)
+
+
+def test_mixed_ledger_skips_non_ticket_records(tmp_path: Path) -> None:
+    """Ledger may contain Schwab snapshot records; the adapter should skip them."""
+    ny_date = "2026-02-20"
+    ledger_path = tmp_path / "ledger" / book_ids.SCHWAB_401K_MANUAL / f"{ny_date}.jsonl"
+    ledger_path.parent.mkdir(parents=True)
+
+    # Pre-populate with Schwab snapshot records (written by schwab_readonly_sync)
+    schwab_records = [
+        {"record_type": "SCHWAB_READONLY_ACCOUNT_SNAPSHOT", "snapshot_id": "abc", "total_value": "100000"},
+        {"record_type": "SCHWAB_READONLY_POSITIONS_SNAPSHOT", "snapshot_id": "def", "positions": []},
+        {"record_type": "SCHWAB_READONLY_ORDERS_SNAPSHOT", "snapshot_id": "ghi", "orders": []},
+    ]
+    ledger_path.write_text("\n".join(json.dumps(r) for r in schwab_records) + "\n")
+
+    slack = _SlackRecorder()
+    now = datetime(2026, 2, 20, 14, 0, 0, tzinfo=timezone.utc)
+    intents = [_sample_intent("SPY")]
+
+    result = send_manual_tickets(
+        intents,
+        ny_date=ny_date,
+        repo_root=tmp_path,
+        now_utc=now,
+        slack_sender=slack,
+        post_enabled=True,
+    )
+
+    assert result.sent == 1
+    assert len(slack.payloads) == 1
+
+    # Verify the ticket was appended after the Schwab records
+    lines = ledger_path.read_text().splitlines()
+    assert len(lines) == 4  # 3 Schwab + 1 ticket
+    ticket = json.loads(lines[3])
+    assert ticket["event"] == "MANUAL_TICKET_SENT"
+    assert ticket["symbol"] == "SPY"
