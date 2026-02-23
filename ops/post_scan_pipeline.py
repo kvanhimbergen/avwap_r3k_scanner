@@ -73,6 +73,7 @@ STEPS = [
     },
     {
         "name": "s2_letf_orb_alpaca",
+        "optional": True,
         "args": lambda date: [
             sys.executable, "-m", "strategies.s2_letf_orb_alpaca",
             "--asof", date,
