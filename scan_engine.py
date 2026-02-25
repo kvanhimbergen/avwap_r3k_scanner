@@ -595,9 +595,9 @@ def build_candidate_row(
 
     name, av, avs, trend_score, dist, anchor_date, confluence = best
 
-    # Shannon-style stop placement: swing low + AVWAP invalidation, take tighter (higher)
+    # Shannon-style stop placement: swing low + AVWAP invalidation, take wider (more structural)
     swing_lows = _find_daily_swing_lows(df, lookback=20)
-    swing_low_stop = (swing_lows[-1] - 0.10) if swing_lows else None
+    swing_low_stop = (swing_lows[-1] * 0.995) if swing_lows else None  # 0.5% buffer
     avwap_stop = av * 0.997 if av else None  # 0.3% buffer below AVWAP
 
     # For longs, stop must be below entry (AVWAP); for shorts, above entry
@@ -606,12 +606,25 @@ def build_candidate_row(
     else:
         stop_candidates = [s for s in [swing_low_stop, avwap_stop] if s is not None and s > av]
     if stop_candidates:
-        structural_stop = max(stop_candidates) if direction == "Long" else min(stop_candidates)
+        structural_stop = min(stop_candidates) if direction == "Long" else max(stop_candidates)
     else:
         # Fallback: SMA5 / 5-day low (original logic)
         df["SMA5"] = sma(df["Close"], 5)
         df["Low5"] = df["Low"].rolling(window=5).min()
         structural_stop = min(float(df["SMA5"].iloc[-1]), float(df["Low5"].iloc[-1])) * 0.997
+
+    # ATR floor: at least 1×ATR(14) away from entry
+    atr_val = float(atr(df, 14).iloc[-1]) if len(df) >= 15 else None
+    if atr_val and direction == "Long":
+        structural_stop = min(structural_stop, av - atr_val)
+    elif atr_val and direction == "Short":
+        structural_stop = max(structural_stop, av + atr_val)
+
+    # Hard minimum: 1.5% from entry
+    if direction == "Long":
+        structural_stop = min(structural_stop, av * 0.985)
+    else:
+        structural_stop = max(structural_stop, av * 1.015)
     r1, r2 = get_pivot_targets(df)
     setup_ctx = compute_setup_context(df, name, setup_rules)
     return {
