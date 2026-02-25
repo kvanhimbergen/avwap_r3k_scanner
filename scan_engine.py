@@ -702,19 +702,27 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
     if history is None or history.empty:
         print("History cache missing/empty. Backfilling ~2 years...")
         hist_start = long_start
+        backfill_tickers: list[str] = []
         benchmark_backfill = benchmark_tickers
     else:
         hist_start = short_start
+        # Identify tickers missing from cache or with insufficient bars
+        cached_counts = history.groupby("Ticker")["Date"].nunique().to_dict()
+        backfill_tickers = [
+            t for t in filtered if cached_counts.get(t, 0) < 80
+        ]
+        if backfill_tickers:
+            print(f"Backfilling {len(backfill_tickers)} tickers with <80 bars...")
         benchmark_backfill = []
         if benchmark_tickers:
-            bench_hist = history[history["Ticker"].isin(benchmark_tickers)]
-            bench_counts = bench_hist.groupby("Ticker")["Date"].nunique().to_dict()
             for ticker in benchmark_tickers:
-                if bench_counts.get(ticker, 0) < BENCHMARK_MIN_BARS:
+                if cached_counts.get(ticker, 0) < BENCHMARK_MIN_BARS:
                     benchmark_backfill.append(ticker)
 
-    for i in tqdm(range(0, len(filtered), batch_size), desc="History Refresh"):
-        batch = filtered[i : i + batch_size]
+    # Refresh tickers that already have sufficient history (short window)
+    refresh_tickers = [t for t in filtered if t not in set(backfill_tickers)]
+    for i in tqdm(range(0, len(refresh_tickers), batch_size), desc="History Refresh"):
+        batch = refresh_tickers[i : i + batch_size]
         try:
             req = StockBarsRequest(
                 symbol_or_symbols=batch, timeframe=TimeFrame.Day, start=hist_start
@@ -724,8 +732,22 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
                 newdata = standardize_alpaca_to_yf(raw_new)
                 history = cs.upsert_history(history, newdata)
         except Exception:
-            # Do not silently swallow; at least count it
             PBT_DIAG["history_refresh_errors"] += 1
+            continue
+
+    # Backfill tickers missing or with insufficient bars (long window)
+    for i in tqdm(range(0, len(backfill_tickers), batch_size), desc="History Backfill"):
+        batch = backfill_tickers[i : i + batch_size]
+        try:
+            req = StockBarsRequest(
+                symbol_or_symbols=batch, timeframe=TimeFrame.Day, start=long_start
+            )
+            raw_new = data_client.get_stock_bars(req).df
+            if raw_new is not None and not raw_new.empty:
+                newdata = standardize_alpaca_to_yf(raw_new)
+                history = cs.upsert_history(history, newdata)
+        except Exception:
+            PBT_DIAG["history_backfill_errors"] += 1
             continue
 
     if benchmark_backfill:
