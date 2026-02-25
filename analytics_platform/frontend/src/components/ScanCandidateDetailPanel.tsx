@@ -3,7 +3,7 @@
  * Shows full setup context: price levels, AVWAP/VWAP states, extension, structure.
  */
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { api } from "../api";
@@ -90,7 +90,16 @@ export function ScanCandidateDetailPanel({ candidate, onClose }: { candidate: Sc
         {/* Header */}
         <div className="shrink-0 p-4 border-b border-vantage-border flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="font-mono text-xl font-bold">{candidate.symbol}</span>
+            <a
+              href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(candidate.symbol)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono text-xl font-bold hover:text-vantage-blue transition-colors flex items-center gap-1.5"
+              title="Open in TradingView"
+            >
+              {candidate.symbol}
+              <ExternalLink size={14} className="text-vantage-muted" />
+            </a>
             <StatusBadge variant={candidate.direction?.toLowerCase() === "long" ? "active" : "error"}>
               {candidate.direction}
             </StatusBadge>
@@ -153,7 +162,17 @@ export function ScanCandidateDetailPanel({ candidate, onClose }: { candidate: Sc
 
           {/* Chart */}
           <div className="bg-vantage-bg border border-vantage-border rounded-lg p-3">
-            <p className="text-[10px] text-vantage-muted uppercase tracking-wide mb-2 font-semibold">Chart (90d)</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] text-vantage-muted uppercase tracking-wide font-semibold">Chart (90d)</p>
+              <a
+                href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(candidate.symbol)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] text-vantage-muted hover:text-vantage-blue transition-colors flex items-center gap-1"
+              >
+                TradingView <ExternalLink size={10} />
+              </a>
+            </div>
             <CandlestickChart candles={chartCandles} avwap={chartAvwap} levels={chartLevels} height={280} />
           </div>
 
