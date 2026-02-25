@@ -366,7 +366,7 @@ def build_liquidity_snapshot(
             continue
     snap = pd.DataFrame(rows)
     if snap.empty:
-        return snap
+        return pd.DataFrame(columns=["Ticker", "AvgDollarVol20", "Sector", "TrendScore"])
     if is_weekend:
         return snap.sort_values("AvgDollarVol20", ascending=False).head(
             cfg.SNAPSHOT_MAX_TICKERS
