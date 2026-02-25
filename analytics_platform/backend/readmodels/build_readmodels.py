@@ -868,6 +868,7 @@ def build_readmodels(settings: Settings) -> BuildResult:
                 "TrendScore": "trend_score",
                 "Sector": "sector",
                 "Anchor": "anchor",
+                "Anchor_Date": "anchor_date",
                 "AVWAP_Slope": "avwap_slope",
                 "AVWAP_Confluence": "avwap_confluence",
                 "Sector_RS": "sector_rs",

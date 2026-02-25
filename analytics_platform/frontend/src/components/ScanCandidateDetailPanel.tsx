@@ -74,7 +74,7 @@ export function ScanCandidateDetailPanel({ candidate, onClose }: { candidate: Sc
   }, [candidate.symbol, candidate.anchor]);
 
   const chartLevels: PriceLevel[] = [
-    ...(entry > 0 ? [{ price: entry, color: "#3b82f6", label: "Entry" }] : []),
+    ...(entry > 0 ? [{ price: entry, color: "#3b82f6", label: "AVWAP" }] : []),
     ...(stop > 0 ? [{ price: stop, color: "#ef4444", label: "Stop" }] : []),
     ...(r1 > 0 ? [{ price: r1, color: "#22c55e", label: "R1" }] : []),
     ...(r2 > 0 ? [{ price: r2, color: "#22c55e", label: "R2" }] : []),
@@ -128,6 +128,12 @@ export function ScanCandidateDetailPanel({ candidate, onClose }: { candidate: Sc
                 <p className="text-xs font-medium font-mono">{candidate.anchor}</p>
               </div>
             )}
+            {candidate.anchor_date && (
+              <div>
+                <span className="text-[10px] text-vantage-muted uppercase tracking-wide">Anchor Date</span>
+                <p className="text-xs font-medium font-mono">{candidate.anchor_date}</p>
+              </div>
+            )}
             {candidate.sector_rs != null && (
               <div>
                 <span className="text-[10px] text-vantage-muted uppercase tracking-wide">Sector RS</span>
@@ -140,7 +146,7 @@ export function ScanCandidateDetailPanel({ candidate, onClose }: { candidate: Sc
           <div className="bg-vantage-bg border border-vantage-border rounded-lg p-3">
             <p className="text-[10px] text-vantage-muted uppercase tracking-wide mb-2 font-semibold">Price Levels</p>
             <LevelRow label="Price" value={candidate.price} />
-            <LevelRow label="Entry" value={candidate.entry_level} color="text-vantage-blue" />
+            <LevelRow label="AVWAP (Entry)" value={candidate.entry_level} color="text-vantage-blue" />
             <LevelRow label="Stop" value={candidate.stop_loss} color="text-vantage-red" />
             <LevelRow label="Target R1" value={candidate.target_r1} color="text-vantage-green" />
             <LevelRow label="Target R2" value={candidate.target_r2} color="text-vantage-green" />

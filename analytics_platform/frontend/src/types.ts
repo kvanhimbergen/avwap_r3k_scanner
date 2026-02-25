@@ -197,6 +197,7 @@ export interface ScanCandidate {
   trend_score: number | null;
   sector: string | null;
   anchor: string | null;
+  anchor_date: string | null;
   avwap_slope: number | null;
   avwap_confluence: number | null;
   sector_rs: number | null;

@@ -27,15 +27,15 @@ def _make_df(n: int = 100, base_close: float = 100.0) -> pd.DataFrame:
 class TestAVWAPConfluence:
     """Test that pick_best_anchor returns confluence count."""
 
-    def test_return_tuple_has_six_elements(self):
-        """pick_best_anchor should return a 6-tuple including confluence."""
+    def test_return_tuple_has_seven_elements(self):
+        """pick_best_anchor should return a 7-tuple including anchor_date and confluence."""
         from scan_engine import pick_best_anchor
 
         df = _make_df(120)
         result = pick_best_anchor(df, "Long", is_weekend=True)
         if result is not None:
-            assert len(result) == 6, f"Expected 6-tuple, got {len(result)}"
-            name, av, avs, trend_score, dist, confluence = result
+            assert len(result) == 7, f"Expected 7-tuple, got {len(result)}"
+            name, av, avs, trend_score, dist, anchor_date, confluence = result
             assert isinstance(confluence, int)
             assert confluence >= 1  # at least the best anchor itself
 
@@ -46,7 +46,7 @@ class TestAVWAPConfluence:
         df = _make_df(120)
         result = pick_best_anchor(df, "Long", is_weekend=True)
         if result is not None:
-            assert result[5] >= 1
+            assert result[6] >= 1
 
     def test_single_anchor_confluence_is_one(self):
         """When only one anchor passes validation, confluence should be 1."""
@@ -59,7 +59,7 @@ class TestAVWAPConfluence:
         with patch("scan_engine.get_anchor_candidates", return_value=single_anchor):
             result = pick_best_anchor(df, "Long", is_weekend=True)
             if result is not None:
-                assert result[5] == 1
+                assert result[6] == 1
 
     def test_confluence_in_candidate_row(self):
         """build_candidate_row should include AVWAP_Confluence in output."""

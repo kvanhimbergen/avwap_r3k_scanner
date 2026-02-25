@@ -58,6 +58,7 @@ CANDIDATE_COLUMNS = [
     "TrendScore",
     "Sector",
     "Anchor",
+    "Anchor_Date",
     "AVWAP_Slope",
     "AVWAP_Confluence",
     "Sector_RS",
@@ -314,7 +315,8 @@ def pick_best_anchor(
             + (40.0 if is_reclaim else 0.0)
         )
         if score > best_score:
-            best_score, best = score, (a["name"], av_now, av_s, trend_score, dist)
+            anchor_date = df.index[a["loc"]]
+            best_score, best = score, (a["name"], av_now, av_s, trend_score, dist, anchor_date)
 
     if best is None:
         return None
@@ -591,7 +593,7 @@ def build_candidate_row(
     if not best:
         return None
 
-    name, av, avs, trend_score, dist, confluence = best
+    name, av, avs, trend_score, dist, anchor_date, confluence = best
 
     # Shannon-style stop placement: swing low + AVWAP invalidation, take tighter (higher)
     swing_lows = _find_daily_swing_lows(df, lookback=20)
@@ -627,6 +629,7 @@ def build_candidate_row(
         "TrendScore": round(trend_score, 6),
         "Sector": sector,
         "Anchor": name,
+        "Anchor_Date": str(anchor_date.date()) if hasattr(anchor_date, "date") else str(anchor_date)[:10],
         "AVWAP_Slope": round(float(avs), 4),
         "AVWAP_Confluence": int(confluence),
         "Sector_RS": sector_rs,
