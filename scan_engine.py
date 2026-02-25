@@ -483,6 +483,16 @@ def _candidate_scan_date(as_of_dt: datetime | None) -> str:
     return as_of_dt.date().isoformat()
 
 
+def _find_daily_swing_lows(df: pd.DataFrame, lookback: int = 20) -> list[float]:
+    """Find swing lows (bar where Low < previous Low AND Low < next Low)."""
+    lows = df["Low"].iloc[-lookback:].values
+    result: list[float] = []
+    for i in range(1, len(lows) - 1):
+        if lows[i] < lows[i - 1] and lows[i] < lows[i + 1]:
+            result.append(float(lows[i]))
+    return result
+
+
 def build_candidate_row(
     df: pd.DataFrame,
     ticker: str,
@@ -510,22 +520,27 @@ def build_candidate_row(
     if not gates:
         return None
 
-    # NEW: Calculate Structural Stop Levels (Shannon Style)
     df = df.copy()
-    df["SMA5"] = sma(df["Close"], 5)
-    df["Low5"] = df["Low"].rolling(window=5).min()
-
-    curr_sma5 = float(df["SMA5"].iloc[-1])
-    curr_low5 = float(df["Low5"].iloc[-1])
-
-    # Determine logical stop: The lower of the 5-DMA or 5-Day Low with a 0.3% buffer
-    structural_stop = min(curr_sma5, curr_low5) * 0.997
 
     best = pick_best_anchor(df, direction, is_weekend=is_weekend)
     if not best:
         return None
 
     name, av, avs, trend_score, dist = best
+
+    # Shannon-style stop placement: swing low + AVWAP invalidation, take tighter (higher)
+    swing_lows = _find_daily_swing_lows(df, lookback=20)
+    swing_low_stop = (swing_lows[-1] - 0.10) if swing_lows else None
+    avwap_stop = av * 0.997 if av else None  # 0.3% buffer below AVWAP
+
+    stop_candidates = [s for s in [swing_low_stop, avwap_stop] if s is not None]
+    if stop_candidates:
+        structural_stop = max(stop_candidates)
+    else:
+        # Fallback: SMA5 / 5-day low (original logic)
+        df["SMA5"] = sma(df["Close"], 5)
+        df["Low5"] = df["Low"].rolling(window=5).min()
+        structural_stop = min(float(df["SMA5"].iloc[-1]), float(df["Low5"].iloc[-1])) * 0.997
     r1, r2 = get_pivot_targets(df)
     setup_ctx = compute_setup_context(df, name, setup_rules)
     return {

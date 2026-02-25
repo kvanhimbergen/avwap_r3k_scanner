@@ -19,6 +19,7 @@ class Bar10m:
     high: float
     low: float
     close: float
+    volume: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -28,17 +29,25 @@ class BOHResult:
     confirm_bar_ts: Optional[float] = None
 
 
-def boh_confirmed_option2(last_two_closed: list[Bar10m], pivot_level: float) -> BOHResult:
+def boh_confirmed_option2(
+    last_two_closed: list[Bar10m],
+    pivot_level: float,
+    avg_volume: float = 0.0,
+    min_rvol: float = 0.8,
+) -> BOHResult:
     """
     Evaluate BOH Option 2 (Confirmed) using exactly two most recent CLOSED 10m bars.
 
     Inputs:
       - last_two_closed: [bar_prev, bar_last] where both are CLOSED bars, ordered oldest->newest
       - pivot_level: prior daily swing high level
+      - avg_volume: average 10m bar volume (0 = skip volume check, fail-open)
+      - min_rvol: minimum relative volume ratio for breakout bar (default 0.8)
 
     Logic:
       - bar_prev.close > pivot_level  => break condition met
       - bar_last.close >= pivot_level => hold condition met (must NOT close back below)
+      - bar_prev.volume >= avg_volume * min_rvol => volume validates the breakout
 
     Returns:
       BOHResult(confirmed=True, break_bar_ts=..., confirm_bar_ts=...) when confirmed,
@@ -53,6 +62,9 @@ def boh_confirmed_option2(last_two_closed: list[Bar10m], pivot_level: float) -> 
     held = bar_last.close >= pivot_level
 
     if broke and held:
+        # Volume validation: breakout bar must have sufficient volume
+        if avg_volume > 0 and bar_prev.volume < avg_volume * min_rvol:
+            return BOHResult(False)
         return BOHResult(True, break_bar_ts=bar_prev.ts, confirm_bar_ts=bar_last.ts)
 
     return BOHResult(False)

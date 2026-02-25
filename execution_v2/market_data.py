@@ -94,6 +94,7 @@ class MarketData:
                     high=float(r["high"]),
                     low=float(r["low"]),
                     close=float(r["close"]),
+                    volume=float(r["volume"]),
                 )
             )
         return out
@@ -129,6 +130,7 @@ class MarketData:
                     "high": float(r["high"]),
                     "low": float(r["low"]),
                     "close": float(r["close"]),
+                    "volume": float(r["volume"]),
                 }
             )
         return out
