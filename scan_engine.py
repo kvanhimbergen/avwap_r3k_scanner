@@ -598,9 +598,13 @@ def build_candidate_row(
     swing_low_stop = (swing_lows[-1] - 0.10) if swing_lows else None
     avwap_stop = av * 0.997 if av else None  # 0.3% buffer below AVWAP
 
-    stop_candidates = [s for s in [swing_low_stop, avwap_stop] if s is not None]
+    # For longs, stop must be below entry (AVWAP); for shorts, above entry
+    if direction == "Long":
+        stop_candidates = [s for s in [swing_low_stop, avwap_stop] if s is not None and s < av]
+    else:
+        stop_candidates = [s for s in [swing_low_stop, avwap_stop] if s is not None and s > av]
     if stop_candidates:
-        structural_stop = max(stop_candidates)
+        structural_stop = max(stop_candidates) if direction == "Long" else min(stop_candidates)
     else:
         # Fallback: SMA5 / 5-day low (original logic)
         df["SMA5"] = sma(df["Close"], 5)

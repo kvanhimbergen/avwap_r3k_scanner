@@ -17,6 +17,12 @@ def main() -> None:
     watchlist_path = BASE_DIR / "tradingview_watchlist.txt"
 
     out = scan_engine.run_scan(cfg)
+
+    # Sort all candidates by quality
+    if not out.empty:
+        out = out.sort_values(["TrendTier", "TrendScore"], ascending=[True, False])
+
+    # Write ALL candidates for analytics platform / UI
     scan_engine.write_candidates_csv(out, OUT_PATH)
 
     # --- TradingView watchlist export ---
@@ -27,11 +33,7 @@ def main() -> None:
 
     scan_date = datetime.now(pytz.timezone("America/New_York")).date()
     if not out.empty:
-        out = out.sort_values(["TrendTier", "TrendScore"], ascending=[True, False]).head(
-            scan_engine.ALGO_CANDIDATE_CAP
-        )
-        scan_engine.write_candidates_csv(out, OUT_PATH)
-        print(f"Wrote candidates to: {OUT_PATH}")
+        print(f"Wrote {len(out)} candidates to: {OUT_PATH}")
 
         slack_alert(
             "INFO",
