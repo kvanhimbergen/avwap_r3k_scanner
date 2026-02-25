@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.avwap.tunnel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/cloudflared</string>
+        <string>tunnel</string>
+        <string>--config</string>
+        <string>/Users/kevinvanhimbergen/avwap_r3k_scanner/ops/launchd/cloudflared-config.yml</string>
+        <string>run</string>
+        <string>avwap</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/kevinvanhimbergen/avwap_r3k_scanner</string>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/kevinvanhimbergen/Library/Logs/avwap/tunnel.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/kevinvanhimbergen/Library/Logs/avwap/tunnel.log</string>
+</dict>
+</plist>

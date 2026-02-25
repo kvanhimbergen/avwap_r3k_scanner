@@ -1,0 +1,17 @@
+# Cloudflare Tunnel config for the AVWAP analytics dashboard.
+#
+# One-time setup (before install.sh):
+#   1. brew install cloudflared
+#   2. cloudflared tunnel login
+#   3. cloudflared tunnel create avwap
+#   4. cloudflared tunnel route dns avwap avwap.vantagedutch.com
+#   5. Replace <TUNNEL-ID> below with the ID printed by step 3
+#      (also found in the credentials filename: ~/.cloudflared/<TUNNEL-ID>.json)
+
+tunnel: <TUNNEL-ID>
+credentials-file: /Users/kevinvanhimbergen/.cloudflared/<TUNNEL-ID>.json
+
+ingress:
+  - hostname: avwap.vantagedutch.com
+    service: http://localhost:8787
+  - service: http_status:404

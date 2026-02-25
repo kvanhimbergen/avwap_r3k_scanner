@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.avwap.analytics-platform</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/kevinvanhimbergen/avwap_r3k_scanner/ops/launchd/run_with_env.sh</string>
+        <string>venv/bin/python</string>
+        <string>-u</string>
+        <string>-m</string>
+        <string>analytics_platform.backend.main</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/kevinvanhimbergen/avwap_r3k_scanner</string>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/kevinvanhimbergen/Library/Logs/avwap/analytics-platform.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/kevinvanhimbergen/Library/Logs/avwap/analytics-platform.log</string>
+</dict>
+</plist>
