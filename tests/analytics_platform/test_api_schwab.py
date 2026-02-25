@@ -84,3 +84,75 @@ def test_schwab_overview_reconciliation(analytics_settings) -> None:
     assert recon["broker_position_count"] == 3
     assert recon["drift_intent_count"] == 0
     assert recon["drift_symbol_count"] == 0
+
+
+# ── Trade instructions endpoint ──────────────────────────────────
+
+
+def test_trade_instructions_returns_200(analytics_settings) -> None:
+    client = _make_client(analytics_settings)
+    resp = client.get("/api/v1/schwab/trade-instructions")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert "days" in data
+    assert "total_value" in data
+    assert "threshold_dollars" in data
+    assert "threshold_pct" in data
+
+
+def test_trade_instructions_has_v3_intents(analytics_settings) -> None:
+    client = _make_client(analytics_settings)
+    resp = client.get("/api/v1/schwab/trade-instructions")
+    data = resp.json()["data"]
+
+    # Should have at least one day with V3 intents from the fixture
+    assert len(data["days"]) >= 1
+    day = data["days"][0]
+    assert day["ny_date"] == "2026-02-10"
+    assert len(day["intents"]) == 3  # TQQQ BUY, SOXL BUY, SPY SELL
+
+    symbols = {i["symbol"] for i in day["intents"]}
+    assert symbols == {"TQQQ", "SOXL", "SPY"}
+
+    # All intents should have dollar_amount and actionable fields
+    for intent in day["intents"]:
+        assert "dollar_amount" in intent
+        assert "actionable" in intent
+        assert intent["strategy_id"] == "RAEC_401K_V3"
+
+
+def test_trade_instructions_threshold_scales_with_portfolio(analytics_settings) -> None:
+    client = _make_client(analytics_settings)
+    resp = client.get("/api/v1/schwab/trade-instructions")
+    data = resp.json()["data"]
+
+    # Portfolio total is $25,922.83 → 0.5% = $129.61 → threshold = max($250, $129.61) = $250
+    assert data["total_value"] == pytest.approx(25922.83)
+    assert data["threshold_dollars"] == pytest.approx(250.0)
+    assert data["threshold_pct"] == 0.5
+
+
+def test_trade_instructions_dollar_amounts(analytics_settings) -> None:
+    client = _make_client(analytics_settings)
+    resp = client.get("/api/v1/schwab/trade-instructions")
+    data = resp.json()["data"]
+
+    day = data["days"][0]
+    # TQQQ BUY delta_pct=35.0 → $25,922.83 * 0.35 = $9,072.99
+    tqqq = next(i for i in day["intents"] if i["symbol"] == "TQQQ")
+    assert tqqq["dollar_amount"] == pytest.approx(25922.83 * 35.0 / 100, abs=1.0)
+    assert tqqq["actionable"] is True  # well above $250 threshold
+
+
+def test_trade_instructions_events(analytics_settings) -> None:
+    client = _make_client(analytics_settings)
+    resp = client.get("/api/v1/schwab/trade-instructions")
+    data = resp.json()["data"]
+
+    day = data["days"][0]
+    # Should have the V3 rebalance event
+    assert len(day["events"]) >= 1
+    v3_event = next((e for e in day["events"] if e["strategy_id"] == "RAEC_401K_V3"), None)
+    assert v3_event is not None
+    assert v3_event["regime"] == "RISK_ON"
+    assert v3_event["should_rebalance"] is True

@@ -1592,6 +1592,104 @@ def get_schwab_overview(
     }
 
 
+_SCHWAB_SUB_STRATEGY_IDS = ("RAEC_401K_V3", "RAEC_401K_V4", "RAEC_401K_V5")
+
+
+def get_schwab_trade_instructions(conn) -> dict[str, Any]:
+    """Last 3 trading days of RAEC intents for V3/V4/V5 with dollar amounts."""
+    # Latest portfolio total value
+    account_rows = _rows(
+        conn,
+        """
+        SELECT total_value
+        FROM schwab_account_snapshots
+        ORDER BY ny_date DESC, as_of_utc DESC
+        LIMIT 1
+        """,
+    )
+    total_value = account_rows[0]["total_value"] if account_rows else None
+
+    # Threshold: max($250, 0.5% of total)
+    threshold_pct = 0.5
+    threshold_dollars = max(250.0, (total_value or 0) * threshold_pct / 100)
+
+    # Last 3 distinct trading days that have data
+    placeholders = ", ".join(["?"] * len(_SCHWAB_SUB_STRATEGY_IDS))
+    date_rows = _rows(
+        conn,
+        f"""
+        SELECT DISTINCT ny_date
+        FROM raec_intents
+        WHERE strategy_id IN ({placeholders})
+        ORDER BY ny_date DESC
+        LIMIT 3
+        """,
+        list(_SCHWAB_SUB_STRATEGY_IDS),
+    )
+    dates = [r["ny_date"] for r in date_rows]
+    if not dates:
+        # Check events even with no intents (HOLD days)
+        date_rows = _rows(
+            conn,
+            f"""
+            SELECT DISTINCT ny_date
+            FROM raec_rebalance_events
+            WHERE strategy_id IN ({placeholders})
+            ORDER BY ny_date DESC
+            LIMIT 3
+            """,
+            list(_SCHWAB_SUB_STRATEGY_IDS),
+        )
+        dates = [r["ny_date"] for r in date_rows]
+
+    days: list[dict[str, Any]] = []
+    for d in dates:
+        # Intents for this day
+        intents = _rows(
+            conn,
+            f"""
+            SELECT ny_date, ts_utc, strategy_id, intent_id, symbol, side,
+                   delta_pct, target_pct, current_pct
+            FROM raec_intents
+            WHERE ny_date = ? AND strategy_id IN ({placeholders})
+            ORDER BY strategy_id, symbol
+            """,
+            [d, *_SCHWAB_SUB_STRATEGY_IDS],
+        )
+        # Enrich with dollar amount + actionable flag
+        for intent in intents:
+            dollar_amount = abs(intent["delta_pct"]) / 100 * (total_value or 0)
+            intent["dollar_amount"] = round(dollar_amount, 2)
+            intent["actionable"] = dollar_amount >= threshold_dollars
+
+        # Rebalance events for this day
+        events = _rows(
+            conn,
+            f"""
+            SELECT ny_date, strategy_id, regime, should_rebalance, intent_count
+            FROM raec_rebalance_events
+            WHERE ny_date = ? AND strategy_id IN ({placeholders})
+            ORDER BY strategy_id
+            """,
+            [d, *_SCHWAB_SUB_STRATEGY_IDS],
+        )
+
+        actionable_count = sum(1 for i in intents if i.get("actionable"))
+        days.append({
+            "ny_date": d,
+            "intents": intents,
+            "events": events,
+            "actionable_count": actionable_count,
+        })
+
+    return {
+        "days": days,
+        "total_value": total_value,
+        "threshold_dollars": round(threshold_dollars, 2),
+        "threshold_pct": threshold_pct,
+    }
+
+
 _ALPACA_STRATEGY_IDS = {"S1_AVWAP_CORE", "S2_LETF_ORB_AGGRO", "RAEC_401K_V1", "RAEC_401K_V2"}
 _SCHWAB_STRATEGY_IDS = {"RAEC_401K_V3", "RAEC_401K_V4", "RAEC_401K_V5", "RAEC_401K_COORD"}
 

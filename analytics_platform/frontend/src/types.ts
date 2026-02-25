@@ -323,6 +323,41 @@ export interface TradeLogSummary {
   total_pnl: number;
 }
 
+export interface TradeInstruction {
+  ny_date: string;
+  strategy_id: string;
+  intent_id: string;
+  symbol: string;
+  side: string;
+  delta_pct: number;
+  target_pct: number;
+  current_pct: number;
+  dollar_amount: number;
+  actionable: boolean;
+}
+
+export interface TradeInstructionEvent {
+  ny_date: string;
+  strategy_id: string;
+  regime: string;
+  should_rebalance: boolean;
+  intent_count: number;
+}
+
+export interface TradeInstructionDay {
+  ny_date: string;
+  intents: TradeInstruction[];
+  events: TradeInstructionEvent[];
+  actionable_count: number;
+}
+
+export interface TradeInstructionsPayload {
+  days: TradeInstructionDay[];
+  total_value: number | null;
+  threshold_dollars: number;
+  threshold_pct: number;
+}
+
 export interface SchwabReconciliation {
   ny_date: string;
   as_of_utc: string;

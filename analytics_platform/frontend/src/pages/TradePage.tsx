@@ -203,6 +203,7 @@ export function TradePage() {
                       className={`border-b border-vantage-border/50 ${
                         intent.side === "BUY" ? "bg-vantage-green/[0.03]" : "bg-vantage-red/[0.03]"
                       }`}
+                      style={idx === 0 ? { boxShadow: `inset 3px 0 0 ${meta.color}` } : undefined}
                     >
                       {idx === 0 && (
                         <td className="py-2 px-3 font-semibold" rowSpan={stratIntents.length}>

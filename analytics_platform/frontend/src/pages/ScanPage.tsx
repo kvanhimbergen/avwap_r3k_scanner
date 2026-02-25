@@ -25,6 +25,7 @@ export function ScanPage() {
   const [direction, setDirection] = useState("");
   const [symbol, setSymbol] = useState("");
   const [sector, setSector] = useState("");
+  const [tier, setTier] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("trend_score");
   const [sortAsc, setSortAsc] = useState(false);
   const [selected, setSelected] = useState<ScanCandidate | null>(null);
@@ -43,7 +44,7 @@ export function ScanPage() {
   }, [rows]);
 
   const sorted = useMemo(() => {
-    const copy = [...rows];
+    const copy = tier ? rows.filter((r) => r.trend_tier === tier) : [...rows];
     copy.sort((a, b) => {
       const av = a[sortKey] ?? "";
       const bv = b[sortKey] ?? "";
@@ -52,7 +53,7 @@ export function ScanPage() {
       return 0;
     });
     return copy;
-  }, [rows, sortKey, sortAsc]);
+  }, [rows, sortKey, sortAsc, tier]);
 
   const kpis = useMemo(() => {
     const longs = rows.filter((r) => r.direction?.toLowerCase() === "long").length;
@@ -126,6 +127,11 @@ export function ScanPage() {
           <option value="short">Short</option>
         </select>
         <input placeholder="Symbol" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} className="w-24 bg-vantage-bg border border-vantage-border rounded px-2 py-1.5 text-xs font-mono text-vantage-text focus:outline-none focus:border-vantage-blue/50" />
+        <select value={tier} onChange={(e) => setTier(e.target.value)} className="bg-vantage-bg border border-vantage-border rounded px-2.5 py-1.5 text-xs text-vantage-text focus:outline-none focus:border-vantage-blue/50">
+          <option value="">All Tiers</option>
+          <option value="A">A</option>
+          <option value="B">B</option>
+        </select>
         <select value={sector} onChange={(e) => setSector(e.target.value)} className="bg-vantage-bg border border-vantage-border rounded px-2.5 py-1.5 text-xs text-vantage-text focus:outline-none focus:border-vantage-blue/50">
           <option value="">All Sectors</option>
           {sectors.map((s) => <option key={s} value={s}>{s}</option>)}

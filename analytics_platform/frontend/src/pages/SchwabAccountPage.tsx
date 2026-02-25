@@ -7,13 +7,16 @@ import { Landmark, AlertTriangle } from "lucide-react";
 import { api } from "../api";
 import { StatusBadge } from "../components/Badge";
 import { SkeletonCard, SkeletonTable } from "../components/Skeleton";
+import { TradeInstructionsPanel } from "../components/TradeInstructionsPanel";
 import { usePolling } from "../hooks/usePolling";
-import { formatCurrency, formatPercent } from "../lib/format";
-import type { SchwabAccountBalance, SchwabPosition, SchwabOrder, SchwabReconciliation } from "../types";
+import { formatCurrency, formatPercent, pnlColor } from "../lib/format";
+import type { SchwabAccountBalance, SchwabPosition, SchwabOrder, SchwabReconciliation, TradeInstructionsPayload } from "../types";
 
 export function SchwabAccountPage() {
   const poll = usePolling(() => api.schwabOverview(), 60_000);
+  const instructionsPoll = usePolling(() => api.schwabTradeInstructions(), 60_000);
   const data = poll.data?.data as Record<string, unknown> | undefined;
+  const instructionsData = instructionsPoll.data?.data as TradeInstructionsPayload | undefined;
 
   const latestAccount = data?.latest_account as SchwabAccountBalance | null;
   const positions = (data?.positions ?? []) as SchwabPosition[];
@@ -58,6 +61,9 @@ export function SchwabAccountPage() {
         </div>
       )}
 
+      {/* Trade Instructions */}
+      {instructionsData && <TradeInstructionsPanel data={instructionsData} />}
+
       {/* Positions */}
       {poll.loading ? (
         <SkeletonTable />
@@ -74,17 +80,24 @@ export function SchwabAccountPage() {
                 <th className="py-2 px-2 text-right text-vantage-muted font-medium">Market Value</th>
                 <th className="py-2 px-2 text-right text-vantage-muted font-medium">Weight</th>
                 <th className="py-2 px-2 text-right text-vantage-muted font-medium">Cost Basis</th>
+                <th className="py-2 px-2 text-right text-vantage-muted font-medium">P&L</th>
+                <th className="py-2 px-2 text-right text-vantage-muted font-medium">P&L %</th>
               </tr></thead>
               <tbody>
-                {positions.map((p) => (
+                {positions.map((p) => {
+                  const pl = p.market_value != null && p.cost_basis != null ? p.market_value - p.cost_basis : null;
+                  const plPct = pl != null && p.cost_basis ? (pl / p.cost_basis) * 100 : null;
+                  return (
                   <tr key={p.symbol} className="border-b border-vantage-border/50">
                     <td className="py-2 px-2 font-mono font-semibold">{p.symbol}</td>
                     <td className="py-2 px-2 font-mono text-right">{p.qty?.toLocaleString() ?? "\u2014"}</td>
                     <td className="py-2 px-2 font-mono text-right">{formatCurrency(p.market_value)}</td>
                     <td className="py-2 px-2 font-mono text-right">{formatPercent(p.weight_pct, 1)}</td>
                     <td className="py-2 px-2 font-mono text-right">{formatCurrency(p.cost_basis)}</td>
-                  </tr>
-                ))}
+                    <td className={`py-2 px-2 font-mono text-right ${pnlColor(pl)}`}>{formatCurrency(pl)}</td>
+                    <td className={`py-2 px-2 font-mono text-right ${pnlColor(plPct)}`}>{plPct != null ? `${plPct >= 0 ? "+" : ""}${plPct.toFixed(1)}%` : "\u2014"}</td>
+                  </tr>);
+                })}
               </tbody>
             </table>
           )}
