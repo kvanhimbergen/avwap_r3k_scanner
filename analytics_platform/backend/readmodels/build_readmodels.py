@@ -1348,7 +1348,7 @@ def build_readmodels(settings: Settings) -> BuildResult:
                 [
                     "schema_version", "scan_date", "symbol", "direction", "trend_tier",
                     "price", "entry_level", "entry_dist_pct", "stop_loss", "target_r1", "target_r2",
-                    "trend_score", "sector", "anchor", "avwap_slope", "avwap_confluence", "sector_rs",
+                    "trend_score", "sector", "anchor", "anchor_date", "avwap_slope", "avwap_confluence", "sector_rs",
                     "setup_vwap_control", "setup_vwap_reclaim", "setup_vwap_acceptance", "setup_vwap_dist_pct",
                     "setup_avwap_control", "setup_avwap_reclaim", "setup_avwap_acceptance", "setup_avwap_dist_pct",
                     "setup_extension_state", "setup_gap_reset", "setup_structure_state",

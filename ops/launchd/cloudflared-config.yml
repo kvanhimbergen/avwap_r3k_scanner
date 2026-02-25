@@ -8,8 +8,8 @@
 #   5. Replace <TUNNEL-ID> below with the ID printed by step 3
 #      (also found in the credentials filename: ~/.cloudflared/<TUNNEL-ID>.json)
 
-tunnel: <TUNNEL-ID>
-credentials-file: /Users/kevinvanhimbergen/.cloudflared/<TUNNEL-ID>.json
+tunnel: 22e7879b-ad07-4d6f-b6a6-4a1c86367c3a
+credentials-file: /Users/kevinvanhimbergen/.cloudflared/22e7879b-ad07-4d6f-b6a6-4a1c86367c3a.json
 
 ingress:
   - hostname: avwap.vantagedutch.com
