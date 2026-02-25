@@ -37,7 +37,7 @@ warnings.filterwarnings("ignore")
 EARNINGS_CACHE_PATH = Path("cache/earnings_cache.json")
 
 # ALGO TWEAK CONFIGS
-ADV_MIN_SHARES = 750000  # Minimum 750k shares avg daily volume
+ADV_MIN_SHARES = 400000  # Minimum 400k shares avg daily volume
 ATR_MIN_DOLLARS = 0.50   # Minimum $0.50 average daily range
 ALGO_CANDIDATE_CAP = 20  # Limit to top 20 for the execution bot
 
@@ -214,15 +214,15 @@ def shannon_quality_gates(
     if direction == "Long":
         tier_a = (px > s20n) and (s20n >= s50n)
         tier_b = (px > s50n) and (s50_slope > 0)
-        trend_ok = tier_a or (is_weekend and tier_b)
+        trend_ok = tier_a or tier_b
         label = "A" if tier_a else "B"
     else:
         tier_a = (px < s20n) and (s20n <= s50n)
         tier_b = (px < s50n) and (s50_slope < 0)
-        trend_ok = tier_a or (is_weekend and tier_b)
+        trend_ok = tier_a or tier_b
         label = "A" if tier_a else "B"
 
-    vol_mult = 1.25 if is_weekend else 1.0
+    vol_mult = 1.25 if is_weekend else 1.15
     if not (
         trend_ok
         and atr_pct_now <= (6.5 if is_weekend else 6.0)

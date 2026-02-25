@@ -40,7 +40,7 @@ class CFG:
     SWING_LOOKBACK: int = 20
     GAP_PCT: float = 0.04
     VOL_SPIKE_MULT: float = 1.8
-    MAX_DIST_FROM_AVWAP_PCT: float = 6.0
+    MAX_DIST_FROM_AVWAP_PCT: float = 8.0
     TREND_SCORE_MIN_LONG: float = 5.0
     TREND_SCORE_MIN_SHORT: float = -5.0
     TREND_SCORE_WARMUP: int = 120
@@ -128,7 +128,7 @@ class CFG:
     PBT_RSI_NO_NEW_HIGH_LOOKBACK: int = 5
 
     # AVWAP slope gating (single source of truth)
-    MIN_AVWAP_SLOPE_LONG: float = -0.03
+    MIN_AVWAP_SLOPE_LONG: float = -0.05
     MIN_AVWAP_SLOPE_SHORT: float = 0.03
     AVWAP_SLOPE_LOOKBACK: int = 5
     AVWAP_SLOPE_BYPASS_ON_RECLAIM: bool = True
