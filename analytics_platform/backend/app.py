@@ -475,16 +475,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/")
-    def root() -> JSONResponse:
-        runtime: AnalyticsRuntime = app.state.runtime
-        return JSONResponse(
-            {
-                "service": "analytics-platform",
-                "api": "/api/v1",
-                "frontend": "/app",
-                "as_of_utc": runtime.build_result.as_of_utc,
-            }
-        )
+    def root():
+        from starlette.responses import RedirectResponse
+        return RedirectResponse(url="/app")
 
     dist_dir = cfg.frontend_dist_dir
     if dist_dir.exists():
