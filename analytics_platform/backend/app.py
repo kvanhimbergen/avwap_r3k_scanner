@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from analytics_platform.backend.api import queries
@@ -481,6 +481,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     dist_dir = cfg.frontend_dist_dir
     if dist_dir.exists():
-        app.mount("/app", StaticFiles(directory=str(dist_dir), html=True), name="app")
+        index_html = dist_dir / "index.html"
+
+        _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+        @app.get("/app/{path:path}")
+        async def spa_fallback(path: str) -> Response:
+            static_file = dist_dir / path
+            if static_file.is_file():
+                return FileResponse(static_file, headers=_NO_CACHE)
+            return FileResponse(index_html, headers=_NO_CACHE)
+
+        @app.get("/app")
+        async def spa_root() -> Response:
+            return FileResponse(index_html, headers=_NO_CACHE)
 
     return app

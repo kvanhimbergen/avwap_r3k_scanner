@@ -8,6 +8,7 @@ import {
   TrendingUp,
   ShieldAlert,
   ScanSearch,
+  ClipboardList,
   Landmark,
   Settings,
 } from "lucide-react";
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { to: "/performance", icon: TrendingUp,      label: "Performance" },
   { to: "/risk",        icon: ShieldAlert,     label: "Risk" },
   { to: "/scan",        icon: ScanSearch,      label: "Scan" },
+  { to: "/trade-log",   icon: ClipboardList,   label: "Trade Log" },
   { to: "/ops/schwab",  icon: Landmark,        label: "Schwab" },
   { to: "/ops/system",  icon: Settings,        label: "System" },
 ];

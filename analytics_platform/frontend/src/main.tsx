@@ -5,6 +5,8 @@ import { BrowserRouter } from "react-router-dom";
 import { App } from "./App";
 import "./index.css";
 
+console.debug("[vantage] build 20260224");
+
 const baseUrl = import.meta.env.BASE_URL ?? "/";
 const routerBase = baseUrl === "/" ? "/" : baseUrl.replace(/\/$/, "");
 
