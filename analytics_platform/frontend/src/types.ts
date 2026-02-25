@@ -198,6 +198,8 @@ export interface ScanCandidate {
   sector: string | null;
   anchor: string | null;
   avwap_slope: number | null;
+  avwap_confluence: number | null;
+  sector_rs: number | null;
   setup_vwap_control: string | null;
   setup_vwap_reclaim: string | null;
   setup_vwap_acceptance: string | null;
@@ -284,6 +286,40 @@ export interface CoordinatorRun {
   ts_utc: string | null;
   capital_split: Record<string, number>;
   sub_results: Record<string, unknown>;
+}
+
+export interface TradeLogEntry {
+  id: string;
+  created_utc: string;
+  updated_utc: string;
+  entry_date: string;
+  symbol: string;
+  direction: string;
+  entry_price: number;
+  qty: number;
+  stop_loss: number;
+  target_r1: number | null;
+  target_r2: number | null;
+  strategy_source: string | null;
+  scan_date: string | null;
+  notes: string | null;
+  exit_date: string | null;
+  exit_price: number | null;
+  exit_reason: string | null;
+  risk_per_share: number;
+  r_multiple: number | null;
+  pnl_dollars: number | null;
+  status: string;
+}
+
+export interface TradeLogSummary {
+  open_count: number;
+  closed_count: number;
+  wins: number;
+  losses: number;
+  win_rate: number | null;
+  avg_r_multiple: number | null;
+  total_pnl: number;
 }
 
 export interface SchwabReconciliation {

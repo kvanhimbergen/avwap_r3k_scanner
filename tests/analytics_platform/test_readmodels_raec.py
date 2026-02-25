@@ -13,7 +13,9 @@ def test_raec_rebalance_event_ingested(analytics_settings) -> None:
     build_readmodels(analytics_settings)
 
     with connect_ro(analytics_settings.db_path) as conn:
-        rows = conn.execute("SELECT * FROM raec_rebalance_events").fetchall()
+        rows = conn.execute(
+            "SELECT * FROM raec_rebalance_events WHERE strategy_id = 'RAEC_401K_V3'"
+        ).fetchall()
         cols = [d[0] for d in conn.description]
 
     assert len(rows) >= 1

@@ -1,32 +1,17 @@
 /**
- * Strategy Tearsheet — full strategy detail page at /strategies/:id.
- * Everything about one strategy on one page. The PM's "fact sheet."
- *
- * Sections (top to bottom):
- *  1. Status Bar — active/regime/last eval/vol
- *  2. Allocation — target vs current (AllocationBar)
- *  3. Key Signals — SMA, vol, momentum (SignalsPanel)
- *  4. Performance — KPIs (PerformancePanel)
- *  5. Blotter — recent journal rows for this strategy
- *  6. Readiness Check — state/eval/ledger health (RAEC only)
- *  7. Execution Quality — slippage stats (S1/S2 only)
+ * Strategy Tearsheet — /strategies/:id
+ * Full strategy detail page with Atlas design.
  */
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
+import { ChevronRight } from "lucide-react";
 
 import { api } from "../api";
-import { AllocationBar, type AllocationRow } from "../components/AllocationBar";
-import { BookBadge, bookFromId } from "../components/BookBadge";
-import { BreadcrumbNav } from "../components/BreadcrumbNav";
-import { ControlActions } from "../components/ControlActions";
-import { LastRefreshed } from "../components/LastRefreshed";
-import { PerformancePanel, type PerformanceData } from "../components/PerformancePanel";
-import { ReadinessCheck } from "../components/ReadinessCheck";
-import { RegimeBadge } from "../components/RegimeBadge";
-import { SignalsPanel, type SignalRow } from "../components/SignalsPanel";
-import { SkeletonLoader } from "../components/SkeletonLoader";
-import { StatusDot } from "../components/StatusDot";
-import { SummaryStrip } from "../components/SummaryStrip";
+import { StatusBadge, RegimeBadge, BookBadge } from "../components/Badge";
+import { SkeletonCard, SkeletonTable } from "../components/Skeleton";
+import { ErrorState } from "../components/ErrorState";
 import { usePolling } from "../hooks/usePolling";
+import { formatPercent, timeAgo } from "../lib/format";
+import { getMeta, bookFromId } from "../lib/strategies";
 import type {
   AllocationSnapshot,
   JournalRow,
@@ -35,140 +20,64 @@ import type {
   ReadinessStrategy,
 } from "../types";
 
-/* ── Strategy metadata ──────────────────────────────────── */
-
-interface StrategyMeta {
-  shortName: string;
-  subtitle: string;
-  type: "s1" | "s2" | "raec" | "coord";
-}
-
-const META: Record<string, StrategyMeta> = {
-  S1_AVWAP_CORE: { shortName: "S1", subtitle: "AVWAP Core", type: "s1" },
-  S2_LETF_ORB_AGGRO: { shortName: "S2", subtitle: "LETF ORB Aggro", type: "s2" },
-  RAEC_401K_V1: { shortName: "V1", subtitle: "Core", type: "raec" },
-  RAEC_401K_V2: { shortName: "V2", subtitle: "Enhanced", type: "raec" },
-  RAEC_401K_V3: { shortName: "V3", subtitle: "Aggressive", type: "raec" },
-  RAEC_401K_V4: { shortName: "V4", subtitle: "Macro", type: "raec" },
-  RAEC_401K_V5: { shortName: "V5", subtitle: "AI/Tech", type: "raec" },
-  RAEC_401K_COORD: { shortName: "COORD", subtitle: "40/30/30 Coordinator", type: "coord" },
-};
-
-function getMeta(id: string): StrategyMeta {
-  const upper = id.toUpperCase();
-  if (META[upper]) return META[upper];
-  for (const [key, val] of Object.entries(META)) {
-    if (upper.includes(key) || key.includes(upper)) return val;
-  }
-  const isS = upper.startsWith("S1") || upper.startsWith("S2");
-  return { shortName: id.split("_").pop() ?? id, subtitle: id, type: isS ? "s1" : "raec" };
-}
-
-/* ── Helpers ─────────────────────────────────────────────── */
-
-function fmtPct(v: number | null | undefined): string {
-  if (v == null) return "\u2014";
-  return `${v.toFixed(1)}%`;
-}
-
-function timeAgo(dateStr: string | null | undefined): string {
-  if (!dateStr) return "\u2014";
-  const ms = Date.now() - new Date(dateStr).getTime();
-  const hours = Math.floor(ms / 3_600_000);
-  if (hours < 1) return "< 1h ago";
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
-function extractRaecEvents(data: KeyValue | null, strategyId: string): RaecRebalanceEvent[] {
-  if (!data) return [];
-  const events = ((data as any)?.events ?? []) as RaecRebalanceEvent[];
-  return events.filter((e) => e.strategy_id.toUpperCase() === strategyId.toUpperCase());
-}
+/* ── Data extraction ─────────────────────────────── */
 
 function extractRaecSummary(data: KeyValue | null, strategyId: string): any {
   if (!data) return null;
   const byStrategy: any[] = (data as any)?.by_strategy ?? [];
   return byStrategy.find((s: any) => (s.strategy_id as string).toUpperCase() === strategyId.toUpperCase()) ?? null;
 }
-
+function extractRaecEvents(data: KeyValue | null, strategyId: string): RaecRebalanceEvent[] {
+  if (!data) return [];
+  return ((data as any)?.events ?? []).filter(
+    (e: RaecRebalanceEvent) => e.strategy_id.toUpperCase() === strategyId.toUpperCase()
+  );
+}
 function extractReadiness(data: KeyValue | null, strategyId: string): ReadinessStrategy | null {
   if (!data) return null;
-  const strategies = ((data as any)?.strategies ?? []) as ReadinessStrategy[];
-  return strategies.find((s) => s.strategy_id.toUpperCase() === strategyId.toUpperCase()) ?? null;
+  return ((data as any)?.strategies ?? []).find(
+    (s: ReadinessStrategy) => s.strategy_id.toUpperCase() === strategyId.toUpperCase()
+  ) ?? null;
 }
-
 function extractJournal(data: KeyValue | null): JournalRow[] {
   if (!data) return [];
   return ((data as any)?.rows ?? []) as JournalRow[];
 }
-
 function extractAllocations(data: KeyValue | null, strategyId: string): AllocationSnapshot[] {
   if (!data) return [];
-  const events = ((data as any)?.events ?? []) as RaecRebalanceEvent[];
-  // Find latest event for this strategy that has allocations
-  const stEvents = events.filter(
-    (e) => e.strategy_id.toUpperCase() === strategyId.toUpperCase() && e.should_rebalance
-  );
-  // Allocations may be in a different field — fall back to extracting from journal
   return ((data as any)?.allocations ?? []).filter(
     (a: AllocationSnapshot) => a.strategy_id.toUpperCase() === strategyId.toUpperCase()
   );
 }
 
-function extractSlippage(data: KeyValue | null): any {
-  if (!data) return null;
-  return (data as any)?.summary ?? null;
-}
-
-function extractTradeAnalytics(data: KeyValue | null, strategyId: string): any {
-  if (!data) return null;
-  const byStrategy: any[] = (data as any)?.by_strategy ?? [];
-  return byStrategy.find((s: any) => (s.strategy_id as string).toUpperCase() === strategyId.toUpperCase()) ?? null;
-}
-
-/* ── Component ──────────────────────────────────────────── */
+/* ── Component ──────────────────────────────────── */
 
 export function StrategyTearsheet() {
   const { id } = useParams<{ id: string }>();
   const strategyId = id ?? "";
   const meta = getMeta(strategyId);
   const book = bookFromId(strategyId);
-  const isAlpaca = book === "alpaca";
   const isRaec = meta.type === "raec" || meta.type === "coord";
   const isCoord = meta.type === "coord";
 
-  // API calls
   const raec = usePolling(() => api.raecDashboard({ strategy_id: strategyId }), 45_000);
   const journal = usePolling(() => api.journal({ strategy_id: strategyId, limit: 20 }), 45_000);
   const readiness = usePolling(() => api.raecReadiness(), 60_000);
-  const slippage = usePolling(
-    () => api.slippage({ strategy_id: strategyId }),
-    isAlpaca ? 60_000 : 300_000,
-  );
-  const trades = usePolling(
-    () => api.tradeAnalytics({ strategy_id: strategyId }),
-    isAlpaca ? 60_000 : 300_000,
-  );
+  const slippage = usePolling(() => api.slippage({ strategy_id: strategyId }), 60_000);
 
   const isLoading = raec.loading && journal.loading;
 
-  // Extract data
   const raecData = raec.data?.data ?? null;
   const raecSummary = extractRaecSummary(raecData, strategyId);
   const raecEvents = extractRaecEvents(raecData, strategyId);
   const journalRows = extractJournal(journal.data?.data ?? null);
   const readinessData = extractReadiness(readiness.data?.data ?? null, strategyId);
-  const slippageData = extractSlippage(slippage.data?.data ?? null);
-  const tradeData = extractTradeAnalytics(trades.data?.data ?? null, strategyId);
+  const slippageData = (slippage.data?.data as any)?.summary ?? null;
 
-  // Derive regime
   const regime: string | null = raecSummary?.latest_regime ?? null;
-
-  // Derive health
   const health = !readinessData?.state_file_exists
     ? "error"
-    : readinessData && readinessData.warnings.length > 0
+    : readinessData.warnings.length > 0
       ? "warn"
       : regime?.toUpperCase().includes("RISK_OFF")
         ? "error"
@@ -176,260 +85,255 @@ export function StrategyTearsheet() {
           ? "warn"
           : "ok";
 
-  // Build allocations from raec events/allocations
-  const allocations: AllocationRow[] = extractAllocations(raecData, strategyId).map((a) => ({
-    symbol: a.symbol,
-    targetPct: a.alloc_type === "target" ? a.weight_pct : 0,
-    currentPct: a.alloc_type === "current" ? a.weight_pct : 0,
-  }));
+  const HEALTH_VARIANT = { ok: "active", warn: "warning", error: "error" } as const;
+  const lastEval = raecSummary?.last_eval_date ?? readinessData?.last_eval_date ?? null;
 
-  // Merge target + current for same symbol
-  const allocMap = new Map<string, AllocationRow>();
+  // Merge allocations
+  const allocMap = new Map<string, { symbol: string; targetPct: number; currentPct: number }>();
   for (const a of extractAllocations(raecData, strategyId)) {
     const existing = allocMap.get(a.symbol) ?? { symbol: a.symbol, targetPct: 0, currentPct: 0 };
     if (a.alloc_type === "target") existing.targetPct = a.weight_pct;
     else existing.currentPct = a.weight_pct;
     allocMap.set(a.symbol, existing);
   }
-  const mergedAllocations = [...allocMap.values()].sort((a, b) => b.targetPct - a.targetPct);
-
-  // Build signals from raec summary
-  const signals: SignalRow[] = [];
-  if (raecSummary?.vol_target != null) {
-    signals.push({ label: "Vol Target", value: fmtPct(raecSummary.vol_target) });
-  }
-  if (raecSummary?.realized_vol != null) {
-    signals.push({ label: "Vol Realized", value: fmtPct(raecSummary.realized_vol) });
-  }
-
-  // Performance data
-  const perfData: PerformanceData = {
-    rebalances: raecSummary?.rebalances ?? raecEvents.filter((e) => e.should_rebalance).length,
-    regimeChanges: raecEvents.reduce((count, e, i) => {
-      if (i === 0) return count;
-      return e.regime !== raecEvents[i - 1].regime ? count + 1 : count;
-    }, 0),
-    avgDrift: null,
-    events: raecEvents.length,
-    trades: tradeData?.trade_count,
-    uniqueSymbols: tradeData?.unique_symbols,
-  };
-
-  // Last eval time
-  const lastEval = raecSummary?.last_eval_date ?? readinessData?.last_eval_date ?? null;
+  const allocations = [...allocMap.values()].sort((a, b) => b.targetPct - a.targetPct);
 
   // Coordinator sub-strategies
-  const coordSubStrategies = isCoord
+  const coordSubs = isCoord
     ? ["RAEC_401K_V3", "RAEC_401K_V4", "RAEC_401K_V5"].map((sid) => {
         const sub = extractRaecSummary(raecData, sid);
-        const subMeta = getMeta(sid);
-        return {
-          strategyId: sid,
-          shortName: subMeta.shortName,
-          subtitle: subMeta.subtitle,
-          regime: sub?.latest_regime ?? null,
-          rebalances: sub?.rebalances ?? 0,
-        };
+        const m = getMeta(sid);
+        return { id: sid, shortName: m.shortName, subtitle: m.subtitle, regime: sub?.latest_regime, rebalances: sub?.rebalance_count ?? 0 };
       })
     : [];
 
+  // Perf KPIs
+  const rebalances = raecSummary?.rebalance_count ?? raecEvents.filter((e) => e.should_rebalance).length;
+  const regimeChanges = raecEvents.reduce((c, e, i) => (i > 0 && e.regime !== raecEvents[i - 1].regime ? c + 1 : c), 0);
+
   return (
-    <section>
-      <BreadcrumbNav
-        crumbs={[
-          { label: "Strategies", to: "/strategies" },
-          { label: `${meta.shortName} \u2014 ${meta.subtitle}` },
-        ]}
-      />
+    <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
+      {/* Breadcrumb */}
+      <nav className="flex items-center gap-1 text-xs text-vantage-muted">
+        <Link to="/strategies" className="hover:text-vantage-text transition-colors">Strategies</Link>
+        <ChevronRight size={12} />
+        <span className="text-vantage-text font-medium">{meta.shortName} \u2014 {meta.subtitle}</span>
+      </nav>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <h2 className="page-title" style={{ margin: 0 }}>
-          {strategyId}
-        </h2>
-        <BookBadge strategyId={strategyId} />
-        <LastRefreshed at={raec.lastRefreshed ?? journal.lastRefreshed} />
-      </div>
-      <p className="page-subtitle">
-        {meta.shortName} \u2014 {meta.subtitle}
-      </p>
-
-      {/* ── Status Bar ────────────────────────────────────── */}
-      <div className="tearsheet-status-bar">
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <StatusDot status={health as any} large />
-            <span className="font-bold" style={{ textTransform: "uppercase", fontSize: "0.82rem" }}>
-              {health === "error" ? "Alert" : "Active"}
-            </span>
-            <RegimeBadge regime={regime} />
-            <span className="text-secondary" style={{ fontSize: "0.78rem" }}>
-              Last Eval: <span className="font-mono">{timeAgo(lastEval)}</span>
-            </span>
-            {raecSummary?.vol_target != null && raecSummary?.realized_vol != null && (
-              <span className="text-secondary" style={{ fontSize: "0.78rem" }}>
-                Vol: <span className="font-mono">{fmtPct(raecSummary.realized_vol)}/{fmtPct(raecSummary.vol_target)}</span>
-              </span>
-            )}
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="w-1 h-8 rounded-full" style={{ backgroundColor: meta.color }} />
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-semibold">{strategyId}</h2>
+            <BookBadge book={book} />
           </div>
-          <ControlActions strategyId={strategyId} />
+          <p className="text-[11px] text-vantage-muted">{meta.shortName} \u2014 {meta.subtitle}</p>
+        </div>
+      </div>
+
+      {/* Status Bar */}
+      <div className="bg-vantage-card border border-vantage-border rounded-lg p-4 flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <StatusBadge variant={HEALTH_VARIANT[health]}>
+            {health === "ok" ? "ACTIVE" : health === "warn" ? "CAUTION" : "ALERT"}
+          </StatusBadge>
+          <RegimeBadge regime={regime} />
+          <span className="text-xs text-vantage-muted">
+            Last Eval: <span className="font-mono">{timeAgo(lastEval)}</span>
+          </span>
+          {raecSummary?.portfolio_vol_target != null && (
+            <span className="text-xs text-vantage-muted">
+              Vol Target: <span className="font-mono">{formatPercent(raecSummary.portfolio_vol_target, 1)}</span>
+            </span>
+          )}
         </div>
       </div>
 
       {isLoading ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <SkeletonLoader variant="card" />
-          <SkeletonLoader variant="chart" />
-          <SkeletonLoader variant="card" />
+        <div className="space-y-4">
+          <SkeletonCard />
+          <SkeletonTable />
         </div>
       ) : (
         <>
-          {/* ── Coordinator Sub-Strategies ──────────────────── */}
-          {isCoord && coordSubStrategies.length > 0 && (
-            <div className="table-card">
-              <h3>Sub-Strategies (40/30/30 Split)</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-                {coordSubStrategies.map((sub) => (
-                  <div key={sub.strategyId} className="data-card">
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-                      <span className="font-bold" style={{ fontSize: "0.82rem" }}>{sub.shortName}</span>
-                      <span className="text-tertiary" style={{ fontSize: "0.72rem" }}>{sub.subtitle}</span>
+          {/* Coordinator Sub-Strategies */}
+          {isCoord && coordSubs.length > 0 && (
+            <div className="bg-vantage-card border border-vantage-border rounded-lg p-4">
+              <h3 className="text-sm font-semibold mb-3">Sub-Strategies (40/30/30 Split)</h3>
+              <div className="grid grid-cols-3 gap-3">
+                {coordSubs.map((sub) => (
+                  <Link
+                    key={sub.id}
+                    to={`/strategies/${encodeURIComponent(sub.id)}`}
+                    className="bg-vantage-bg border border-vantage-border rounded-lg p-3 hover:border-vantage-blue/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-sm font-bold">{sub.shortName}</span>
+                      <span className="text-[10px] text-vantage-muted">{sub.subtitle}</span>
                     </div>
                     <RegimeBadge regime={sub.regime} />
-                    <div className="text-secondary" style={{ fontSize: "0.72rem", marginTop: 4 }}>
-                      {sub.rebalances} rebalance{sub.rebalances !== 1 ? "s" : ""}
-                    </div>
-                  </div>
+                    <p className="text-[10px] text-vantage-muted mt-2">{sub.rebalances} rebalance{sub.rebalances !== 1 ? "s" : ""}</p>
+                  </Link>
                 ))}
               </div>
             </div>
           )}
 
-          {/* ── Allocation + Signals (side by side) ────────── */}
-          <div className="two-col" style={{ marginTop: 16 }}>
-            <div className="table-card" style={{ marginTop: 0 }}>
-              <h3>Allocation</h3>
-              {mergedAllocations.length > 0 ? (
-                <>
-                  <AllocationBar rows={mergedAllocations} />
-                  {(() => {
-                    const drift = mergedAllocations.reduce(
-                      (sum, r) => sum + Math.abs(r.targetPct - r.currentPct),
-                      0,
-                    );
-                    return drift > 0 ? (
-                      <div className="text-secondary" style={{ fontSize: "0.72rem", marginTop: 8 }}>
-                        Total drift: <span className="font-mono">{drift.toFixed(1)}%</span> off target
-                      </div>
-                    ) : null;
-                  })()}
-                </>
-              ) : (
-                <div className="text-tertiary" style={{ fontSize: "0.78rem" }}>
-                  {isAlpaca
-                    ? "Position data from portfolio endpoint"
-                    : "Allocation data populated after rebalance events"}
+          {/* Performance + Signals */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Performance KPIs */}
+            <div className="bg-vantage-card border border-vantage-border rounded-lg p-4">
+              <h3 className="text-sm font-semibold mb-3">Performance</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Rebalances</p>
+                  <p className="font-mono text-lg font-bold">{rebalances}</p>
                 </div>
+                <div>
+                  <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Regime Changes</p>
+                  <p className="font-mono text-lg font-bold">{regimeChanges}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Events</p>
+                  <p className="font-mono text-lg font-bold">{raecEvents.length}</p>
+                </div>
+                {slippageData && (
+                  <div>
+                    <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Avg Slippage</p>
+                    <p className="font-mono text-lg font-bold">{(slippageData.mean_bps ?? 0).toFixed(1)} bps</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Allocation */}
+            <div className="bg-vantage-card border border-vantage-border rounded-lg p-4">
+              <h3 className="text-sm font-semibold mb-3">Allocation</h3>
+              {allocations.length > 0 ? (
+                <div className="space-y-2">
+                  {allocations.map((a) => (
+                    <div key={a.symbol} className="flex items-center gap-3">
+                      <span className="font-mono text-xs font-semibold w-12">{a.symbol}</span>
+                      <div className="flex-1">
+                        <div className="h-1.5 bg-vantage-border rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-vantage-blue transition-all duration-500"
+                            style={{ width: `${Math.min(a.targetPct, 100)}%`, opacity: 0.8 }}
+                          />
+                        </div>
+                      </div>
+                      <span className="font-mono text-xs text-vantage-muted w-12 text-right">{a.targetPct.toFixed(1)}%</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-vantage-muted">Allocation data populated after rebalance events</p>
               )}
             </div>
+          </div>
 
-            <div className="table-card" style={{ marginTop: 0 }}>
-              <h3>Key Signals</h3>
-              <SignalsPanel
-                signals={signals}
-                volTarget={raecSummary?.vol_target}
-                volRealized={raecSummary?.realized_vol}
-              />
+          {/* Blotter */}
+          <div className="bg-vantage-card border border-vantage-border rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold">Blotter <span className="text-vantage-muted font-normal">(recent)</span></h3>
+              <Link
+                to={`/blotter?strategy_id=${encodeURIComponent(strategyId)}`}
+                className="text-[11px] text-vantage-blue hover:text-vantage-blue/80 transition-colors"
+              >
+                View all &rarr;
+              </Link>
             </div>
-          </div>
-
-          {/* ── Performance ──────────────────────────────────── */}
-          <div className="table-card">
-            <h3>Performance</h3>
-            <PerformancePanel data={perfData} />
-          </div>
-
-          {/* ── Blotter (recent) ─────────────────────────────── */}
-          <div className="table-card">
-            <h3>
-              Blotter{" "}
-              <span className="text-tertiary" style={{ fontSize: "0.72rem", fontWeight: 400 }}>
-                (recent)
-              </span>
-            </h3>
             {journalRows.length > 0 ? (
-              <>
-                <SummaryStrip
-                  items={[
-                    { label: "Total", value: journalRows.length },
-                    { label: "Buys", value: journalRows.filter((r) => r.side === "BUY").length },
-                    { label: "Sells", value: journalRows.filter((r) => r.side === "SELL").length },
-                  ]}
-                />
-                <div style={{ overflowX: "auto" }}>
-                  <table className="journal-table">
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Side</th>
-                        <th>Symbol</th>
-                        <th>Delta %</th>
-                        <th>Target %</th>
-                        <th>Current %</th>
-                        <th>Posted</th>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-vantage-border">
+                      <th className="py-2 px-2 text-left text-vantage-muted font-medium">Date</th>
+                      <th className="py-2 px-2 text-left text-vantage-muted font-medium">Side</th>
+                      <th className="py-2 px-2 text-left text-vantage-muted font-medium">Symbol</th>
+                      <th className="py-2 px-2 text-right text-vantage-muted font-medium">Delta %</th>
+                      <th className="py-2 px-2 text-right text-vantage-muted font-medium">Target %</th>
+                      <th className="py-2 px-2 text-right text-vantage-muted font-medium">Current %</th>
+                      <th className="py-2 px-2 text-center text-vantage-muted font-medium">Posted</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {journalRows.map((row, i) => (
+                      <tr
+                        key={`${row.ny_date}-${row.symbol}-${i}`}
+                        className={`border-b border-vantage-border/50 ${
+                          row.side === "BUY" ? "bg-vantage-green/[0.03] hover:bg-vantage-green/[0.05]" : "bg-vantage-red/[0.03] hover:bg-vantage-red/[0.05]"
+                        }`}
+                      >
+                        <td className="py-2 px-2 font-mono">{row.ny_date}</td>
+                        <td className={`py-2 px-2 font-mono font-semibold ${row.side === "BUY" ? "text-vantage-green" : "text-vantage-red"}`}>
+                          {row.side}
+                        </td>
+                        <td className="py-2 px-2 font-mono font-semibold">{row.symbol}</td>
+                        <td className="py-2 px-2 font-mono text-right">
+                          {row.delta_pct != null ? `${row.delta_pct > 0 ? "+" : ""}${row.delta_pct.toFixed(1)}%` : "\u2014"}
+                        </td>
+                        <td className="py-2 px-2 font-mono text-right">
+                          {row.target_pct != null ? `${row.target_pct.toFixed(1)}%` : "\u2014"}
+                        </td>
+                        <td className="py-2 px-2 font-mono text-right">
+                          {row.current_pct != null ? `${row.current_pct.toFixed(1)}%` : "\u2014"}
+                        </td>
+                        <td className="py-2 px-2 text-center">
+                          {row.posted ? (
+                            <span className="text-vantage-green">\u2713</span>
+                          ) : (
+                            <span className="text-vantage-muted">\u2014</span>
+                          )}
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {journalRows.map((row, i) => (
-                        <tr key={`${row.ny_date}-${row.symbol}-${i}`}>
-                          <td className="font-mono">{row.ny_date}</td>
-                          <td className={row.side === "BUY" ? "side-buy" : "side-sell"}>{row.side}</td>
-                          <td className="font-mono font-bold">{row.symbol}</td>
-                          <td className="font-mono">
-                            {row.delta_pct > 0 ? "+" : ""}{row.delta_pct.toFixed(1)}%
-                          </td>
-                          <td className="font-mono">{row.target_pct.toFixed(1)}%</td>
-                          <td className="font-mono">{row.current_pct.toFixed(1)}%</td>
-                          <td>{row.posted ? "\u2713" : "\u2014"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div style={{ marginTop: 8, fontSize: "0.72rem" }}>
-                  <a href={`/blotter?strategy_id=${encodeURIComponent(strategyId)}`} style={{ color: "var(--accent)" }}>
-                    View full blotter for {meta.shortName} \u2192
-                  </a>
-                </div>
-              </>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ) : (
-              <div className="empty-state">No recent journal entries</div>
+              <p className="text-xs text-vantage-muted py-4 text-center">No recent journal entries</p>
             )}
           </div>
 
-          {/* ── Readiness Check (RAEC only) ──────────────────── */}
-          {isRaec && (
-            <div className="table-card">
-              <h3>Readiness Check</h3>
-              <ReadinessCheck data={readinessData} />
-            </div>
-          )}
-
-          {/* ── Execution Quality (S1/S2 Alpaca only) ────────── */}
-          {isAlpaca && slippageData && (
-            <div className="table-card">
-              <h3>Execution Quality</h3>
-              <SummaryStrip
-                items={[
-                  { label: "Mean Slippage", value: `${(slippageData.mean_bps ?? 0).toFixed(1)} bps` },
-                  { label: "Median", value: `${(slippageData.median_bps ?? 0).toFixed(1)} bps` },
-                  { label: "P95", value: `${(slippageData.p95_bps ?? 0).toFixed(1)} bps` },
-                  { label: "Executions", value: slippageData.total ?? 0 },
-                ]}
-              />
+          {/* Readiness Check */}
+          {isRaec && readinessData && (
+            <div className="bg-vantage-card border border-vantage-border rounded-lg p-4">
+              <h3 className="text-sm font-semibold mb-3">Readiness Check</h3>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <p className="text-[10px] text-vantage-muted uppercase tracking-wide">State File</p>
+                  <StatusBadge variant={readinessData.state_file_exists ? "active" : "error"}>
+                    {readinessData.state_file_exists ? "OK" : "MISSING"}
+                  </StatusBadge>
+                </div>
+                <div>
+                  <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Allocations</p>
+                  <p className="font-mono text-xs font-semibold">{readinessData.allocation_count} ({readinessData.total_weight_pct.toFixed(0)}%)</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Ledger Today</p>
+                  <p className="font-mono text-xs font-semibold">{readinessData.today_ledger_count} files</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Warnings</p>
+                  <p className="font-mono text-xs font-semibold">{readinessData.warnings.length}</p>
+                </div>
+              </div>
+              {readinessData.warnings.length > 0 && (
+                <div className="mt-3 space-y-1">
+                  {readinessData.warnings.map((w, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs text-vantage-amber">
+                      <span>\u25B2</span> {w}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </>
       )}
-    </section>
+    </div>
   );
 }

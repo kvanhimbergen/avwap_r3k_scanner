@@ -1,15 +1,20 @@
 /**
- * Strategy Roster — book-grouped strategy listing at /strategies.
- * Groups strategies by book (Alpaca vs Schwab), with book-level summary headers,
- * sort/filter controls, and cross-book symbol overlap analysis.
+ * Strategy Roster — /strategies
+ * Atlas design: book-grouped strategy cards with colored left borders,
+ * allocation donut placeholder, filter controls.
  */
 import { useState } from "react";
+import { Link } from "react-router-dom";
+import { Layers, ChevronRight } from "lucide-react";
 
 import { api } from "../api";
-import { bookFromId } from "../components/BookBadge";
-import { SkeletonLoader } from "../components/SkeletonLoader";
-import { StrategyRosterCard, type RosterCardData } from "../components/StrategyRosterCard";
+import { StatusBadge, RegimeBadge, BookBadge } from "../components/Badge";
+import { SkeletonCard } from "../components/Skeleton";
+import { EmptyState } from "../components/EmptyState";
+import { ErrorState } from "../components/ErrorState";
 import { usePolling } from "../hooks/usePolling";
+import { formatCurrency } from "../lib/format";
+import { getMeta, bookFromId, regimeColor } from "../lib/strategies";
 import type {
   FreshnessRow,
   KeyValue,
@@ -19,74 +24,27 @@ import type {
   SymbolOverlap,
 } from "../types";
 
-/* ── Strategy metadata ──────────────────────────────────── */
-
-interface StrategyMeta { shortName: string; subtitle: string }
-
-const META: Record<string, StrategyMeta> = {
-  S1_AVWAP_CORE: { shortName: "S1", subtitle: "AVWAP" },
-  S2_LETF_ORB_AGGRO: { shortName: "S2", subtitle: "LETF ORB" },
-  RAEC_401K_V1: { shortName: "V1", subtitle: "Core" },
-  RAEC_401K_V2: { shortName: "V2", subtitle: "Enhanced" },
-  RAEC_401K_V3: { shortName: "V3", subtitle: "Aggressive" },
-  RAEC_401K_V4: { shortName: "V4", subtitle: "Macro" },
-  RAEC_401K_V5: { shortName: "V5", subtitle: "AI/Tech" },
-  RAEC_401K_COORD: { shortName: "COORD", subtitle: "40/30/30" },
-};
-
-function getMeta(id: string): StrategyMeta {
-  const upper = id.toUpperCase();
-  if (META[upper]) return META[upper];
-  for (const [key, val] of Object.entries(META)) {
-    if (upper.includes(key) || key.includes(upper)) return val;
-  }
-  return { shortName: id.split("_").pop() ?? id, subtitle: id };
-}
-
-/* ── Sort options ────────────────────────────────────────── */
-
-type SortKey = "activity" | "regime" | "exposure" | "trades";
-
-function sortCards(cards: RosterCardData[], key: SortKey): RosterCardData[] {
-  const sorted = [...cards];
-  switch (key) {
-    case "activity":
-      return sorted.sort((a, b) => (b.rebalances ?? b.trades) - (a.rebalances ?? a.trades));
-    case "regime":
-      return sorted.sort((a, b) => (a.regime ?? "").localeCompare(b.regime ?? ""));
-    case "trades":
-      return sorted.sort((a, b) => b.trades - a.trades);
-    case "exposure":
-    default:
-      return sorted;
-  }
-}
-
-/* ── Data extraction ─────────────────────────────────────── */
+/* ── Data extraction ─────────────────────────────── */
 
 function extractStrategies(data: KeyValue | null): StrategyMatrixRow[] {
   if (!data) return [];
   return ((data as any).strategies ?? (data as any).rows ?? []) as StrategyMatrixRow[];
 }
-
 function extractRaecSummary(data: KeyValue | null): any[] {
   if (!data) return [];
   return (data as any)?.by_strategy ?? [];
 }
-
 function extractRaecEvents(data: KeyValue | null): RaecRebalanceEvent[] {
   if (!data) return [];
   return ((data as any)?.events ?? []) as RaecRebalanceEvent[];
 }
-
 function extractReadiness(data: KeyValue | null): ReadinessStrategy[] {
   if (!data) return [];
   return ((data as any)?.strategies ?? []) as ReadinessStrategy[];
 }
-
 function extractOverlaps(data: KeyValue | null): SymbolOverlap[] {
   if (!data) return [];
-  return ((data as any).overlaps ?? []) as SymbolOverlap[];
+  return ((data as any).symbol_overlap ?? []) as SymbolOverlap[];
 }
 
 function computeHealth(
@@ -110,89 +68,14 @@ function computeHealth(
   return "ok";
 }
 
-function fmtUsd(v: number | null | undefined): string {
-  if (v == null) return "\u2014";
-  return `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-}
+const HEALTH_VARIANT = { ok: "active", warn: "warning", error: "error" } as const;
 
-/* ── Build roster cards ──────────────────────────────────── */
+type BookFilter = "all" | "alpaca" | "schwab";
 
-function buildCards(
-  strategies: StrategyMatrixRow[],
-  raecSummary: any[],
-  raecEvents: RaecRebalanceEvent[],
-  readinessStrategies: ReadinessStrategy[],
-  freshnessRows: FreshnessRow[],
-  portfolioData: KeyValue | null,
-): RosterCardData[] {
-  const readinessMap = new Map<string, ReadinessStrategy>();
-  for (const r of readinessStrategies) readinessMap.set(r.strategy_id.toUpperCase(), r);
-
-  const raecMap = new Map<string, any>();
-  for (const s of raecSummary) raecMap.set((s.strategy_id as string).toUpperCase(), s);
-
-  const eventsByStrategy = new Map<string, Map<string, number>>();
-  for (const ev of raecEvents) {
-    const key = ev.strategy_id.toUpperCase();
-    if (!eventsByStrategy.has(key)) eventsByStrategy.set(key, new Map());
-    const dateMap = eventsByStrategy.get(key)!;
-    dateMap.set(ev.ny_date, (dateMap.get(ev.ny_date) ?? 0) + 1);
-  }
-
-  // Portfolio exposure by strategy
-  const exposureByStrategy: any[] = (portfolioData as any)?.exposure_by_strategy ?? [];
-  const capitalTotal = (portfolioData as any)?.latest?.capital_total as number | undefined;
-
-  return strategies.map((s) => {
-    const upper = s.strategy_id.toUpperCase();
-    const meta = getMeta(s.strategy_id);
-    const raec = raecMap.get(upper);
-    const readiness = readinessMap.get(upper);
-    const regime = raec?.latest_regime ?? s.latest_regime ?? null;
-    const health = computeHealth(regime, readiness, freshnessRows);
-    const book = bookFromId(s.strategy_id);
-    const isAlpaca = book === "alpaca";
-    const isCoord = upper.includes("COORD");
-
-    // Sparkline
-    const dateMap = eventsByStrategy.get(upper);
-    let sparkline: number[] = [];
-    if (dateMap) {
-      const dates = [...dateMap.keys()].sort().slice(-14);
-      sparkline = dates.map((d) => dateMap.get(d) ?? 0);
-    }
-    if (sparkline.length < 2 && s.trade_count > 0) sparkline = [0, s.trade_count];
-
-    // Exposure (Alpaca only)
-    let exposure: string | undefined;
-    if (isAlpaca && capitalTotal) {
-      const exp = exposureByStrategy
-        .filter((e: any) => e.strategy_id?.toUpperCase() === upper)
-        .reduce((sum: number, e: any) => sum + (e.notional ?? 0), 0);
-      if (exp) exposure = `${fmtUsd(exp)} (${((exp / capitalTotal) * 100).toFixed(0)}%)`;
-    }
-
-    return {
-      strategyId: s.strategy_id,
-      shortName: meta.shortName,
-      subtitle: meta.subtitle,
-      regime,
-      health,
-      sparklineData: sparkline,
-      trades: s.trade_count,
-      uniqueSymbols: s.unique_symbols,
-      exposure,
-      rebalances: raec?.rebalances,
-      isCompact: !isAlpaca && !isCoord,
-    };
-  });
-}
-
-/* ── Component ──────────────────────────────────────────── */
+/* ── Component ──────────────────────────────────── */
 
 export function StrategyRoster() {
-  const [sortKey, setSortKey] = useState<SortKey>("activity");
-  const [bookFilter, setBookFilter] = useState<"all" | "alpaca" | "schwab">("all");
+  const [bookFilter, setBookFilter] = useState<BookFilter>("all");
 
   const matrix = usePolling(() => api.strategyMatrix(), 45_000);
   const raec = usePolling(() => api.raecDashboard(), 45_000);
@@ -210,122 +93,171 @@ export function StrategyRoster() {
   const freshnessRows = (freshness.data?.data?.rows ?? []) as FreshnessRow[];
   const overlaps = extractOverlaps(matrix.data?.data ?? null);
 
-  const allCards = buildCards(
-    strategies, raecSummary, raecEvents, readinessStrategies, freshnessRows, portfolio.data?.data ?? null,
-  );
-
-  const filtered = bookFilter === "all"
-    ? allCards
-    : allCards.filter((c) => bookFromId(c.strategyId) === bookFilter);
-
-  const alpacaCards = sortCards(filtered.filter((c) => bookFromId(c.strategyId) === "alpaca"), sortKey);
-  const schwabCards = sortCards(filtered.filter((c) => bookFromId(c.strategyId) === "schwab"), sortKey);
-
-  // Book-level summaries
-  const alpacaRebalances = raecSummary
-    .filter((s: any) => bookFromId(s.strategy_id ?? "") === "alpaca")
-    .reduce((sum: number, s: any) => sum + (s.rebalances ?? 0), 0);
-  const schwabRebalances = raecSummary
-    .filter((s: any) => bookFromId(s.strategy_id ?? "") === "schwab")
-    .reduce((sum: number, s: any) => sum + (s.rebalances ?? 0), 0);
-
+  // Index helpers
+  const readinessMap = new Map<string, ReadinessStrategy>();
+  for (const r of readinessStrategies) readinessMap.set(r.strategy_id.toUpperCase(), r);
+  const raecMap = new Map<string, any>();
+  for (const s of raecSummary) raecMap.set((s.strategy_id as string).toUpperCase(), s);
   const capitalTotal = (portfolio.data?.data as any)?.latest?.capital_total as number | undefined;
 
-  return (
-    <section>
-      <h2 className="page-title">Strategies</h2>
-      <p className="page-subtitle">Strategy roster grouped by book</p>
+  // Build cards for a given book
+  function renderBookSection(bookKey: "alpaca" | "schwab", title: string) {
+    const bookStrategies = strategies.filter((s) => bookFromId(s.strategy_id, s.book_id) === bookKey);
+    if (bookStrategies.length === 0) return null;
 
-      {/* ── Filters ─────────────────────────────────────── */}
-      <div className="filter-bar">
-        <label>
-          Sort:
-          <select value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
-            <option value="activity">Activity</option>
-            <option value="regime">Regime</option>
-            <option value="trades">Trades</option>
-          </select>
-        </label>
-        <label>
-          Filter:
-          <select value={bookFilter} onChange={(e) => setBookFilter(e.target.value as any)}>
-            <option value="all">All Books</option>
-            <option value="alpaca">Alpaca Paper</option>
-            <option value="schwab">Schwab 401K</option>
-          </select>
-        </label>
+    const bookRebalances = raecSummary
+      .filter((s: any) => bookFromId(s.strategy_id ?? "", s.book_id) === bookKey)
+      .reduce((sum: number, s: any) => sum + (s.rebalance_count ?? 0), 0);
+
+    return (
+      <div className="space-y-3">
+        {/* Book header */}
+        <div className="flex items-center gap-3">
+          <h3 className="text-sm font-semibold">{title}</h3>
+          <BookBadge book={bookKey} />
+          <span className="text-xs text-vantage-muted">
+            {bookStrategies.length} strategies
+            {bookRebalances > 0 ? ` \u00B7 ${bookRebalances} rebalances` : ""}
+            {bookKey === "alpaca" && capitalTotal != null ? ` \u00B7 ${formatCurrency(capitalTotal, 0)}` : ""}
+          </span>
+        </div>
+
+        {/* Strategy cards */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {bookStrategies.map((s) => {
+            const upper = s.strategy_id.toUpperCase();
+            const meta = getMeta(s.strategy_id);
+            const raecRow = raecMap.get(upper);
+            const rd = readinessMap.get(upper);
+            const regime = raecRow?.latest_regime ?? s.latest_regime ?? null;
+            const health = computeHealth(regime, rd, freshnessRows);
+            const isRaec = upper.includes("RAEC");
+            const rebalances = raecRow?.rebalance_count ?? 0;
+
+            return (
+              <Link
+                key={s.strategy_id}
+                to={`/strategies/${encodeURIComponent(s.strategy_id)}`}
+                className="bg-vantage-card border border-vantage-border rounded-lg p-4 border-l-2 hover:border-vantage-blue/50 transition-colors group"
+                style={{ borderLeftColor: meta.color }}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold">{meta.shortName}</span>
+                    <span className="text-[11px] text-vantage-muted">{meta.subtitle}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <StatusBadge variant={HEALTH_VARIANT[health]}>
+                      {health === "ok" ? "ACTIVE" : health === "warn" ? "WARN" : "ALERT"}
+                    </StatusBadge>
+                    <ChevronRight size={14} className="text-vantage-muted opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 mb-3">
+                  <RegimeBadge regime={regime} />
+                </div>
+
+                {/* Metrics grid */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Trades</p>
+                    <p className="font-mono text-xs font-semibold">{s.trade_count}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Symbols</p>
+                    <p className="font-mono text-xs font-semibold">{s.unique_symbols}</p>
+                  </div>
+                  {isRaec && (
+                    <div>
+                      <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Rebalances</p>
+                      <p className="font-mono text-xs font-semibold">{rebalances}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Allocation bar */}
+                {rd && rd.has_allocations && rd.total_weight_pct > 0 && (
+                  <div className="mt-3">
+                    <div className="h-1.5 bg-vantage-border rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(rd.total_weight_pct, 100)}%`, backgroundColor: meta.color, opacity: 0.8 }}
+                      />
+                    </div>
+                    <p className="text-[10px] text-vantage-muted mt-1">{rd.total_weight_pct.toFixed(0)}% allocated</p>
+                  </div>
+                )}
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Layers size={24} className="text-vantage-blue" />
+          <div>
+            <h2 className="text-xl font-semibold">Strategies</h2>
+            <p className="text-[11px] text-vantage-muted">
+              {strategies.length} active strategies across {new Set(strategies.map((s) => bookFromId(s.strategy_id, s.book_id))).size} books
+            </p>
+          </div>
+        </div>
+
+        {/* Filter pills */}
+        <div className="flex items-center gap-2">
+          {(["all", "alpaca", "schwab"] as BookFilter[]).map((f) => (
+            <button
+              key={f}
+              onClick={() => setBookFilter(f)}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                bookFilter === f
+                  ? "bg-vantage-border text-vantage-text"
+                  : "text-vantage-muted hover:text-vantage-text"
+              }`}
+            >
+              {f === "all" ? "All" : f === "alpaca" ? "Alpaca" : "Schwab"}
+            </button>
+          ))}
+        </div>
       </div>
 
       {isLoading ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <SkeletonLoader variant="card" />
-          <SkeletonLoader variant="card" />
-          <SkeletonLoader variant="card" />
+        <div className="grid grid-cols-2 gap-4">
+          {[...Array(6)].map((_, i) => <SkeletonCard key={i} />)}
         </div>
       ) : error ? (
-        <div className="error-box">{error}</div>
+        <ErrorState message={error} />
       ) : (
-        <>
-          {/* ── Alpaca Paper (Automated) ───────────────────── */}
-          {(bookFilter === "all" || bookFilter === "alpaca") && alpacaCards.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <div className="roster-book-header">
-                <span className="roster-book-title">Alpaca Paper</span>
-                <span className="book-badge alpaca">AUTO</span>
-                <span className="roster-book-summary">
-                  {capitalTotal ? `Capital: ${fmtUsd(capitalTotal)}` : ""}
-                  {alpacaRebalances > 0 ? ` \u00B7 ${alpacaRebalances} reb` : ""}
-                </span>
-              </div>
-              <div className="roster-grid roster-grid-wide">
-                {alpacaCards.map((card) => (
-                  <StrategyRosterCard key={card.strategyId} data={card} />
-                ))}
-              </div>
-            </div>
-          )}
+        <div className="space-y-8">
+          {(bookFilter === "all" || bookFilter === "alpaca") &&
+            renderBookSection("alpaca", "Alpaca Paper")}
+          {(bookFilter === "all" || bookFilter === "schwab") &&
+            renderBookSection("schwab", "Schwab 401K Manual")}
 
-          {/* ── Schwab 401K (Manual) ──────────────────────── */}
-          {(bookFilter === "all" || bookFilter === "schwab") && schwabCards.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <div className="roster-book-header">
-                <span className="roster-book-title">Schwab 401K Manual</span>
-                <span className="book-badge schwab">MANUAL</span>
-                <span className="roster-book-summary">
-                  {schwabRebalances > 0 ? `${schwabRebalances} rebalances` : ""}
-                </span>
-              </div>
-              <div className="roster-grid">
-                {schwabCards.map((card) => (
-                  <StrategyRosterCard key={card.strategyId} data={card} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ── Cross-Book Analysis ──────────────────────── */}
+          {/* Cross-book overlap */}
           {overlaps.length > 0 && bookFilter === "all" && (
-            <div className="table-card">
-              <h3>Cross-Book Analysis</h3>
-              <div className="text-secondary" style={{ fontSize: "0.78rem" }}>
-                Symbol Overlap:{" "}
-                {overlaps.slice(0, 10).map((o, i) => (
-                  <span key={o.symbol}>
-                    {i > 0 && " \u00B7 "}
-                    <span className="overlap-highlight">
-                      {o.symbol} ({o.strategy_ids.length} strategies)
-                    </span>
+            <div className="bg-vantage-card border border-vantage-border rounded-lg p-4">
+              <h3 className="text-sm font-semibold mb-2">Cross-Book Symbol Overlap</h3>
+              <div className="flex flex-wrap gap-2">
+                {overlaps.slice(0, 10).map((o) => (
+                  <span key={o.symbol} className="text-xs bg-vantage-border px-2 py-1 rounded font-mono">
+                    {o.symbol} <span className="text-vantage-muted">({o.strategy_ids.length})</span>
                   </span>
                 ))}
               </div>
             </div>
           )}
 
-          {filtered.length === 0 && (
-            <div className="empty-state">No strategies match the current filter</div>
-          )}
-        </>
+          {strategies.length === 0 && <EmptyState icon={Layers} message="No strategies found" />}
+        </div>
       )}
-    </section>
+    </div>
   );
 }

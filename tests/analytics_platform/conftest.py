@@ -129,9 +129,55 @@ def sample_repo(tmp_path: Path) -> Path:
         "symbol,pnl\nAAPL,100\n", encoding="utf-8"
     )
 
+    # --- RAEC state directories for readiness checks ---
+    (tmp_path / "state" / "strategies" / "SCHWAB_401K_MANUAL").mkdir(parents=True)
+    (tmp_path / "state" / "strategies" / "ALPACA_PAPER").mkdir(parents=True)
+
+    # Write V1/V2 state files (Alpaca)
+    v1_state = {
+        "last_eval_date": "2026-02-10",
+        "last_regime": "RISK_ON",
+        "last_known_allocations": {"TQQQ": 40.0, "SOXL": 30.0, "BIL": 30.0},
+    }
+    (tmp_path / "state" / "strategies" / "ALPACA_PAPER" / "RAEC_401K_V1.json").write_text(
+        json.dumps(v1_state), encoding="utf-8"
+    )
+    v2_state = {
+        "last_eval_date": "2026-02-10",
+        "last_regime": "TRANSITION",
+        "last_known_allocations": {"QQQ": 50.0, "BIL": 50.0},
+    }
+    (tmp_path / "state" / "strategies" / "ALPACA_PAPER" / "RAEC_401K_V2.json").write_text(
+        json.dumps(v2_state), encoding="utf-8"
+    )
+
     # --- RAEC rebalance event fixture ---
+    (tmp_path / "ledger" / "RAEC_REBALANCE" / "RAEC_401K_V1").mkdir(parents=True)
     (tmp_path / "ledger" / "RAEC_REBALANCE" / "RAEC_401K_V3").mkdir(parents=True)
     (tmp_path / "ledger" / "RAEC_REBALANCE" / "RAEC_401K_COORD").mkdir(parents=True)
+
+    # V1 rebalance event (Alpaca)
+    raec_v1_event = {
+        "record_type": "RAEC_REBALANCE_EVENT",
+        "ts_utc": "2026-02-10T14:30:00+00:00",
+        "ny_date": "2026-02-10",
+        "book_id": "ALPACA_PAPER",
+        "strategy_id": "RAEC_401K_V1",
+        "regime": "RISK_ON",
+        "should_rebalance": False,
+        "rebalance_trigger": "none",
+        "targets": {"TQQQ": 40.0, "SOXL": 30.0, "BIL": 30.0},
+        "current_allocations": {"TQQQ": 40.0, "SOXL": 30.0, "BIL": 30.0},
+        "intent_count": 0,
+        "intents": [],
+        "signals": {},
+        "portfolio_vol_target": 0.20,
+        "portfolio_vol_realized": 0.18,
+        "posted": False,
+    }
+    (tmp_path / "ledger" / "RAEC_REBALANCE" / "RAEC_401K_V1" / "2026-02-10.jsonl").write_text(
+        json.dumps(raec_v1_event) + "\n", encoding="utf-8"
+    )
 
     raec_rebalance_event = {
         "record_type": "RAEC_REBALANCE_EVENT",
@@ -231,6 +277,191 @@ def sample_repo(tmp_path: Path) -> Path:
     (tmp_path / "analytics" / "artifacts" / "portfolio_snapshots" / "2026-02-10.json").write_text(
         json.dumps(portfolio_snapshot, indent=2) + "\n", encoding="utf-8"
     )
+
+    # --- Schwab readonly ledger fixtures ---
+    (tmp_path / "ledger" / "SCHWAB_401K_MANUAL").mkdir(parents=True)
+
+    schwab_account_snapshot = {
+        "record_type": "SCHWAB_READONLY_ACCOUNT_SNAPSHOT",
+        "snapshot_id": "snap-acct-001",
+        "ny_date": "2026-02-10",
+        "schema_version": 1,
+        "book_id": "SCHWAB_401K_MANUAL",
+        "as_of_utc": "2026-02-10T16:00:00+00:00",
+        "cash": "5000.0000",
+        "market_value": "20922.8300",
+        "total_value": "25922.8300",
+        "provenance": {"module": "analytics.schwab_readonly_storage"},
+    }
+    schwab_positions_snapshot = {
+        "record_type": "SCHWAB_READONLY_POSITIONS_SNAPSHOT",
+        "snapshot_id": "snap-pos-001",
+        "ny_date": "2026-02-10",
+        "schema_version": 1,
+        "book_id": "SCHWAB_401K_MANUAL",
+        "as_of_utc": "2026-02-10T16:00:00+00:00",
+        "positions": [
+            {"symbol": "TQQQ", "qty": "100.000000", "cost_basis": "6500.0000", "market_value": "7725.0000"},
+            {"symbol": "SOXL", "qty": "50.000000", "cost_basis": "5000.0000", "market_value": "5200.0000"},
+            {"symbol": "BIL", "qty": "200.000000", "cost_basis": "8000.0000", "market_value": "7997.8300"},
+        ],
+        "provenance": {"module": "analytics.schwab_readonly_storage"},
+    }
+    schwab_orders_snapshot = {
+        "record_type": "SCHWAB_READONLY_ORDERS_SNAPSHOT",
+        "snapshot_id": "snap-ord-001",
+        "ny_date": "2026-02-10",
+        "schema_version": 1,
+        "book_id": "SCHWAB_401K_MANUAL",
+        "as_of_utc": "2026-02-10T16:00:00+00:00",
+        "orders": [
+            {
+                "order_id": "order-001",
+                "symbol": "TQQQ",
+                "side": "BUY",
+                "qty": "50.000000",
+                "filled_qty": "50.000000",
+                "status": "FILLED",
+                "submitted_at": "2026-02-10T14:30:00+00:00",
+                "filled_at": "2026-02-10T14:30:05+00:00",
+            },
+        ],
+        "provenance": {"module": "analytics.schwab_readonly_storage"},
+    }
+    schwab_reconciliation = {
+        "record_type": "SCHWAB_READONLY_RECONCILIATION",
+        "reconciliation_id": "recon-001",
+        "ny_date": "2026-02-10",
+        "book_id": "SCHWAB_401K_MANUAL",
+        "as_of_utc": "2026-02-10T16:05:00+00:00",
+        "report": {
+            "schema_version": 1,
+            "book_id": "SCHWAB_401K_MANUAL",
+            "ny_date": "2026-02-10",
+            "as_of_utc": "2026-02-10T16:05:00+00:00",
+            "counts": {
+                "intent_count": 3,
+                "confirmation_count": 3,
+                "broker_position_count": 3,
+                "drift_intent_count": 0,
+                "drift_symbol_count": 0,
+                "unknown_confirmation_count": 0,
+            },
+            "drift_reason_codes": [],
+            "symbols": [
+                {"symbol": "TQQQ", "intent_qty_total": "100.000000", "broker_qty": "100.000000", "drift_reason_codes": []},
+                {"symbol": "SOXL", "intent_qty_total": "50.000000", "broker_qty": "50.000000", "drift_reason_codes": []},
+                {"symbol": "BIL", "intent_qty_total": "200.000000", "broker_qty": "200.000000", "drift_reason_codes": []},
+            ],
+        },
+        "provenance": {"module": "analytics.schwab_readonly_reconciliation"},
+    }
+    schwab_lines = "\n".join(
+        json.dumps(r)
+        for r in [schwab_account_snapshot, schwab_positions_snapshot, schwab_orders_snapshot, schwab_reconciliation]
+    ) + "\n"
+    (tmp_path / "ledger" / "SCHWAB_401K_MANUAL" / "2026-02-10.jsonl").write_text(schwab_lines, encoding="utf-8")
+
+    # --- Alpaca order event fixtures ---
+    (tmp_path / "ledger" / "ALPACA_PAPER").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "ledger" / "S2_ALPACA").mkdir(parents=True, exist_ok=True)
+
+    alpaca_paper_orders = [
+        {
+            "event_type": "ORDER_STATUS",
+            "date_ny": "2026-02-10",
+            "ts_utc": "2026-02-10T14:35:00+00:00",
+            "book_id": "ALPACA_PAPER",
+            "strategy_id": "RAEC_401K_V2",
+            "intent_id": "intent-alp-001",
+            "alpaca_order_id": "alp-order-001",
+            "symbol": "QQQ",
+            "qty": 10,
+            "side": "buy",
+            "ref_price": 450.0,
+            "notional": 4500.0,
+            "status": "filled",
+            "filled_qty": 10,
+            "filled_avg_price": 450.50,
+            "filled_at": "2026-02-10T14:35:05+00:00",
+            "created_at": "2026-02-10T14:35:00+00:00",
+            "updated_at": "2026-02-10T14:35:05+00:00",
+            "order_type": "market",
+            "stop_loss": 440.0,
+            "take_profit": 470.0,
+        },
+    ]
+    (tmp_path / "ledger" / "ALPACA_PAPER" / "2026-02-10.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in alpaca_paper_orders) + "\n", encoding="utf-8"
+    )
+
+    s2_alpaca_orders = [
+        {
+            "event_type": "ORDER_STATUS",
+            "date_ny": "2026-02-10",
+            "ts_utc": "2026-02-10T14:36:00+00:00",
+            "book_id": "S2_ALPACA",
+            "strategy_id": "S2_LETF_ORB_AGGRO",
+            "intent_id": "intent-s2-001",
+            "alpaca_order_id": "s2-order-001",
+            "symbol": "TQQQ",
+            "qty": 50,
+            "side": "buy",
+            "ref_price": 75.0,
+            "notional": 3750.0,
+            "status": "filled",
+            "filled_qty": 50,
+            "filled_avg_price": 75.10,
+            "filled_at": "2026-02-10T14:36:05+00:00",
+            "created_at": "2026-02-10T14:36:00+00:00",
+            "updated_at": "2026-02-10T14:36:05+00:00",
+            "order_type": "market",
+            "stop_loss": 73.0,
+            "take_profit": 80.0,
+        },
+        {
+            "event_type": "ORDER_STATUS",
+            "date_ny": "2026-02-10",
+            "ts_utc": "2026-02-10T15:30:00+00:00",
+            "book_id": "S2_ALPACA",
+            "strategy_id": "S2_LETF_ORB_AGGRO",
+            "intent_id": "intent-s2-002",
+            "alpaca_order_id": "s2-order-002",
+            "symbol": "TQQQ",
+            "qty": 50,
+            "side": "sell",
+            "ref_price": 77.0,
+            "notional": 3850.0,
+            "status": "filled",
+            "filled_qty": 50,
+            "filled_avg_price": 77.25,
+            "filled_at": "2026-02-10T15:30:05+00:00",
+            "created_at": "2026-02-10T15:30:00+00:00",
+            "updated_at": "2026-02-10T15:30:05+00:00",
+            "order_type": "market",
+            "stop_loss": None,
+            "take_profit": None,
+        },
+    ]
+    (tmp_path / "ledger" / "S2_ALPACA" / "2026-02-10.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in s2_alpaca_orders) + "\n", encoding="utf-8"
+    )
+
+    # --- Scan candidates CSV fixture ---
+    scan_csv = (
+        "SchemaVersion,ScanDate,Symbol,Direction,TrendTier,Price,Entry_Level,Entry_DistPct,"
+        "Stop_Loss,Target_R1,Target_R2,TrendScore,Sector,Anchor,AVWAP_Slope,AVWAP_Confluence,Sector_RS,"
+        "Setup_VWAP_Control,Setup_VWAP_Reclaim,Setup_VWAP_Acceptance,Setup_VWAP_DistPct,"
+        "Setup_AVWAP_Control,Setup_AVWAP_Reclaim,Setup_AVWAP_Acceptance,Setup_AVWAP_DistPct,"
+        "Setup_Extension_State,Setup_Gap_Reset,Setup_Structure_State\n"
+        "1,2026-02-10,AAPL,Long,A,185.50,183.00,1.36,181.00,188.00,190.00,42.5,"
+        "Technology,SwingLow20,0.0120,3,1.0350,bullish,none,bullish,1.36,"
+        "bullish,none,bullish,1.36,moderate,none,bullish\n"
+        "1,2026-02-10,TSLA,Short,B,220.00,225.00,2.27,228.00,215.00,210.00,35.2,"
+        "Consumer Discretionary,SwingHigh20,-0.0080,1,0.9800,bearish,none,bearish,2.27,"
+        "bearish,none,bearish,2.27,moderate,none,bearish\n"
+    )
+    (tmp_path / "daily_candidates.csv").write_text(scan_csv, encoding="utf-8")
 
     return tmp_path
 

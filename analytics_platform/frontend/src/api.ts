@@ -17,8 +17,27 @@ async function post<T>(path: string, body: unknown): Promise<ApiEnvelope<T>> {
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `API ${path} failed with status ${response.status}`);
+    throw new Error(`API POST ${path} failed with status ${response.status}`);
+  }
+  return (await response.json()) as ApiEnvelope<T>;
+}
+
+async function put<T>(path: string, body: unknown): Promise<ApiEnvelope<T>> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`API PUT ${path} failed with status ${response.status}`);
+  }
+  return (await response.json()) as ApiEnvelope<T>;
+}
+
+async function del<T>(path: string): Promise<ApiEnvelope<T>> {
+  const response = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(`API DELETE ${path} failed with status ${response.status}`);
   }
   return (await response.json()) as ApiEnvelope<T>;
 }
@@ -49,13 +68,14 @@ export const api = {
   exportUrl: (dataset: string, start?: string, end?: string) =>
     `${API_BASE}/api/v1/exports/${dataset}.csv${toQuery({ start, end })}`,
 
-  raecDashboard: (args?: { start?: string; end?: string; strategy_id?: string }) =>
+  raecDashboard: (args?: { start?: string; end?: string; strategy_id?: string; book_id?: string }) =>
     get<KeyValue>(`/api/v1/raec/dashboard${toQuery(args ?? {})}`),
 
   journal: (args?: {
     start?: string;
     end?: string;
     strategy_id?: string;
+    book_id?: string;
     symbol?: string;
     side?: string;
     limit?: number;
@@ -63,13 +83,13 @@ export const api = {
 
   raecReadiness: () => get<KeyValue>("/api/v1/raec/readiness"),
 
-  pnl: (args?: { start?: string; end?: string; strategy_id?: string }) =>
+  pnl: (args?: { start?: string; end?: string; strategy_id?: string; book_id?: string }) =>
     get<KeyValue>(`/api/v1/pnl${toQuery(args ?? {})}`),
 
   slippage: (args?: { start?: string; end?: string; strategy_id?: string }) =>
     get<KeyValue>(`/api/v1/execution/slippage${toQuery(args ?? {})}`),
 
-  tradeAnalytics: (args?: { start?: string; end?: string; strategy_id?: string }) =>
+  tradeAnalytics: (args?: { start?: string; end?: string; strategy_id?: string; book_id?: string }) =>
     get<KeyValue>(`/api/v1/analytics/trades${toQuery(args ?? {})}`),
 
   portfolioOverview: (args?: { start?: string; end?: string }) =>
@@ -83,15 +103,37 @@ export const api = {
 
   strategyMatrix: () => get<KeyValue>("/api/v1/strategies/matrix"),
 
-  postFills: (body: {
-    date: string;
-    strategy_id: string;
-    fees: number;
-    notes: string | null;
-    fills: Array<{ side: string; symbol: string; qty: number | null; price: number }>;
-  }) => post<KeyValue>("/api/v1/fills", body),
+  schwabOverview: (args?: { start?: string; end?: string }) =>
+    get<KeyValue>(`/api/v1/schwab/overview${toQuery(args ?? {})}`),
 
-  getFills: (date: string) => get<KeyValue>(`/api/v1/fills${toQuery({ date })}`),
+  performance: (args?: { start?: string; end?: string; strategy_id?: string; book_id?: string }) =>
+    get<KeyValue>(`/api/v1/performance${toQuery(args ?? {})}`),
+
+  todaysTrades: (args?: { date?: string }) =>
+    get<KeyValue>(`/api/v1/trade/today${toQuery(args ?? {})}`),
+
+  scanCandidates: (args?: {
+    date?: string;
+    symbol?: string;
+    direction?: string;
+    sector?: string;
+    limit?: number;
+  }) => get<KeyValue>(`/api/v1/scan/candidates${toQuery(args ?? {})}`),
+
+  scanChartData: (symbol: string, anchor?: string | null, days?: number) =>
+    get<KeyValue>(
+      `/api/v1/scan/chart-data/${encodeURIComponent(symbol)}${toQuery({ anchor: anchor ?? undefined, days })}`,
+    ),
+
+  tradeLogList: (args?: { status?: string; symbol?: string; limit?: number }) =>
+    get<KeyValue>(`/api/v1/trades/log${toQuery(args ?? {})}`),
+  tradeLogSummary: () => get<KeyValue>("/api/v1/trades/log/summary"),
+  tradeLogCreate: (body: Record<string, unknown>) =>
+    post<KeyValue>("/api/v1/trades/log", body),
+  tradeLogClose: (id: string, body: Record<string, unknown>) =>
+    put<KeyValue>(`/api/v1/trades/log/${encodeURIComponent(id)}`, body),
+  tradeLogDelete: (id: string) =>
+    del<KeyValue>(`/api/v1/trades/log/${encodeURIComponent(id)}`),
 };
 
 function toQuery(params: Record<string, unknown>): string {

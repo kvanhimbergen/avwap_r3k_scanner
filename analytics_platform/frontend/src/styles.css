@@ -2,15 +2,15 @@
 
 /* ── Tokens ─────────────────────────────────────────────── */
 :root {
-  /* Dark theme (default) */
-  --bg: #0a0e14;
-  --surface: #111820;
-  --surface-raised: #1a2332;
-  --surface-alt: #1a2332;
-  --surface-inset: #080c12;
-  --text: #d4dce8;
-  --text-secondary: #7a8ba0;
-  --text-tertiary: #4a5568;
+  /* Dark theme (default) — warm high-contrast */
+  --bg: #111318;
+  --surface: #1a1d24;
+  --surface-raised: #252930;
+  --surface-alt: #252930;
+  --surface-inset: #0e1015;
+  --text: #e8ecf0;
+  --text-secondary: #8b96a4;
+  --text-tertiary: #5c6678;
   --accent: #3b82f6;
   --accent-muted: rgba(59, 130, 246, 0.15);
   --green: #22c55e;
@@ -27,9 +27,9 @@
   --purple-muted: rgba(139, 92, 246, 0.12);
   --cyan: #06b6d4;
   --cyan-muted: rgba(6, 182, 212, 0.12);
-  --border: #1e2a3a;
-  --border-subtle: #172030;
-  --border-active: #2d4a6f;
+  --border: #2d333b;
+  --border-subtle: #232830;
+  --border-active: #4a6fa5;
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -44,16 +44,16 @@
   --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, monospace;
 }
 
-/* Light theme opt-in */
+/* Light theme opt-in — neutral warm-white */
 [data-theme="light"] {
-  --bg: #f4f5ef;
+  --bg: #f5f5f5;
   --surface: #ffffff;
   --surface-raised: #ffffff;
-  --surface-alt: #eceee4;
-  --surface-inset: #f8f9f4;
-  --text: #1a2611;
-  --text-secondary: #5e6d52;
-  --text-tertiary: #8a977d;
+  --surface-alt: #f0f0f0;
+  --surface-inset: #fafafa;
+  --text: #1a1a1a;
+  --text-secondary: #555;
+  --text-tertiary: #888;
   --accent: #2563eb;
   --accent-muted: #dbeafe;
   --green: #16a34a;
@@ -70,12 +70,12 @@
   --purple-muted: #ede9fe;
   --cyan: #0891b2;
   --cyan-muted: #cffafe;
-  --border: #d4dbc6;
-  --border-subtle: #e4e8da;
+  --border: #d4d4d4;
+  --border-subtle: #e5e5e5;
   --border-active: #2563eb;
-  --shadow-sm: 0 1px 2px rgba(20, 40, 10, 0.04);
-  --shadow-md: 0 2px 8px rgba(20, 40, 10, 0.06), 0 1px 2px rgba(20, 40, 10, 0.04);
-  --shadow-lg: 0 8px 24px rgba(20, 40, 10, 0.08), 0 2px 6px rgba(20, 40, 10, 0.04);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
 }
 
 /* ── Reset & Base ───────────────────────────────────────── */
@@ -309,9 +309,9 @@ body {
 .app-main {
   grid-row: 2;
   grid-column: 2;
-  padding: 24px 28px 48px;
+  padding: 20px 24px 32px;
   min-width: 0;
-  max-width: 1400px;
+  max-width: 1600px;
 }
 
 /* Route transition — fade in on page mount */
@@ -327,7 +327,7 @@ body {
 
 .page-title {
   margin: 0 0 4px;
-  font-size: 1.25rem;
+  font-size: 1.5rem;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--text);
@@ -335,8 +335,9 @@ body {
 
 .page-subtitle {
   margin: 0 0 20px;
-  font-size: 0.78rem;
-  color: var(--text-tertiary);
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 
 /* ── Breadcrumbs ───────────────────────────────────────── */
@@ -369,11 +370,11 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .kpi-card {
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: var(--radius-md);
   background: var(--surface);
   border: 1px solid var(--border-subtle);
@@ -386,11 +387,10 @@ body {
 }
 
 .kpi-label {
-  font-size: 0.65rem;
+  font-size: 0.72rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-tertiary);
+  letter-spacing: 0.01em;
+  color: var(--text-secondary);
   margin-bottom: 6px;
 }
 
@@ -437,14 +437,14 @@ body {
 .chart-card h3,
 .table-card h3 {
   margin: 0 0 14px;
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: 0.88rem;
+  font-weight: 700;
   color: var(--text);
   letter-spacing: -0.01em;
 }
 
 .data-card {
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: var(--radius-md);
   background: var(--surface);
   border: 1px solid var(--border-subtle);
@@ -530,11 +530,11 @@ table {
 
 th {
   text-align: left;
-  font-size: 0.65rem;
+  font-size: 0.70rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
@@ -868,7 +868,7 @@ tbody tr:hover {
 /* ── Two-Column Layout ──────────────────────────────────── */
 .two-col {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
   gap: 12px;
 }
 
@@ -1280,13 +1280,13 @@ tbody tr:hover {
 /* ── Strategy Card (Command Center grid) ───────────────── */
 .strategy-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 10px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .strategy-card {
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: var(--radius-md);
   background: var(--surface);
   border: 1px solid var(--border-subtle);
@@ -1343,7 +1343,7 @@ tbody tr:hover {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 10px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .book-pnl-card {
@@ -1373,11 +1373,10 @@ tbody tr:hover {
 }
 
 .book-pnl-metric-label {
-  font-size: 0.62rem;
+  font-size: 0.72rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-tertiary);
+  letter-spacing: 0.01em;
+  color: var(--text-secondary);
 }
 
 .book-pnl-metric-value {
@@ -1727,3 +1726,78 @@ tbody tr:hover {
 .font-mono { font-family: var(--font-mono); }
 .font-bold { font-weight: 700; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Section Headers (alerts / activity panels) ────────── */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.section-header-title {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.section-header-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+/* ── KPI Card Sentiment Tints ──────────────────────────── */
+.kpi-card.positive {
+  background: var(--green-muted);
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.kpi-card.negative {
+  background: var(--red-muted);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+/* ── KPI Unit (smaller span after value) ───────────────── */
+.kpi-unit {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-left: 2px;
+}
+
+/* ── Book P&L Headline Metric ──────────────────────────── */
+.book-pnl-metric-value.headline {
+  font-size: 1.4rem;
+}
+
+/* ── Book P&L Positions Table ──────────────────────────── */
+.book-pnl-positions {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.book-pnl-positions table {
+  font-size: 0.75rem;
+}
+
+.book-pnl-positions th {
+  font-size: 0.62rem;
+  padding: 4px 8px;
+}
+
+.book-pnl-positions td {
+  font-size: 0.75rem;
+  padding: 4px 8px;
+}

@@ -63,7 +63,7 @@ def test_run_scan_refreshes_benchmarks_without_scanning(monkeypatch: pytest.Monk
     fake_client = _FakeAlpacaClient()
     scanned: list[str] = []
 
-    def _fake_build_candidate_row(df, ticker, sector, setup_rules, *, as_of_dt=None, direction="Long"):
+    def _fake_build_candidate_row(df, ticker, sector, setup_rules, *, as_of_dt=None, direction="Long", sector_rs=None):
         scanned.append(ticker)
         return {"Symbol": ticker}
 
@@ -78,6 +78,7 @@ def test_run_scan_refreshes_benchmarks_without_scanning(monkeypatch: pytest.Monk
     monkeypatch.setattr(scan_engine, "load_universe", lambda: ["AAA"])
     monkeypatch.setattr(scan_engine, "is_near_earnings_cached", lambda *_: False)
     monkeypatch.setattr(scan_engine, "build_candidate_row", _fake_build_candidate_row)
+    monkeypatch.setattr(scan_engine, "compute_sector_relative_strength", lambda *a, **kw: {})
     monkeypatch.setattr(scan_engine.cs, "read_parquet", lambda *_: history.copy())
     monkeypatch.setattr(scan_engine.cs, "write_parquet", lambda *_: None)
 
@@ -104,7 +105,7 @@ def test_run_scan_backfills_missing_benchmark_history(monkeypatch: pytest.Monkey
     fake_client = _FakeAlpacaClient()
     scanned: list[str] = []
 
-    def _fake_build_candidate_row(df, ticker, sector, setup_rules, *, as_of_dt=None, direction="Long"):
+    def _fake_build_candidate_row(df, ticker, sector, setup_rules, *, as_of_dt=None, direction="Long", sector_rs=None):
         scanned.append(ticker)
         return {"Symbol": ticker}
 
@@ -120,6 +121,7 @@ def test_run_scan_backfills_missing_benchmark_history(monkeypatch: pytest.Monkey
     monkeypatch.setattr(scan_engine, "load_universe", lambda: ["AAA"])
     monkeypatch.setattr(scan_engine, "is_near_earnings_cached", lambda *_: False)
     monkeypatch.setattr(scan_engine, "build_candidate_row", _fake_build_candidate_row)
+    monkeypatch.setattr(scan_engine, "compute_sector_relative_strength", lambda *a, **kw: {})
     monkeypatch.setattr(scan_engine.cs, "read_parquet", lambda *_: history.copy())
     monkeypatch.setattr(scan_engine.cs, "write_parquet", lambda *_: None)
 
@@ -148,6 +150,7 @@ def test_run_scan_skips_sufficient_benchmark_history(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(scan_engine, "load_universe", lambda: ["AAA"])
     monkeypatch.setattr(scan_engine, "is_near_earnings_cached", lambda *_: False)
     monkeypatch.setattr(scan_engine, "build_candidate_row", lambda *_args, **_kwargs: {"Symbol": "AAA"})
+    monkeypatch.setattr(scan_engine, "compute_sector_relative_strength", lambda *a, **kw: {})
     monkeypatch.setattr(scan_engine.cs, "read_parquet", lambda *_: history.copy())
     monkeypatch.setattr(scan_engine.cs, "write_parquet", lambda *_: None)
 

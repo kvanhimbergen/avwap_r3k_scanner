@@ -13,7 +13,8 @@ import { useNavigate } from "react-router-dom";
  *   g r → Risk
  *   g b → Blotter
  *   g e → Execution
- *   g l → Log Fills (ops)
+ *   g p → Performance
+ *   g l → Schwab Account (ops)
  */
 export function useKeyboardShortcuts(onToggleHelp: () => void) {
   const navigate = useNavigate();
@@ -45,7 +46,8 @@ export function useKeyboardShortcuts(onToggleHelp: () => void) {
           r: "/risk",
           b: "/blotter",
           e: "/execution",
-          l: "/ops/log-fills",
+          p: "/performance",
+          l: "/ops/schwab",
         };
 
         if (routes[key]) {

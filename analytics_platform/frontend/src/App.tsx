@@ -1,8 +1,8 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
-import { AppShell } from "./components/AppShell";
-import { SkeletonLoader } from "./components/SkeletonLoader";
+import { Layout } from "./components/Layout";
+import { Skeleton } from "./components/Skeleton";
 
 /* ── Eager: Command Center (home — always fast) ──── */
 import { CommandCenter } from "./pages/CommandCenter";
@@ -14,23 +14,29 @@ const StrategyRoster = lazy(() =>
 const StrategyTearsheet = lazy(() =>
   import("./pages/StrategyTearsheet").then((m) => ({ default: m.StrategyTearsheet })),
 );
+const StrategyLab = lazy(() =>
+  import("./pages/StrategyLab").then((m) => ({ default: m.StrategyLab })),
+);
 const RiskPage = lazy(() =>
   import("./pages/RiskPage").then((m) => ({ default: m.RiskPage })),
+);
+const TradePage = lazy(() =>
+  import("./pages/TradePage").then((m) => ({ default: m.TradePage })),
 );
 const BlotterPage = lazy(() =>
   import("./pages/BlotterPage").then((m) => ({ default: m.BlotterPage })),
 );
-const ExecutionPage = lazy(() =>
-  import("./pages/ExecutionPage").then((m) => ({ default: m.ExecutionPage })),
+const PerformancePage = lazy(() =>
+  import("./pages/PerformancePage").then((m) => ({ default: m.PerformancePage })),
 );
-const BacktestsPage = lazy(() =>
-  import("./pages/BacktestsPage").then((m) => ({ default: m.BacktestsPage })),
+const ScanPage = lazy(() =>
+  import("./pages/ScanPage").then((m) => ({ default: m.ScanPage })),
 );
-const S2SignalsPage = lazy(() =>
-  import("./pages/S2SignalsPage").then((m) => ({ default: m.S2SignalsPage })),
+const SchwabAccountPage = lazy(() =>
+  import("./pages/SchwabAccountPage").then((m) => ({ default: m.SchwabAccountPage })),
 );
-const LogFillsPage = lazy(() =>
-  import("./pages/LogFillsPage").then((m) => ({ default: m.LogFillsPage })),
+const TradeLogPage = lazy(() =>
+  import("./pages/TradeLogPage").then((m) => ({ default: m.TradeLogPage })),
 );
 const SystemPage = lazy(() =>
   import("./pages/SystemPage").then((m) => ({ default: m.SystemPage })),
@@ -38,66 +44,141 @@ const SystemPage = lazy(() =>
 
 function PageFallback() {
   return (
-    <section>
-      <SkeletonLoader variant="card" />
-      <SkeletonLoader variant="chart" />
-    </section>
+    <div className="space-y-4">
+      <Skeleton className="h-8 w-48" />
+      <div className="grid grid-cols-4 gap-4">
+        <Skeleton className="h-24" />
+        <Skeleton className="h-24" />
+        <Skeleton className="h-24" />
+        <Skeleton className="h-24" />
+      </div>
+      <Skeleton className="h-[300px]" />
+    </div>
   );
 }
 
 export function App() {
   return (
-    <AppShell>
-      <Suspense fallback={<PageFallback />}>
-        <Routes>
-          {/* ── Command Center (home) ── */}
-          <Route path="/" element={<CommandCenter />} />
+    <Routes>
+      <Route element={<Layout />}>
+        <Route
+          path="/"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <CommandCenter />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/strategies"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <StrategyRoster />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/strategies/:id"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <StrategyTearsheet />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/trade"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <TradePage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/lab"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <StrategyLab />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/blotter"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <BlotterPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/performance"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <PerformancePage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/risk"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <RiskPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/scan"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <ScanPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/trade-log"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <TradeLogPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/ops"
+          element={<Navigate to="/ops/schwab" replace />}
+        />
+        <Route
+          path="/ops/schwab"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <SchwabAccountPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/ops/system"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <SystemPage />
+            </Suspense>
+          }
+        />
 
-          {/* ── Strategy Roster + Tearsheet ── */}
-          <Route path="/strategies" element={<StrategyRoster />} />
-          <Route path="/strategies/:id" element={<StrategyTearsheet />} />
+        {/* Legacy redirects */}
+        <Route path="/journal" element={<Navigate to="/blotter" replace />} />
+        <Route path="/decisions" element={<Navigate to="/risk" replace />} />
+        <Route path="/pnl" element={<Navigate to="/risk" replace />} />
+        <Route path="/portfolio" element={<Navigate to="/" replace />} />
+        <Route path="/raec" element={<Navigate to="/strategies" replace />} />
+        <Route path="/raec/readiness" element={<Navigate to="/strategies" replace />} />
+        <Route path="/raec/log-fills" element={<Navigate to="/ops/schwab" replace />} />
+        <Route path="/ops/log-fills" element={<Navigate to="/ops/schwab" replace />} />
+        <Route path="/research" element={<Navigate to="/performance" replace />} />
+        <Route path="/research/backtests" element={<Navigate to="/performance" replace />} />
+        <Route path="/research/signals" element={<Navigate to="/scan" replace />} />
+        <Route path="/execution" element={<Navigate to="/performance" replace />} />
 
-          {/* ── Risk Monitor ── */}
-          <Route path="/risk" element={<RiskPage />} />
-
-          {/* ── Blotter ── */}
-          <Route path="/blotter" element={<BlotterPage />} />
-
-          {/* ── Execution (merged Slippage + Trade Analytics) ── */}
-          <Route path="/execution" element={<ExecutionPage />} />
-
-          {/* ── Research ── */}
-          <Route path="/research" element={<Navigate to="/research/backtests" replace />} />
-          <Route path="/research/backtests" element={<BacktestsPage />} />
-          <Route path="/research/signals" element={<S2SignalsPage />} />
-
-          {/* ── Ops ── */}
-          <Route path="/ops" element={<Navigate to="/ops/log-fills" replace />} />
-          <Route path="/ops/log-fills" element={<LogFillsPage />} />
-          <Route path="/ops/system" element={<SystemPage />} />
-
-          {/* ── Legacy route redirects ── */}
-          <Route path="/journal" element={<Navigate to="/blotter" replace />} />
-          <Route path="/decisions" element={<Navigate to="/risk" replace />} />
-          <Route path="/pnl" element={<Navigate to="/risk" replace />} />
-          <Route path="/portfolio" element={<Navigate to="/" replace />} />
-          <Route path="/help" element={<Navigate to="/ops/system" replace />} />
-          <Route path="/backtests" element={<Navigate to="/research/backtests" replace />} />
-          <Route path="/signals/s2" element={<Navigate to="/research/signals" replace />} />
-          <Route path="/analytics/trades" element={<Navigate to="/execution" replace />} />
-          <Route path="/execution/slippage" element={<Navigate to="/execution" replace />} />
-          <Route path="/execution/trades" element={<Navigate to="/execution" replace />} />
-          <Route path="/legacy/overview" element={<Navigate to="/" replace />} />
-          <Route path="/raec" element={<Navigate to="/strategies" replace />} />
-          <Route path="/raec/readiness" element={<Navigate to="/strategies" replace />} />
-          <Route path="/raec/log-fills" element={<Navigate to="/ops/log-fills" replace />} />
-          <Route path="/strategies/matrix" element={<Navigate to="/strategies" replace />} />
-          <Route path="/slippage" element={<Navigate to="/execution" replace />} />
-
-          {/* ── Catch-all ── */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Suspense>
-    </AppShell>
+        {/* Catch-all */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
   );
 }

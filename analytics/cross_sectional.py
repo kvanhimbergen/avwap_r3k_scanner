@@ -58,6 +58,9 @@ def composite_rank(
     dist_z: float,
     slope_z: float,
     weights: dict[str, float] | None = None,
+    *,
+    sector_rs_z: float = 0.0,
+    sector_rs_weight: float = 0.0,
 ) -> float:
     """Compute a single composite rank score.
 
@@ -65,9 +68,13 @@ def composite_rank(
     hence the subtraction.
 
     Default weights: trend 0.4, dist 0.3, slope 0.3.
+    When *sector_rs_weight* > 0, adds ``sector_rs_weight * sector_rs_z`` to the score.
     """
     w = weights or {"trend": 0.4, "dist": 0.3, "slope": 0.3}
-    return w["trend"] * trend_z - w["dist"] * dist_z + w["slope"] * slope_z
+    score = w["trend"] * trend_z - w["dist"] * dist_z + w["slope"] * slope_z
+    if sector_rs_weight > 0:
+        score += sector_rs_weight * sector_rs_z
+    return score
 
 
 _DEFAULT_FEATURES = ["TrendScore", "Entry_DistPct", "AVWAP_Slope"]

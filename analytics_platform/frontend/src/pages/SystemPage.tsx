@@ -1,27 +1,40 @@
+/**
+ * System — /ops/system
+ * Data freshness, system health, workflow guide, troubleshooting.
+ */
+import { Settings, CheckCircle, AlertTriangle, XCircle } from "lucide-react";
+
 import { api } from "../api";
-import { StatusDot } from "../components/StatusDot";
+import { StatusBadge } from "../components/Badge";
+import { SkeletonTable } from "../components/Skeleton";
 import { usePolling } from "../hooks/usePolling";
 import type { FreshnessRow } from "../types";
 
 function freshnessStatus(row: FreshnessRow): "ok" | "warn" | "error" {
   if (row.parse_status === "error" || row.last_error) return "error";
   if (!row.latest_mtime_utc) return "warn";
-  const age = Date.now() - new Date(row.latest_mtime_utc).getTime();
-  const hours = age / (1000 * 60 * 60);
+  const hours = (Date.now() - new Date(row.latest_mtime_utc).getTime()) / 3_600_000;
   if (hours > 24) return "error";
   if (hours > 6) return "warn";
   return "ok";
 }
 
 function relativeAge(utc: string | null): string {
-  if (!utc) return "—";
-  const age = Date.now() - new Date(utc).getTime();
-  const mins = Math.floor(age / 60_000);
+  if (!utc) return "\u2014";
+  const mins = Math.floor((Date.now() - new Date(utc).getTime()) / 60_000);
   if (mins < 60) return `${mins}m ago`;
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
 }
+
+const STATUS_ICON = {
+  ok: <CheckCircle size={14} className="text-vantage-green" />,
+  warn: <AlertTriangle size={14} className="text-vantage-amber" />,
+  error: <XCircle size={14} className="text-vantage-red" />,
+};
+
+const STATUS_BADGE = { ok: "active", warn: "warning", error: "error" } as const;
 
 export function SystemPage() {
   const freshness = usePolling(() => api.freshness(), 60_000);
@@ -31,62 +44,67 @@ export function SystemPage() {
   const healthData = (health.data?.data ?? {}) as Record<string, unknown>;
 
   return (
-    <section>
-      <h2 className="page-title">System & Operations</h2>
-      <p className="page-subtitle">Data freshness, workflow guide, and troubleshooting</p>
+    <div className="space-y-6 max-w-[1200px] mx-auto">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <Settings size={24} className="text-vantage-muted" />
+        <div>
+          <h2 className="text-xl font-semibold">System & Operations</h2>
+          <p className="text-[11px] text-vantage-muted">Data freshness, workflow guide, and troubleshooting</p>
+        </div>
+      </div>
 
       {/* Data Source Freshness */}
-      <div className="table-card">
-        <h3>Data Source Freshness</h3>
+      <div className="bg-vantage-card border border-vantage-border rounded-lg p-4">
+        <h3 className="text-sm font-semibold mb-3">Data Source Freshness</h3>
         {freshness.loading ? (
-          <div className="loading">Loading freshness data...</div>
+          <SkeletonTable />
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Source</th>
-                <th>Files</th>
-                <th>Rows</th>
-                <th>Last Updated</th>
-                <th>Parse</th>
-                <th>Error</th>
-              </tr>
-            </thead>
+          <table className="w-full text-xs">
+            <thead><tr className="border-b border-vantage-border">
+              <th className="py-2 px-2 text-left text-vantage-muted font-medium w-8"></th>
+              <th className="py-2 px-2 text-left text-vantage-muted font-medium">Source</th>
+              <th className="py-2 px-2 text-right text-vantage-muted font-medium">Files</th>
+              <th className="py-2 px-2 text-right text-vantage-muted font-medium">Rows</th>
+              <th className="py-2 px-2 text-left text-vantage-muted font-medium">Last Updated</th>
+              <th className="py-2 px-2 text-left text-vantage-muted font-medium">Parse</th>
+              <th className="py-2 px-2 text-left text-vantage-muted font-medium">Error</th>
+            </tr></thead>
             <tbody>
-              {freshnessRows.map((row) => (
-                <tr key={row.source_name}>
-                  <td><StatusDot status={freshnessStatus(row)} /></td>
-                  <td style={{ fontWeight: 600 }}>{row.source_name}</td>
-                  <td className="mono">{row.file_count}</td>
-                  <td className="mono">{row.row_count.toLocaleString()}</td>
-                  <td className="mono">{relativeAge(row.latest_mtime_utc)}</td>
-                  <td>
-                    <span className={row.parse_status === "ok" ? "text-green" : "text-red"}>
-                      {row.parse_status}
-                    </span>
-                  </td>
-                  <td className="mono" style={{ fontSize: "0.72rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {row.last_error ?? "—"}
-                  </td>
-                </tr>
-              ))}
+              {freshnessRows.map((row) => {
+                const status = freshnessStatus(row);
+                return (
+                  <tr key={row.source_name} className="border-b border-vantage-border/50">
+                    <td className="py-2 px-2">{STATUS_ICON[status]}</td>
+                    <td className="py-2 px-2 font-semibold">{row.source_name}</td>
+                    <td className="py-2 px-2 font-mono text-right">{row.file_count}</td>
+                    <td className="py-2 px-2 font-mono text-right">{row.row_count.toLocaleString()}</td>
+                    <td className="py-2 px-2 font-mono">{relativeAge(row.latest_mtime_utc)}</td>
+                    <td className="py-2 px-2">
+                      <StatusBadge variant={STATUS_BADGE[row.parse_status === "ok" ? "ok" : "error"]}>
+                        {row.parse_status}
+                      </StatusBadge>
+                    </td>
+                    <td className="py-2 px-2 font-mono text-vantage-muted max-w-[200px] truncate">{row.last_error ?? "\u2014"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
       </div>
 
       {/* System Health */}
-      <div className="table-card">
-        <h3>System Health</h3>
+      <div className="bg-vantage-card border border-vantage-border rounded-lg p-4">
+        <h3 className="text-sm font-semibold mb-3">System Health</h3>
         {health.loading ? (
-          <div className="loading">Loading...</div>
+          <p className="text-xs text-vantage-muted">Loading...</p>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {Object.entries(healthData).map(([key, val]) => (
               <div key={key}>
-                <div className="kpi-label">{key}</div>
-                <div className="mono" style={{ fontSize: "0.85rem", color: "var(--text)" }}>{String(val)}</div>
+                <p className="text-[10px] text-vantage-muted uppercase tracking-wide">{key}</p>
+                <p className="font-mono text-sm font-semibold">{String(val)}</p>
               </div>
             ))}
           </div>
@@ -94,89 +112,66 @@ export function SystemPage() {
       </div>
 
       {/* Workflow Guide */}
-      <div className="helper-card" style={{ marginTop: 16 }}>
-        <h3 className="helper-title">Daily Workflow (10-15 min)</h3>
-        <ol style={{ margin: "8px 0 0", paddingLeft: 20, fontSize: "0.78rem", color: "var(--text-secondary)", lineHeight: 1.8 }}>
-          <li>Open <strong>Command Center</strong> to confirm system pulse and book-level P&L.</li>
-          <li>Check <strong>Risk Monitor</strong> for throttle events and regime changes.</li>
-          <li>Review <strong>Strategy Roster</strong> for any amber/red strategy cards.</li>
-          <li>Open <strong>Blotter</strong> to verify today&apos;s trades look correct.</li>
-          <li>If RAEC 401k fills need logging, go to <strong>Ops &gt; Log Fills</strong>.</li>
-        </ol>
+      <div className="bg-vantage-card border border-vantage-border rounded-lg">
+        <div className="p-4 border-b border-vantage-border">
+          <h3 className="text-sm font-semibold">Daily Workflow (10-15 min)</h3>
+        </div>
+        <div className="p-4">
+          <ol className="list-decimal list-inside space-y-2 text-xs text-vantage-muted">
+            <li>Open <span className="text-vantage-text font-medium">Command Center</span> to confirm system pulse and book-level P&L.</li>
+            <li>Check <span className="text-vantage-text font-medium">Risk Monitor</span> for throttle events and regime changes.</li>
+            <li>Review <span className="text-vantage-text font-medium">Strategies</span> for any amber/red strategy cards.</li>
+            <li>Open <span className="text-vantage-text font-medium">Blotter</span> to verify today's trades look correct.</li>
+            <li>Check <span className="text-vantage-text font-medium">Schwab Account</span> for live positions and reconciliation.</li>
+          </ol>
+        </div>
       </div>
 
-      <div className="two-col" style={{ marginTop: 16 }}>
-        {/* Page Reference */}
-        <div className="table-card">
-          <h3>Page Reference</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Page</th>
-                <th>Purpose</th>
-              </tr>
-            </thead>
+      {/* Troubleshooting */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-vantage-card border border-vantage-border rounded-lg p-4">
+          <h3 className="text-sm font-semibold mb-3">Page Reference</h3>
+          <table className="w-full text-xs">
             <tbody>
-              <tr><td>Command Center</td><td>System health, book P&L, strategy statuses, alerts</td></tr>
-              <tr><td>Strategies</td><td>Book-grouped strategy roster with health indicators</td></tr>
-              <tr><td>Strategy Tearsheet</td><td>Deep-dive on a single strategy (allocations, signals, blotter)</td></tr>
-              <tr><td>Risk Monitor</td><td>Regime, throttle events, exposure, decision pipeline, drift</td></tr>
-              <tr><td>Blotter</td><td>Unified trade journal filterable by book/strategy/symbol/side</td></tr>
-              <tr><td>Execution</td><td>Slippage analysis + trade activity patterns</td></tr>
-              <tr><td>Research / Backtests</td><td>Backtest runs, equity curves, metric comparison</td></tr>
-              <tr><td>Research / Signals</td><td>S2 signal audit (eligibility, selection, reason codes)</td></tr>
-              <tr><td>Ops / Log Fills</td><td>Manual Schwab 401k fill entry form</td></tr>
+              {[
+                ["Command Center", "System health, book P&L, strategy statuses, alerts"],
+                ["Strategies", "Book-grouped strategy roster with health indicators"],
+                ["Strategy Lab", "AI-powered strategy experimentation"],
+                ["Blotter", "Unified trade journal"],
+                ["Performance", "Portfolio metrics and benchmarking"],
+                ["Risk Monitor", "Regime, throttle events, exposure, decision pipeline"],
+                ["Scan", "AVWAP R3K daily scan candidates"],
+                ["Schwab Account", "Live 401(k) positions and reconciliation"],
+              ].map(([page, desc]) => (
+                <tr key={page} className="border-b border-vantage-border/50">
+                  <td className="py-2 font-semibold">{page}</td>
+                  <td className="py-2 text-vantage-muted">{desc}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
 
-        {/* Troubleshooting */}
-        <div className="table-card">
-          <h3>Troubleshooting</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Symptom</th>
-                <th>Action</th>
-              </tr>
-            </thead>
+        <div className="bg-vantage-card border border-vantage-border rounded-lg p-4">
+          <h3 className="text-sm font-semibold mb-3">Troubleshooting</h3>
+          <table className="w-full text-xs">
             <tbody>
-              <tr>
-                <td>Blank or stale charts</td>
-                <td>Check freshness table above. Verify API health endpoint returns OK.</td>
-              </tr>
-              <tr>
-                <td>Missing S2 rows</td>
-                <td>Confirm STRATEGY_SIGNALS files exist for the expected date.</td>
-              </tr>
-              <tr>
-                <td>No recent decisions</td>
-                <td>Verify execution/runtime ledgers are being written.</td>
-              </tr>
-              <tr>
-                <td>Low acceptance suddenly</td>
-                <td>Inspect Risk Monitor first, then reason codes in Research &gt; Signals.</td>
-              </tr>
-              <tr>
-                <td>Regime stuck</td>
-                <td>Check freshness of regime data source. Stale data = stale regime.</td>
-              </tr>
+              {[
+                ["Blank/stale charts", "Check freshness table. Verify API health."],
+                ["Missing S2 rows", "Confirm STRATEGY_SIGNALS files exist."],
+                ["No recent decisions", "Verify execution/runtime ledgers are written."],
+                ["Low acceptance", "Inspect Risk Monitor, then reason codes."],
+                ["Regime stuck", "Check freshness of regime data source."],
+              ].map(([symptom, action]) => (
+                <tr key={symptom} className="border-b border-vantage-border/50">
+                  <td className="py-2 font-semibold text-vantage-amber">{symptom}</td>
+                  <td className="py-2 text-vantage-muted">{action}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       </div>
-
-      {/* Weekly Review */}
-      <div className="helper-card" style={{ marginTop: 16 }}>
-        <h3 className="helper-title">Weekly Review Routine</h3>
-        <ol style={{ margin: "8px 0 0", paddingLeft: 20, fontSize: "0.78rem", color: "var(--text-secondary)", lineHeight: 1.8 }}>
-          <li>Review <strong>Execution</strong> tab for slippage trends and symbol concentration.</li>
-          <li>Check <strong>Strategy Roster</strong> for any strategies with persistent warnings.</li>
-          <li>Compare regime history in <strong>Risk Monitor</strong> to understand throttle periods.</li>
-          <li>Run backtests in <strong>Research</strong> if parameter changes are being considered.</li>
-          <li>Make one controlled parameter change at most; monitor next week.</li>
-        </ol>
-      </div>
-    </section>
+    </div>
   );
 }

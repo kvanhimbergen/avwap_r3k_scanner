@@ -50,6 +50,7 @@ REASON_INVALID_CANDIDATE_ROW = "invalid_candidate_row"
 REASON_EXISTING_OPEN_ORDERS = "existing_open_orders"
 REASON_RISK_CONTROLS_BLOCKED = "risk_controls_blocked"
 REASON_SECTOR_CAP_BLOCKED = "sector_cap_blocked"
+REASON_LOW_RVOL = "low_rvol"
 REASON_OTHER_REJECTED = "other_rejected"
 
 _KNOWN_REJECTION_REASONS = {
@@ -59,6 +60,7 @@ _KNOWN_REJECTION_REASONS = {
     REASON_EXISTING_OPEN_ORDERS,
     REASON_RISK_CONTROLS_BLOCKED,
     REASON_SECTOR_CAP_BLOCKED,
+    REASON_LOW_RVOL,
     REASON_OTHER_REJECTED,
 }
 
@@ -128,12 +130,14 @@ class BuyLoopConfig:
         entry_delay_max_sec: int = 240,
         candidate_ttl_sec: int = 6 * 60 * 60,
         sizing_cfg: SizingConfig | None = None,
+        rvol_min: float = 0.8,
     ) -> None:
         self.candidates_csv = candidates_csv
         self.entry_delay_min_sec = entry_delay_min_sec
         self.entry_delay_max_sec = entry_delay_max_sec
         self.candidate_ttl_sec = candidate_ttl_sec
         self.sizing_cfg = sizing_cfg or SizingConfig()
+        self.rvol_min = rvol_min
 
 
 @dataclass(frozen=True)
@@ -461,6 +465,21 @@ def evaluate_and_create_entry_intents(
                 rejection_telemetry.record_rejected(cand.symbol, REASON_BOH_NOT_CONFIRMED)
             continue
 
+        # Relative volume gate (fail-open)
+        if cfg.rvol_min > 0:
+            try:
+                vol_profile = md.get_session_volume_profile(cand.symbol)
+                if vol_profile is not None and vol_profile.rvol < cfg.rvol_min:
+                    print(
+                        f"RVOL_REJECT symbol={cand.symbol} rvol={vol_profile.rvol:.3f} "
+                        f"min={cfg.rvol_min:.2f}"
+                    )
+                    if rejection_telemetry is not None:
+                        rejection_telemetry.record_rejected(cand.symbol, REASON_LOW_RVOL)
+                    continue
+            except Exception as exc:
+                print(f"WARN: rvol check failed for {cand.symbol} (fail-open): {exc}")
+
         bar_close = None
         try:
             bar_close = float(bars[-1].close)
@@ -649,6 +668,7 @@ def evaluate_and_create_entry_intents(
             take_profit=cand.target_r2,
             ref_price=bars[-1].close,
             dist_pct=cand.dist_pct,
+            target_r1=cand.target_r1,
         )
         store.put_entry_intent(intent)
         if created_intents is not None:

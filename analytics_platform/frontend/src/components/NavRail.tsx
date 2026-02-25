@@ -1,45 +1,41 @@
+import type { LucideIcon } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
+import {
+  LayoutDashboard,
+  Layers,
+  ShieldAlert,
+  ScrollText,
+  ScanSearch,
+  Crosshair,
+  ClipboardList,
+  TrendingUp,
+  FlaskConical,
+  Settings,
+  ChevronsLeft,
+  ChevronsRight,
+} from "../icons";
 
-const NAV_ITEMS = [
-  {
-    to: "/",
-    label: "Command Center",
-    icon: "\u2302", // ⌂
-    exact: true,
-  },
-  {
-    to: "/strategies",
-    label: "Strategies",
-    icon: "\u2261", // ≡
-  },
-  {
-    to: "/risk",
-    label: "Risk",
-    icon: "\u26A0", // ⚠
-  },
-  {
-    to: "/blotter",
-    label: "Blotter",
-    icon: "\u2630", // ☰
-  },
-  {
-    to: "/execution",
-    label: "Execution",
-    icon: "\u25CE", // ◎
-  },
-  {
-    to: "/research",
-    label: "Research",
-    icon: "\uD83D\uDD2C", // 🔬
-  },
+interface NavItem {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  exact?: boolean;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { to: "/", label: "Command Center", icon: LayoutDashboard, exact: true },
+  { to: "/strategies", label: "Strategies", icon: Layers },
+  { to: "/risk", label: "Risk", icon: ShieldAlert },
+  { to: "/blotter", label: "Blotter", icon: ScrollText },
+  { to: "/scan", label: "Scan", icon: ScanSearch },
+  { to: "/trade-log", label: "Trade Log", icon: ClipboardList },
+  { to: "/execution", label: "Execution", icon: Crosshair },
+  { to: "/performance", label: "Performance", icon: TrendingUp },
+  { to: "/research", label: "Research", icon: FlaskConical },
 ];
 
-const BOTTOM_ITEMS = [
-  {
-    to: "/ops",
-    label: "Ops",
-    icon: "\u2699", // ⚙
-  },
+const BOTTOM_ITEMS: NavItem[] = [
+  { to: "/ops", label: "Ops", icon: Settings },
 ];
 
 export function NavRail({
@@ -74,7 +70,9 @@ export function NavRail({
             end={item.exact}
             title={expanded ? undefined : item.label}
           >
-            <span className="nav-rail-icon">{item.icon}</span>
+            <span className="nav-rail-icon">
+              <item.icon size={18} strokeWidth={1.75} />
+            </span>
             <span className="nav-rail-label">{item.label}</span>
           </NavLink>
         ))}
@@ -89,7 +87,9 @@ export function NavRail({
             className={`nav-rail-item${isActive(item.to) ? " active" : ""}`}
             title={expanded ? undefined : item.label}
           >
-            <span className="nav-rail-icon">{item.icon}</span>
+            <span className="nav-rail-icon">
+              <item.icon size={18} strokeWidth={1.75} />
+            </span>
             <span className="nav-rail-label">{item.label}</span>
           </NavLink>
         ))}
@@ -101,7 +101,10 @@ export function NavRail({
           title={expanded ? "Collapse sidebar" : "Expand sidebar"}
           type="button"
         >
-          {expanded ? "\u00AB" : "\u00BB"}
+          {expanded
+            ? <ChevronsLeft size={16} strokeWidth={1.75} />
+            : <ChevronsRight size={16} strokeWidth={1.75} />
+          }
         </button>
       </div>
     </nav>

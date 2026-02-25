@@ -48,6 +48,7 @@ class EntryIntent:
     take_profit: float
     ref_price: float
     dist_pct: float
+    target_r1: float | None = None
 
 # -------------------------
 # Position state

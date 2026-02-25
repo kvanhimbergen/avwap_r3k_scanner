@@ -2,6 +2,7 @@
  * Aggregated alerts panel — warnings sorted by severity.
  * Sources: readiness check failures, stale data, RISK_OFF regimes, allocation drift.
  */
+import { AlertCircle, AlertTriangle, Info } from "../icons";
 
 export interface Alert {
   severity: "error" | "warn" | "info";
@@ -10,7 +11,12 @@ export interface Alert {
 }
 
 const SEVERITY_ORDER: Record<string, number> = { error: 0, warn: 1, info: 2 };
-const SEVERITY_ICON: Record<string, string> = { error: "\u2716", warn: "\u26A0", info: "\u25CF" };
+
+const SEVERITY_ICON = {
+  error: AlertCircle,
+  warn: AlertTriangle,
+  info: Info,
+} as const;
 
 export function AlertsPanel({ alerts }: { alerts: Alert[] }) {
   const sorted = [...alerts].sort(
@@ -22,30 +28,36 @@ export function AlertsPanel({ alerts }: { alerts: Alert[] }) {
 
   return (
     <div className="data-card">
-      <h3 style={{ margin: "0 0 8px", fontSize: "0.82rem", fontWeight: 600, color: "var(--text)" }}>
-        Alerts
-      </h3>
+      <div className="section-header">
+        <h3 className="section-header-title">Alerts</h3>
+        {alerts.length > 0 && (
+          <span className="section-header-count">{alerts.length}</span>
+        )}
+      </div>
       {sorted.length === 0 ? (
         <div className="empty-state" style={{ padding: "16px 0" }}>
           <div style={{ fontSize: "0.78rem", color: "var(--text-tertiary)" }}>No active alerts</div>
         </div>
       ) : (
         <div className="alerts-panel">
-          {sorted.map((alert, i) => (
-            <div key={i} className="alert-item">
-              <span className={`alert-icon ${alert.severity}`}>
-                {SEVERITY_ICON[alert.severity]}
-              </span>
-              <span className="alert-text">
-                {alert.strategyId && (
-                  <span className="font-mono font-bold" style={{ marginRight: 4 }}>
-                    {alert.strategyId}:
-                  </span>
-                )}
-                {alert.text}
-              </span>
-            </div>
-          ))}
+          {sorted.map((alert, i) => {
+            const Icon = SEVERITY_ICON[alert.severity];
+            return (
+              <div key={i} className="alert-item">
+                <span className={`alert-icon ${alert.severity}`}>
+                  <Icon size={14} strokeWidth={2} />
+                </span>
+                <span className="alert-text">
+                  {alert.strategyId && (
+                    <span className="font-mono font-bold" style={{ marginRight: 4 }}>
+                      {alert.strategyId}:
+                    </span>
+                  )}
+                  {alert.text}
+                </span>
+              </div>
+            );
+          })}
           <div className="alert-count">
             {errorCount} critical / {warnCount} warning{warnCount !== 1 ? "s" : ""}
           </div>

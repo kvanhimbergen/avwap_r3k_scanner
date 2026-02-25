@@ -64,7 +64,7 @@ def test_scan_does_not_use_future_bars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         scan_engine,
         "pick_best_anchor",
-        lambda *_args, **_kwargs: ("TestAnchor", 100.0, 0.01, 50.0, 2.0),
+        lambda *_args, **_kwargs: ("TestAnchor", 100.0, 0.01, 50.0, 2.0, 1),
     )
     monkeypatch.setattr(
         scan_engine,

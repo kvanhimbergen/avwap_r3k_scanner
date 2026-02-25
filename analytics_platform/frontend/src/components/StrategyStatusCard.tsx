@@ -1,6 +1,6 @@
 /**
- * Compact strategy card for the Command Center 4x2 grid.
- * Shows status dot, name, regime, sparkline, and key metric.
+ * Compact strategy card for the Command Center grid.
+ * Shows status dot, name, regime badge (inline), sparkline, and key metric.
  */
 import { useNavigate } from "react-router-dom";
 
@@ -43,15 +43,15 @@ export function StrategyStatusCard({ data }: { data: StrategyCardData }) {
         <span className="strategy-card-name">
           <StatusDot status={data.health} />
           {data.shortName}
+          <RegimeBadge regime={data.regime} />
         </span>
         <BookBadge strategyId={data.strategyId} />
       </div>
       <div className="strategy-card-subtitle">{data.subtitle}</div>
-      <RegimeBadge regime={data.regime} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <Sparkline data={data.sparklineData} width={54} height={18} />
         <span className="strategy-card-metric">
-          {data.metricValue} {data.metricLabel}
+          <span className="font-bold">{data.metricValue}</span> {data.metricLabel}
         </span>
       </div>
     </div>

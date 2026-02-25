@@ -26,6 +26,10 @@ class Settings:
         return self.repo_root / "backtests"
 
     @property
+    def scan_candidates_csv(self) -> Path:
+        return self.repo_root / "daily_candidates.csv"
+
+    @property
     def frontend_dist_dir(self) -> Path:
         return self.repo_root / "analytics_platform" / "frontend" / "dist"
 

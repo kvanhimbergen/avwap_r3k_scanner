@@ -1,3 +1,6 @@
+# IDE
+.vscode/
+
 # Ignore the virtual environment
 venv/
 .venv/

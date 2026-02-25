@@ -237,6 +237,17 @@ class CFG:
     )
     CROSS_SECTIONAL_HARD_FLOOR_TREND_SCORE: float = 5.0
 
+    # Sector Relative Strength
+    SECTOR_ETFS: dict = field(default_factory=lambda: {
+        "Information Technology": "XLK", "Health Care": "XLV", "Financials": "XLF",
+        "Consumer Discretionary": "XLY", "Industrials": "XLI", "Consumer Staples": "XLP",
+        "Energy": "XLE", "Utilities": "XLU", "Real Estate": "XLRE",
+        "Materials": "XLB", "Communication": "XLC",
+    })
+    SECTOR_RS_ENABLED: bool = True
+    SECTOR_RS_LOOKBACK_DAYS: int = 20
+    SECTOR_RS_WEIGHT: float = 0.0  # informational-only; bump when validated
+
     def effective_universe_allow_network(self) -> bool:
         raw = os.getenv("UNIVERSE_ALLOW_NETWORK")
         if raw is None:

@@ -51,6 +51,7 @@ def _fake_candidate_row_factory(signal_date: pd.Timestamp):
         *,
         as_of_dt=None,
         direction: str = "Long",
+        sector_rs: float | None = None,
     ) -> dict | None:
         if as_of_dt is None or pd.Timestamp(as_of_dt).normalize() != signal_date.normalize():
             return None
@@ -73,6 +74,8 @@ def _fake_candidate_row_factory(signal_date: pd.Timestamp):
             "Sector": sector,
             "Anchor": "Test",
             "AVWAP_Slope": 0.0,
+            "AVWAP_Confluence": 1,
+            "Sector_RS": sector_rs,
             "Setup_VWAP_Control": "inside",
             "Setup_VWAP_Reclaim": "none",
             "Setup_VWAP_Acceptance": "accepted",
@@ -195,6 +198,7 @@ def test_backtest_scan_parity_offline(tmp_path: Path, monkeypatch: pytest.Monkey
     history.to_parquet(history_path, index=False)
 
     monkeypatch.setattr(scan_engine, "build_candidate_row", _fake_candidate_row_factory(dates[-1]))
+    monkeypatch.setattr(scan_engine, "compute_sector_relative_strength", lambda *a, **kw: {})
     _setup_offline_scan(monkeypatch, history)
 
     history_indexed = backtest_engine.load_ohlcv_history(history_path)

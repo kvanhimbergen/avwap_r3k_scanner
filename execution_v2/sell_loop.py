@@ -19,6 +19,7 @@ class SellLoopConfig:
     r1_trim_pct: float = 0.5
     r2_trim_pct: float = 0.5
     trail_move_fraction: float = 0.5
+    breakeven_on_r1: bool = True
 
 
 def _candidate_map(cfg: SellLoopConfig) -> dict[str, buy_loop.Candidate]:
@@ -89,7 +90,10 @@ def evaluate_positions(store, trading_client, cfg: SellLoopConfig) -> None:
         if current_price >= state.r1_level and not state.trimmed_r1:
             store.add_trim_intent(symbol, cfg.r1_trim_pct, "r1_trim")
             state.trimmed_r1 = True
-            state.stop_price = max(state.stop_price, state.pivot_level)
+            if cfg.breakeven_on_r1:
+                state.stop_price = max(state.stop_price, state.avg_price)
+            else:
+                state.stop_price = max(state.stop_price, state.pivot_level)
 
         if current_price >= state.r2_level and not state.trimmed_r2:
             store.add_trim_intent(symbol, cfg.r2_trim_pct, "r2_trim")

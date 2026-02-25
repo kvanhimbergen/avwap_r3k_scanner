@@ -44,6 +44,15 @@ def _iso_mtime(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
 
 
+def _safe_float(value: Any) -> float | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _flatten_numeric(prefix: str, value: Any, depth: int = 0, max_depth: int = 3) -> dict[str, float]:
     out: dict[str, float] = {}
     if depth > max_depth:
@@ -107,9 +116,19 @@ def build_readmodels(settings: Settings) -> BuildResult:
     position_rows: list[dict[str, Any]] = []
     risk_attr_rows: list[dict[str, Any]] = []
 
+    schwab_account_rows: list[dict[str, Any]] = []
+    schwab_position_rows: list[dict[str, Any]] = []
+    schwab_order_rows: list[dict[str, Any]] = []
+    schwab_recon_rows: list[dict[str, Any]] = []
+
     backtest_run_rows: list[dict[str, Any]] = []
     backtest_metric_rows: list[dict[str, Any]] = []
     backtest_equity_rows: list[dict[str, Any]] = []
+
+    scan_candidate_rows: list[dict[str, Any]] = []
+
+    alpaca_order_rows: list[dict[str, Any]] = []
+    benchmark_rows: list[dict[str, Any]] = []
 
     freshness_rows: list[dict[str, Any]] = []
 
@@ -156,6 +175,26 @@ def build_readmodels(settings: Settings) -> BuildResult:
         SourceHealth(
             source_name="portfolio_snapshots",
             source_glob=str(settings.repo_root / "analytics" / "artifacts" / "portfolio_snapshots" / "*.json"),
+        ),
+        SourceHealth(
+            source_name="schwab_401k_manual",
+            source_glob=str(settings.ledger_dir / "SCHWAB_401K_MANUAL" / "*.jsonl"),
+        ),
+        SourceHealth(
+            source_name="scan_candidates",
+            source_glob=str(settings.scan_candidates_csv),
+        ),
+        SourceHealth(
+            source_name="alpaca_paper_orders",
+            source_glob=str(settings.ledger_dir / "ALPACA_PAPER" / "*.jsonl"),
+        ),
+        SourceHealth(
+            source_name="s2_alpaca_orders",
+            source_glob=str(settings.ledger_dir / "S2_ALPACA" / "*.jsonl"),
+        ),
+        SourceHealth(
+            source_name="benchmark_prices",
+            source_glob=str(settings.repo_root / "cache" / "ohlcv_history.parquet"),
         ),
     ]
 
@@ -724,6 +763,233 @@ def build_readmodels(settings: Settings) -> BuildResult:
                 }
             )
 
+    # SCHWAB_401K_MANUAL
+    schwab_source = sources[10]
+    schwab_dir = settings.ledger_dir / "SCHWAB_401K_MANUAL"
+    schwab_files = sorted(schwab_dir.glob("*.jsonl")) if schwab_dir.exists() else []
+    schwab_source.file_count = len(schwab_files)
+    if schwab_files:
+        schwab_source.latest_mtime_utc = _iso_mtime(schwab_files[-1])
+    for path in schwab_files:
+        try:
+            entries = _iter_jsonl(path)
+        except Exception as exc:  # noqa: BLE001
+            schwab_source.parse_status = "error"
+            schwab_source.last_error = str(exc)
+            warnings.append(f"SCHWAB_401K_MANUAL parse error {path}: {exc}")
+            continue
+        schwab_source.row_count += len(entries)
+        for rec in entries:
+            record_type = rec.get("record_type") or ""
+            ny_date = str(rec.get("ny_date") or "")
+            as_of_utc = rec.get("as_of_utc")
+            snapshot_id = rec.get("snapshot_id") or ""
+
+            if record_type == "SCHWAB_READONLY_ACCOUNT_SNAPSHOT":
+                schwab_account_rows.append({
+                    "ny_date": ny_date,
+                    "as_of_utc": as_of_utc,
+                    "snapshot_id": snapshot_id,
+                    "cash": float(rec["cash"]) if rec.get("cash") is not None else None,
+                    "market_value": float(rec["market_value"]) if rec.get("market_value") is not None else None,
+                    "total_value": float(rec["total_value"]) if rec.get("total_value") is not None else None,
+                    "source_file": str(path),
+                })
+
+            elif record_type == "SCHWAB_READONLY_POSITIONS_SNAPSHOT":
+                for pos in rec.get("positions") or []:
+                    schwab_position_rows.append({
+                        "ny_date": ny_date,
+                        "as_of_utc": as_of_utc,
+                        "snapshot_id": snapshot_id,
+                        "symbol": str(pos.get("symbol") or "").upper(),
+                        "qty": float(pos["qty"]) if pos.get("qty") is not None else None,
+                        "cost_basis": float(pos["cost_basis"]) if pos.get("cost_basis") is not None else None,
+                        "market_value": float(pos["market_value"]) if pos.get("market_value") is not None else None,
+                        "source_file": str(path),
+                    })
+
+            elif record_type == "SCHWAB_READONLY_ORDERS_SNAPSHOT":
+                for order in rec.get("orders") or []:
+                    schwab_order_rows.append({
+                        "ny_date": ny_date,
+                        "as_of_utc": as_of_utc,
+                        "snapshot_id": snapshot_id,
+                        "order_id": str(order.get("order_id") or ""),
+                        "symbol": str(order.get("symbol") or "").upper(),
+                        "side": str(order.get("side") or "").upper(),
+                        "qty": float(order["qty"]) if order.get("qty") is not None else None,
+                        "filled_qty": float(order["filled_qty"]) if order.get("filled_qty") is not None else None,
+                        "status": order.get("status"),
+                        "submitted_at": order.get("submitted_at"),
+                        "filled_at": order.get("filled_at"),
+                        "source_file": str(path),
+                    })
+
+            elif record_type == "SCHWAB_READONLY_RECONCILIATION":
+                report = rec.get("report") or {}
+                counts = report.get("counts") or {}
+                schwab_recon_rows.append({
+                    "ny_date": ny_date,
+                    "as_of_utc": as_of_utc,
+                    "reconciliation_id": rec.get("reconciliation_id") or "",
+                    "broker_position_count": int(counts.get("broker_position_count") or 0),
+                    "drift_symbol_count": int(counts.get("drift_symbol_count") or 0),
+                    "drift_intent_count": int(counts.get("drift_intent_count") or 0),
+                    "intent_count": int(counts.get("intent_count") or 0),
+                    "confirmation_count": int(counts.get("confirmation_count") or 0),
+                    "drift_reason_codes_json": json.dumps(report.get("drift_reason_codes") or [], sort_keys=True),
+                    "symbols_json": json.dumps(report.get("symbols") or [], sort_keys=True),
+                    "source_file": str(path),
+                })
+
+    # SCAN_CANDIDATES (daily_candidates.csv)
+    scan_source = sources[11]
+    csv_path = settings.scan_candidates_csv
+    if csv_path.exists():
+        scan_source.file_count = 1
+        scan_source.latest_mtime_utc = _iso_mtime(csv_path)
+        try:
+            df = pd.read_csv(csv_path, dtype=str)
+            scan_source.row_count = len(df)
+            # Normalize columns: PascalCase → snake_case
+            col_map = {
+                "SchemaVersion": "schema_version",
+                "ScanDate": "scan_date",
+                "Symbol": "symbol",
+                "Direction": "direction",
+                "TrendTier": "trend_tier",
+                "Price": "price",
+                "Entry_Level": "entry_level",
+                "Entry_DistPct": "entry_dist_pct",
+                "Stop_Loss": "stop_loss",
+                "Target_R1": "target_r1",
+                "Target_R2": "target_r2",
+                "TrendScore": "trend_score",
+                "Sector": "sector",
+                "Anchor": "anchor",
+                "AVWAP_Slope": "avwap_slope",
+                "AVWAP_Confluence": "avwap_confluence",
+                "Sector_RS": "sector_rs",
+                "Setup_VWAP_Control": "setup_vwap_control",
+                "Setup_VWAP_Reclaim": "setup_vwap_reclaim",
+                "Setup_VWAP_Acceptance": "setup_vwap_acceptance",
+                "Setup_VWAP_DistPct": "setup_vwap_dist_pct",
+                "Setup_AVWAP_Control": "setup_avwap_control",
+                "Setup_AVWAP_Reclaim": "setup_avwap_reclaim",
+                "Setup_AVWAP_Acceptance": "setup_avwap_acceptance",
+                "Setup_AVWAP_DistPct": "setup_avwap_dist_pct",
+                "Setup_Extension_State": "setup_extension_state",
+                "Setup_Gap_Reset": "setup_gap_reset",
+                "Setup_Structure_State": "setup_structure_state",
+            }
+            for _, row in df.iterrows():
+                scan_candidate_rows.append({
+                    col_map.get(col, col): (
+                        _safe_float(row[col])
+                        if col_map.get(col, col) in {
+                            "price", "entry_level", "entry_dist_pct", "stop_loss",
+                            "target_r1", "target_r2", "trend_score", "avwap_slope",
+                            "avwap_confluence", "sector_rs",
+                            "setup_vwap_dist_pct", "setup_avwap_dist_pct",
+                        }
+                        else (str(row[col]) if pd.notna(row[col]) else None)
+                    )
+                    for col in df.columns
+                    if col in col_map
+                })
+        except Exception as exc:  # noqa: BLE001
+            scan_source.parse_status = "error"
+            scan_source.last_error = str(exc)
+            warnings.append(f"SCAN_CANDIDATES parse error {csv_path}: {exc}")
+
+    # ALPACA ORDER EVENTS (ALPACA_PAPER + S2_ALPACA)
+    for source_idx, book_dir_name in [(12, "ALPACA_PAPER"), (13, "S2_ALPACA")]:
+        order_source = sources[source_idx]
+        order_dir = settings.ledger_dir / book_dir_name
+        order_files = sorted(order_dir.glob("*.jsonl")) if order_dir.exists() else []
+        order_source.file_count = len(order_files)
+        if order_files:
+            order_source.latest_mtime_utc = _iso_mtime(order_files[-1])
+        for path in order_files:
+            try:
+                entries = _iter_jsonl(path)
+            except Exception as exc:  # noqa: BLE001
+                order_source.parse_status = "error"
+                order_source.last_error = str(exc)
+                warnings.append(f"{book_dir_name} order parse error {path}: {exc}")
+                continue
+            order_source.row_count += len(entries)
+            for rec in entries:
+                if rec.get("event_type") != "ORDER_STATUS":
+                    continue
+                alpaca_order_rows.append(
+                    {
+                        "date_ny": str(rec.get("date_ny") or ""),
+                        "ts_utc": rec.get("ts_utc"),
+                        "book_id": str(rec.get("book_id") or book_dir_name),
+                        "strategy_id": str(rec.get("strategy_id") or ""),
+                        "intent_id": str(rec.get("intent_id") or ""),
+                        "alpaca_order_id": str(rec.get("alpaca_order_id") or rec.get("order_id") or ""),
+                        "symbol": str(rec.get("symbol") or "").upper(),
+                        "qty": rec.get("qty"),
+                        "side": str(rec.get("side") or "").lower(),
+                        "ref_price": rec.get("ref_price"),
+                        "notional": rec.get("notional"),
+                        "status": str(rec.get("status") or ""),
+                        "filled_qty": rec.get("filled_qty"),
+                        "filled_avg_price": rec.get("filled_avg_price"),
+                        "filled_at": rec.get("filled_at"),
+                        "created_at": rec.get("created_at"),
+                        "updated_at": rec.get("updated_at"),
+                        "order_type": str(rec.get("order_type") or ""),
+                        "stop_loss": rec.get("stop_loss"),
+                        "take_profit": rec.get("take_profit"),
+                        "source_file": str(path),
+                    }
+                )
+
+    # BENCHMARK PRICES (from cache/ohlcv_history.parquet)
+    benchmark_source = sources[14]
+    parquet_path = settings.repo_root / "cache" / "ohlcv_history.parquet"
+    if parquet_path.exists():
+        benchmark_source.file_count = 1
+        benchmark_source.latest_mtime_utc = _iso_mtime(parquet_path)
+        try:
+            ohlcv_df = pd.read_parquet(parquet_path)
+            # Filter to SPY benchmark
+            if "Symbol" in ohlcv_df.columns:
+                spy_df = ohlcv_df[ohlcv_df["Symbol"] == "SPY"]
+            elif "symbol" in ohlcv_df.columns:
+                spy_df = ohlcv_df[ohlcv_df["symbol"] == "SPY"]
+            else:
+                spy_df = pd.DataFrame()
+
+            date_col = "Date" if "Date" in spy_df.columns else "date"
+            close_col = "Close" if "Close" in spy_df.columns else "close"
+
+            for _, row in spy_df.iterrows():
+                date_val = row.get(date_col)
+                close_val = row.get(close_col)
+                if date_val is None or close_val is None:
+                    continue
+                if isinstance(date_val, pd.Timestamp):
+                    date_str = date_val.strftime("%Y-%m-%d")
+                else:
+                    date_str = str(date_val)[:10]
+                benchmark_rows.append(
+                    {
+                        "date_ny": date_str,
+                        "symbol": "SPY",
+                        "close": float(close_val),
+                    }
+                )
+            benchmark_source.row_count = len(benchmark_rows)
+        except Exception as exc:  # noqa: BLE001
+            benchmark_source.parse_status = "error"
+            benchmark_source.last_error = str(exc)
+            warnings.append(f"BENCHMARK_PRICES parse error {parquet_path}: {exc}")
+
     for source in sources:
         freshness_rows.append(
             {
@@ -765,6 +1031,13 @@ def build_readmodels(settings: Settings) -> BuildResult:
         "portfolio_snapshots": len(snapshot_rows),
         "portfolio_positions": len(position_rows),
         "risk_attribution": len(risk_attr_rows),
+        "schwab_account_snapshots": len(schwab_account_rows),
+        "schwab_positions": len(schwab_position_rows),
+        "schwab_orders": len(schwab_order_rows),
+        "schwab_reconciliation": len(schwab_recon_rows),
+        "scan_candidates": len(scan_candidate_rows),
+        "alpaca_order_events": len(alpaca_order_rows),
+        "benchmark_prices": len(benchmark_rows),
         "freshness_health": len(freshness_rows),
     }
 
@@ -1033,6 +1306,75 @@ def build_readmodels(settings: Settings) -> BuildResult:
             conn,
             "backtest_equity",
             _ensure_columns(backtest_equity_rows, ["run_id", "point_index", "x_value", "equity"]),
+        )
+        _write_table(
+            conn,
+            "schwab_account_snapshots",
+            _ensure_columns(
+                schwab_account_rows,
+                ["ny_date", "as_of_utc", "snapshot_id", "cash", "market_value", "total_value", "source_file"],
+            ),
+        )
+        _write_table(
+            conn,
+            "schwab_positions",
+            _ensure_columns(
+                schwab_position_rows,
+                ["ny_date", "as_of_utc", "snapshot_id", "symbol", "qty", "cost_basis", "market_value", "source_file"],
+            ),
+        )
+        _write_table(
+            conn,
+            "schwab_orders",
+            _ensure_columns(
+                schwab_order_rows,
+                ["ny_date", "as_of_utc", "snapshot_id", "order_id", "symbol", "side", "qty", "filled_qty", "status", "submitted_at", "filled_at", "source_file"],
+            ),
+        )
+        _write_table(
+            conn,
+            "schwab_reconciliation",
+            _ensure_columns(
+                schwab_recon_rows,
+                ["ny_date", "as_of_utc", "reconciliation_id", "broker_position_count", "drift_symbol_count", "drift_intent_count", "intent_count", "confirmation_count", "drift_reason_codes_json", "symbols_json", "source_file"],
+            ),
+        )
+        _write_table(
+            conn,
+            "scan_candidates",
+            _ensure_columns(
+                scan_candidate_rows,
+                [
+                    "schema_version", "scan_date", "symbol", "direction", "trend_tier",
+                    "price", "entry_level", "entry_dist_pct", "stop_loss", "target_r1", "target_r2",
+                    "trend_score", "sector", "anchor", "avwap_slope", "avwap_confluence", "sector_rs",
+                    "setup_vwap_control", "setup_vwap_reclaim", "setup_vwap_acceptance", "setup_vwap_dist_pct",
+                    "setup_avwap_control", "setup_avwap_reclaim", "setup_avwap_acceptance", "setup_avwap_dist_pct",
+                    "setup_extension_state", "setup_gap_reset", "setup_structure_state",
+                ],
+            ),
+        )
+        _write_table(
+            conn,
+            "alpaca_order_events",
+            _ensure_columns(
+                alpaca_order_rows,
+                [
+                    "date_ny", "ts_utc", "book_id", "strategy_id", "intent_id",
+                    "alpaca_order_id", "symbol", "qty", "side", "ref_price", "notional",
+                    "status", "filled_qty", "filled_avg_price", "filled_at",
+                    "created_at", "updated_at", "order_type", "stop_loss", "take_profit",
+                    "source_file",
+                ],
+            ),
+        )
+        _write_table(
+            conn,
+            "benchmark_prices",
+            _ensure_columns(
+                benchmark_rows,
+                ["date_ny", "symbol", "close"],
+            ),
         )
         _write_table(
             conn,

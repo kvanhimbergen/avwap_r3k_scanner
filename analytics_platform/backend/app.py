@@ -3,51 +3,19 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import contextlib
-import json
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
 
 from analytics_platform.backend.api import queries
 from analytics_platform.backend.config import Settings
 from analytics_platform.backend.db import connect_ro
 from analytics_platform.backend.models import ApiEnvelope, BuildResult, utc_now_iso
 from analytics_platform.backend.readmodels.build_readmodels import build_readmodels
-
-
-# ── Pydantic models for POST /api/v1/fills ──────────────────────
-class FillItem(BaseModel):
-    side: str
-    symbol: str
-    qty: Optional[float] = None
-    price: float = Field(gt=0)
-
-    @field_validator("side")
-    @classmethod
-    def _normalise_side(cls, v: str) -> str:
-        v = v.strip().upper()
-        if v not in ("BUY", "SELL"):
-            raise ValueError("side must be BUY or SELL")
-        return v
-
-    @field_validator("symbol")
-    @classmethod
-    def _normalise_symbol(cls, v: str) -> str:
-        return v.strip().upper()
-
-
-class PostFillsRequest(BaseModel):
-    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
-    strategy_id: str = "RAEC_401K_COORD"
-    fees: float = 0.0
-    notes: Optional[str] = None
-    fills: list[FillItem] = Field(min_length=1)
+from analytics_platform.backend.trade_log_db import TradeLogStore
 
 
 class AnalyticsRuntime:
@@ -109,12 +77,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     cfg = settings or Settings.from_env()
     app = FastAPI(title="Strategy Analytics Platform", version="1.0.0", lifespan=_lifespan)
     app.state.runtime = AnalyticsRuntime(cfg)
+    trade_log_path = cfg.data_dir / "trade_log.duckdb"
+    trade_log_path.parent.mkdir(parents=True, exist_ok=True)
+    app.state.trade_log = TradeLogStore(trade_log_path)
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:8788", "http://127.0.0.1:8788", "*"],
         allow_credentials=False,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["*"],
     )
 
@@ -245,26 +216,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
         end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
         strategy_id: str | None = None,
+        book_id: str | None = None,
     ) -> dict:
         runtime: AnalyticsRuntime = app.state.runtime
         with connect_ro(runtime.settings.db_path) as conn:
-            payload = queries.get_raec_dashboard(conn, start, end, strategy_id)
+            payload = queries.get_raec_dashboard(conn, start, end, strategy_id, book_id)
         return _envelope(runtime, payload)
+
+    _ALPACA_SIDS = {"S1_AVWAP_CORE", "S2_LETF_ORB_AGGRO", "RAEC_401K_V1", "RAEC_401K_V2"}
+    _SCHWAB_SIDS = {"RAEC_401K_V3", "RAEC_401K_V4", "RAEC_401K_V5", "RAEC_401K_COORD"}
 
     @app.get("/api/v1/journal")
     def journal(
         start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
         end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
         strategy_id: str | None = None,
+        book_id: str | None = None,
         symbol: str | None = None,
         side: str | None = None,
         limit: int = Query(default=500, ge=1, le=5000),
     ) -> dict:
         runtime: AnalyticsRuntime = app.state.runtime
+        # Map book_id to strategy_id_in set for journal filtering
+        strategy_id_in: set[str] | None = None
+        if book_id == "ALPACA_PAPER":
+            strategy_id_in = _ALPACA_SIDS
+        elif book_id == "SCHWAB_401K_MANUAL":
+            strategy_id_in = _SCHWAB_SIDS
         with connect_ro(runtime.settings.db_path) as conn:
             payload = queries.get_journal(
                 conn, start=start, end=end, strategy_id=strategy_id,
                 symbol=symbol, side=side, limit=limit,
+                strategy_id_in=strategy_id_in,
             )
         return _envelope(runtime, payload)
 
@@ -280,10 +263,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
         end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
         strategy_id: str | None = None,
+        book_id: str | None = None,
     ) -> dict:
         runtime: AnalyticsRuntime = app.state.runtime
         with connect_ro(runtime.settings.db_path) as conn:
-            payload = queries.get_pnl(conn, start, end, strategy_id)
+            payload = queries.get_pnl(conn, start, end, strategy_id, book_id)
         return _envelope(runtime, payload)
 
     @app.get("/api/v1/execution/slippage")
@@ -302,10 +286,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
         end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
         strategy_id: str | None = None,
+        book_id: str | None = None,
     ) -> dict:
         runtime: AnalyticsRuntime = app.state.runtime
         with connect_ro(runtime.settings.db_path) as conn:
-            payload = queries.get_trade_analytics(conn, start, end, strategy_id)
+            payload = queries.get_trade_analytics(conn, start, end, strategy_id, book_id)
         return _envelope(runtime, payload)
 
     @app.get("/api/v1/portfolio/overview")
@@ -344,6 +329,119 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload = queries.get_strategy_matrix(conn)
         return _envelope(runtime, payload)
 
+    @app.get("/api/v1/schwab/overview")
+    def schwab_overview(
+        start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_schwab_overview(conn, start, end)
+        return _envelope(runtime, payload)
+
+    @app.get("/api/v1/performance")
+    def performance(
+        start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        end: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        strategy_id: str | None = None,
+        book_id: str | None = None,
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_strategy_performance(conn, start, end, strategy_id, book_id)
+        return _envelope(runtime, payload)
+
+    @app.get("/api/v1/trade/today")
+    def trade_today(
+        date: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ) -> dict:
+        from datetime import date as _date
+
+        runtime: AnalyticsRuntime = app.state.runtime
+        trade_date = date or _date.today().isoformat()
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_todays_trades(conn, trade_date, runtime.settings.repo_root)
+        return _envelope(runtime, payload)
+
+    @app.get("/api/v1/scan/candidates")
+    def scan_candidates(
+        date: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+        symbol: str | None = None,
+        direction: str | None = None,
+        sector: str | None = None,
+        limit: int = Query(default=500, ge=1, le=5000),
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_scan_candidates(
+                conn, date=date, symbol=symbol, direction=direction,
+                sector=sector, limit=limit,
+            )
+        return _envelope(runtime, payload)
+
+    @app.get("/api/v1/scan/chart-data/{symbol}")
+    def scan_chart_data(
+        symbol: str,
+        anchor: str | None = Query(default=None),
+        days: int = Query(default=90, ge=10, le=365),
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        cache_dir = runtime.settings.repo_root / "cache"
+        payload = queries.get_chart_data(cache_dir, symbol, anchor=anchor, days=days)
+        return _envelope(runtime, payload)
+
+    # ── Trade Log (CRUD) ─────────────────────────────────
+    @app.get("/api/v1/trades/log")
+    def list_trades(
+        status: str | None = None,
+        symbol: str | None = None,
+        limit: int = Query(default=500, ge=1, le=5000),
+    ) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        tl: TradeLogStore = app.state.trade_log
+        rows = tl.list_trades(status=status, symbol=symbol, limit=limit)
+        return _envelope(runtime, {"trades": rows, "count": len(rows)})
+
+    @app.get("/api/v1/trades/log/summary")
+    def trade_log_summary() -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        tl: TradeLogStore = app.state.trade_log
+        return _envelope(runtime, tl.get_summary())
+
+    @app.post("/api/v1/trades/log")
+    def create_trade(body: dict) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        tl: TradeLogStore = app.state.trade_log
+        required = {"entry_date", "symbol", "entry_price", "qty", "stop_loss"}
+        missing = required - set(body.keys())
+        if missing:
+            raise HTTPException(status_code=422, detail=f"missing fields: {sorted(missing)}")
+        try:
+            row = tl.create(body)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _envelope(runtime, row)
+
+    @app.put("/api/v1/trades/log/{trade_id}")
+    def close_trade(trade_id: str, body: dict) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        tl: TradeLogStore = app.state.trade_log
+        if "exit_price" not in body:
+            raise HTTPException(status_code=422, detail="exit_price is required")
+        try:
+            row = tl.update_exit(trade_id, body)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return _envelope(runtime, row)
+
+    @app.delete("/api/v1/trades/log/{trade_id}")
+    def delete_trade(trade_id: str) -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        tl: TradeLogStore = app.state.trade_log
+        if not tl.delete(trade_id):
+            raise HTTPException(status_code=404, detail=f"Trade {trade_id} not found")
+        return _envelope(runtime, {"deleted": trade_id})
+
     @app.get("/api/v1/exports/{dataset}.csv")
     def export_dataset(
         dataset: str,
@@ -368,86 +466,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             media_type="text/csv",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
-
-    # ── Manual fills endpoints ────────────────────────────────
-
-    @app.post("/api/v1/fills")
-    async def post_fills(body: PostFillsRequest) -> dict:
-        from execution_v2 import book_ids
-        from tools.log_fills import (
-            append_records,
-            build_manual_fill_id,
-            load_existing_fill_ids,
-        )
-
-        runtime: AnalyticsRuntime = app.state.runtime
-        repo_root = runtime.settings.repo_root
-        book_id = book_ids.SCHWAB_401K_MANUAL
-        date_ny = body.date
-        ts_utc = datetime.now(timezone.utc).isoformat()
-
-        ledger_path = repo_root / "ledger" / "MANUAL_FILLS" / f"{date_ny}.jsonl"
-        existing_ids = load_existing_fill_ids(ledger_path)
-
-        records: list[dict] = []
-        skipped = 0
-        for fill in body.fills:
-            fill_id = build_manual_fill_id(
-                date_ny=date_ny,
-                book_id=book_id,
-                strategy_id=body.strategy_id,
-                symbol=fill.symbol,
-                side=fill.side,
-                qty=fill.qty,
-                price=fill.price,
-            )
-            if fill_id in existing_ids:
-                skipped += 1
-                continue
-            existing_ids.add(fill_id)
-            record = {
-                "book_id": book_id,
-                "date_ny": date_ny,
-                "fees": body.fees,
-                "fill_id": fill_id,
-                "notes": body.notes,
-                "price": fill.price,
-                "qty": fill.qty,
-                "record_type": "MANUAL_FILL",
-                "schema_version": 1,
-                "side": fill.side,
-                "strategy_id": body.strategy_id,
-                "symbol": fill.symbol,
-                "ts_utc": ts_utc,
-            }
-            records.append(record)
-
-        if records:
-            await asyncio.to_thread(append_records, ledger_path, records)
-
-        response_records = [
-            {"fill_id": r["fill_id"], "symbol": r["symbol"], "side": r["side"], "qty": r["qty"], "price": r["price"]}
-            for r in records
-        ]
-        return _envelope(runtime, {"logged": len(records), "skipped": skipped, "records": response_records})
-
-    @app.get("/api/v1/fills")
-    def get_fills(
-        date: str = Query(pattern=r"^\d{4}-\d{2}-\d{2}$"),
-    ) -> dict:
-        runtime: AnalyticsRuntime = app.state.runtime
-        repo_root = runtime.settings.repo_root
-        ledger_path = repo_root / "ledger" / "MANUAL_FILLS" / f"{date}.jsonl"
-
-        records: list[dict] = []
-        if ledger_path.exists():
-            text = ledger_path.read_text(encoding="utf-8")
-            for line in text.splitlines():
-                line = line.strip()
-                if line:
-                    records.append(json.loads(line))
-
-        return _envelope(runtime, {"records": records})
 
     @app.get("/")
     def root() -> JSONResponse:

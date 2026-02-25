@@ -8,7 +8,8 @@ const SHORTCUTS = [
   { keys: ["g", "r"], description: "Go to Risk" },
   { keys: ["g", "b"], description: "Go to Blotter" },
   { keys: ["g", "e"], description: "Go to Execution" },
-  { keys: ["g", "l"], description: "Go to Log Fills" },
+  { keys: ["g", "p"], description: "Go to Performance" },
+  { keys: ["g", "l"], description: "Go to Schwab Account" },
 ];
 
 export function KeyboardShortcutsHelp({ onClose }: { onClose: () => void }) {

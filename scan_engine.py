@@ -59,6 +59,8 @@ CANDIDATE_COLUMNS = [
     "Sector",
     "Anchor",
     "AVWAP_Slope",
+    "AVWAP_Confluence",
+    "Sector_RS",
     "Setup_VWAP_Control",
     "Setup_VWAP_Reclaim",
     "Setup_VWAP_Acceptance",
@@ -258,6 +260,7 @@ def pick_best_anchor(
     if is_weekend is None:
         is_weekend = datetime.now().weekday() >= 5
     best, best_score = None, -1e18
+    valid_levels: list[float] = []
 
     slope_n = int(getattr(cfg, "AVWAP_SLOPE_LOOKBACK", 5))
     slope_thr = _get_avwap_slope_threshold(direction, is_weekend)
@@ -301,6 +304,8 @@ def pick_best_anchor(
         if dist > cfg.MAX_DIST_FROM_AVWAP_PCT:
             continue
 
+        valid_levels.append(av_now)
+
         score = (
             a["priority"]
             + (trend_score * 1.5)
@@ -310,7 +315,15 @@ def pick_best_anchor(
         )
         if score > best_score:
             best_score, best = score, (a["name"], av_now, av_s, trend_score, dist)
-    return best
+
+    if best is None:
+        return None
+
+    best_av = best[1]
+    confluence = sum(
+        1 for lv in valid_levels if abs(lv - best_av) / best_av <= 0.01
+    )
+    return (*best, confluence)
 
 
 def build_liquidity_snapshot(
@@ -381,6 +394,57 @@ def build_liquidity_snapshot(
     return snap[snap["Sector"].isin(sector_rank)].sort_values(
         "AvgDollarVol20", ascending=False
     ).head(cfg.SNAPSHOT_MAX_TICKERS)
+
+
+def compute_sector_relative_strength(
+    data_client: StockHistoricalDataClient,
+    sector_etfs: dict[str, str] | None = None,
+    lookback_days: int = 20,
+) -> dict[str, float]:
+    """Compute sector ETF performance vs SPY over *lookback_days*.
+
+    Returns dict mapping sector name -> RS ratio.
+    RS > 1.0 means sector outperforms SPY. Defaults to 1.0 on error (fail-open).
+    """
+    cfg = _cfg()
+    if sector_etfs is None:
+        sector_etfs = getattr(cfg, "SECTOR_ETFS", {})
+    if not sector_etfs:
+        return {}
+
+    tickers = list(set(sector_etfs.values())) + ["SPY"]
+    start = datetime.now() - timedelta(days=lookback_days + 10)  # buffer for non-trading days
+
+    try:
+        req = StockBarsRequest(symbol_or_symbols=tickers, timeframe=TimeFrame.Day, start=start)
+        bars = data_client.get_stock_bars(req).df
+        if bars is None or bars.empty:
+            return {sector: 1.0 for sector in sector_etfs}
+    except Exception:
+        return {sector: 1.0 for sector in sector_etfs}
+
+    df = bars.reset_index()
+    if "symbol" not in df.columns:
+        return {sector: 1.0 for sector in sector_etfs}
+
+    def _return(sym: str) -> float | None:
+        sub = df[df["symbol"] == sym].sort_values("timestamp").tail(lookback_days)
+        if len(sub) < 2:
+            return None
+        return (float(sub["close"].iloc[-1]) / float(sub["close"].iloc[0])) - 1.0
+
+    spy_ret = _return("SPY")
+    if spy_ret is None:
+        return {sector: 1.0 for sector in sector_etfs}
+
+    result: dict[str, float] = {}
+    for sector, etf in sector_etfs.items():
+        sector_ret = _return(etf)
+        if sector_ret is None:
+            result[sector] = 1.0
+        else:
+            result[sector] = round((1.0 + sector_ret) / (1.0 + spy_ret), 4)
+    return result
 
 
 def _load_earnings_cache() -> dict:
@@ -501,6 +565,7 @@ def build_candidate_row(
     *,
     as_of_dt: datetime | None = None,
     direction: str = "Long",
+    sector_rs: float | None = None,
 ) -> dict | None:
     if df.empty:
         return None
@@ -526,7 +591,7 @@ def build_candidate_row(
     if not best:
         return None
 
-    name, av, avs, trend_score, dist = best
+    name, av, avs, trend_score, dist, confluence = best
 
     # Shannon-style stop placement: swing low + AVWAP invalidation, take tighter (higher)
     swing_lows = _find_daily_swing_lows(df, lookback=20)
@@ -559,6 +624,8 @@ def build_candidate_row(
         "Sector": sector,
         "Anchor": name,
         "AVWAP_Slope": round(float(avs), 4),
+        "AVWAP_Confluence": int(confluence),
+        "Sector_RS": sector_rs,
         "Setup_VWAP_Control": setup_ctx.vwap_control,
         "Setup_VWAP_Reclaim": setup_ctx.vwap_reclaim,
         "Setup_VWAP_Acceptance": setup_ctx.vwap_acceptance,
@@ -605,6 +672,15 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
 
     snap = build_liquidity_snapshot(universe, data_client)
     filtered = snap["Ticker"].tolist()
+
+    # Sector relative strength
+    sector_rs_map: dict[str, float] = {}
+    if getattr(scan_cfg, "SECTOR_RS_ENABLED", True):
+        sector_rs_map = compute_sector_relative_strength(
+            data_client,
+            sector_etfs=getattr(scan_cfg, "SECTOR_ETFS", None),
+            lookback_days=int(getattr(scan_cfg, "SECTOR_RS_LOOKBACK_DAYS", 20)),
+        )
 
     # --- TEST MODE: limit scan universe for faster iteration ---
     TEST_MODE = os.getenv("TEST_MODE", "0") == "1"
@@ -689,6 +765,7 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
             setup_rules,
             as_of_dt=as_of_dt,
             direction="Long",
+            sector_rs=sector_rs_map.get(sector),
         )
         if row:
             results.append(row)

@@ -94,6 +94,9 @@ class AlpacaS2BracketAdapter:
         repo_root: Path,
         risk_pct: float = 1.0,
         max_positions: int = 5,
+        rvol_min: float = 0.0,
+        market_data=None,
+        use_managed_exits: bool = False,
     ) -> BracketOrderResult:
         """Place bracket orders for filtered S2 candidates.
 
@@ -161,6 +164,17 @@ class AlpacaS2BracketAdapter:
                 skipped += 1
                 continue
 
+            # Optional rvol gate (fail-open)
+            if rvol_min > 0 and market_data is not None:
+                try:
+                    vol_profile = market_data.get_session_volume_profile(symbol)
+                    if vol_profile is not None and vol_profile.rvol < rvol_min:
+                        logger.info("SKIP %s: rvol=%.3f < min=%.2f", symbol, vol_profile.rvol, rvol_min)
+                        skipped += 1
+                        continue
+                except Exception as exc:
+                    logger.warning("rvol check failed for %s (fail-open): %s", symbol, exc)
+
             # Skip: no available slots
             if available_slots <= 0:
                 logger.info("SKIP %s: max positions reached", symbol)
@@ -175,40 +189,68 @@ class AlpacaS2BracketAdapter:
             if shares * entry_level > max_notional:
                 shares = max(1, math.floor(max_notional / entry_level))
 
+            target_r1 = float(candidate.get("Target_R1", 0) or 0)
+
             try:
-                order = self._client.submit_order(
-                    LimitOrderRequest(
+                if use_managed_exits:
+                    order = self._client.submit_order(
+                        LimitOrderRequest(
+                            symbol=symbol,
+                            qty=shares,
+                            side=OrderSide.BUY,
+                            time_in_force=TimeInForce.DAY,
+                            limit_price=round(entry_level, 2),
+                        )
+                    )
+                    event = alpaca_paper.build_order_event(
+                        intent_id=f"s2_{symbol}_{ny_date}",
                         symbol=symbol,
                         qty=shares,
-                        side=OrderSide.BUY,
-                        time_in_force=TimeInForce.DAY,
-                        limit_price=round(entry_level, 2),
-                        order_class=OrderClass.BRACKET,
-                        take_profit=TakeProfitRequest(limit_price=round(target_r2, 2)),
-                        stop_loss=StopLossRequest(stop_price=round(stop_loss, 2)),
+                        ref_price=entry_level,
+                        order=order,
+                        now_utc=now_utc,
                     )
-                )
-                event = alpaca_paper.build_order_event(
-                    intent_id=f"s2_{symbol}_{ny_date}",
-                    symbol=symbol,
-                    qty=shares,
-                    ref_price=entry_level,
-                    order=order,
-                    now_utc=now_utc,
-                )
-                event["strategy_id"] = STRATEGY_ID
-                event["order_type"] = "BRACKET"
-                event["stop_loss"] = round(stop_loss, 2)
-                event["take_profit"] = round(target_r2, 2)
+                    event["strategy_id"] = STRATEGY_ID
+                    event["order_type"] = "MANAGED"
+                    event["stop_loss"] = round(stop_loss, 2)
+                    event["take_profit"] = round(target_r2, 2)
+                    event["target_r1"] = round(target_r1, 2) if target_r1 else None
+                else:
+                    order = self._client.submit_order(
+                        LimitOrderRequest(
+                            symbol=symbol,
+                            qty=shares,
+                            side=OrderSide.BUY,
+                            time_in_force=TimeInForce.DAY,
+                            limit_price=round(entry_level, 2),
+                            order_class=OrderClass.BRACKET,
+                            take_profit=TakeProfitRequest(limit_price=round(target_r2, 2)),
+                            stop_loss=StopLossRequest(stop_price=round(stop_loss, 2)),
+                        )
+                    )
+                    event = alpaca_paper.build_order_event(
+                        intent_id=f"s2_{symbol}_{ny_date}",
+                        symbol=symbol,
+                        qty=shares,
+                        ref_price=entry_level,
+                        order=order,
+                        now_utc=now_utc,
+                    )
+                    event["strategy_id"] = STRATEGY_ID
+                    event["order_type"] = "BRACKET"
+                    event["stop_loss"] = round(stop_loss, 2)
+                    event["take_profit"] = round(target_r2, 2)
+
                 orders.append(event)
                 available_slots -= 1
                 logger.info(
-                    "SENT bracket %s: qty=%d entry=%.2f stop=%.2f target=%.2f",
+                    "SENT %s %s: qty=%d entry=%.2f stop=%.2f target=%.2f",
+                    "managed" if use_managed_exits else "bracket",
                     symbol, shares, entry_level, stop_loss, target_r2,
                 )
             except Exception as exc:
                 errors.append(f"{symbol}: {exc}")
-                logger.error("ERROR placing bracket for %s: %s", symbol, exc)
+                logger.error("ERROR placing order for %s: %s", symbol, exc)
 
         # Write events to ledger
         if orders:

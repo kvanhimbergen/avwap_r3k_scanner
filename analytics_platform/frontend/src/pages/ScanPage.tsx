@@ -14,7 +14,7 @@ import { ErrorState } from "../components/ErrorState";
 import { usePolling } from "../hooks/usePolling";
 import type { ScanCandidate } from "../types";
 
-type SortKey = "trend_score" | "symbol" | "entry_dist_pct" | "price" | "sector" | "avwap_slope";
+type SortKey = "trend_score" | "symbol" | "entry_dist_pct" | "price" | "sector" | "avwap_slope" | "avwap_confluence" | "sector_rs";
 
 function fmtNum(v: number | null | undefined, digits = 2): string {
   if (v == null) return "\u2014";
@@ -151,6 +151,8 @@ export function ScanPage() {
                 <th className="py-2 px-2 text-right text-vantage-muted font-medium">R2</th>
                 {sortHeader("Score", "trend_score")}
                 {sortHeader("Slope", "avwap_slope")}
+                {sortHeader("Conf.", "avwap_confluence")}
+                {sortHeader("RS", "sector_rs")}
                 {sortHeader("Sector", "sector")}
               </tr></thead>
               <tbody>
@@ -167,6 +169,8 @@ export function ScanPage() {
                     <td className="py-2 px-2 font-mono text-right">{fmtNum(row.target_r2)}</td>
                     <td className="py-2 px-2 font-mono font-semibold text-right">{fmtNum(row.trend_score, 1)}</td>
                     <td className="py-2 px-2 font-mono text-right">{fmtNum(row.avwap_slope, 3)}</td>
+                    <td className={`py-2 px-2 font-mono text-right ${row.avwap_confluence != null && row.avwap_confluence >= 2 ? "text-vantage-green font-semibold" : ""}`}>{row.avwap_confluence != null ? row.avwap_confluence : "\u2014"}</td>
+                    <td className={`py-2 px-2 font-mono text-right ${row.sector_rs != null ? row.sector_rs >= 1.0 ? "text-vantage-green" : "text-vantage-red" : ""}`}>{fmtNum(row.sector_rs, 3)}</td>
                     <td className="py-2 px-2 text-vantage-muted">{row.sector ?? "\u2014"}</td>
                   </tr>
                 ))}

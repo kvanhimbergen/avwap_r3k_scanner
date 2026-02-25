@@ -12,7 +12,7 @@ from typing import Optional, List
 
 from execution_v2.config_types import EntryIntent, PositionState, StopMode
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 class StateStore:
     def __init__(self, db_path: str) -> None:
@@ -45,6 +45,9 @@ class StateStore:
             if v < 7:
                 self._migrate_to_v7()
                 v = 7
+            if v < 8:
+                self._migrate_to_v8()
+                v = 8
             if v != SCHEMA_VERSION:
                 self._reset_schema()
                 self._create_schema_v1()
@@ -86,7 +89,8 @@ class StateStore:
             take_profit REAL NOT NULL,
             ref_price REAL NOT NULL,
             dist_pct REAL NOT NULL,
-            created_ts REAL NOT NULL
+            created_ts REAL NOT NULL,
+            target_r1 REAL
         );
         """)
         # Positions table
@@ -194,6 +198,15 @@ class StateStore:
         """)
         cur.execute("UPDATE meta SET value=? WHERE key='schema_version';", ("7",))
 
+    def _migrate_to_v8(self) -> None:
+        cur = self.conn.cursor()
+        # Add target_r1 column to entry_intents (nullable)
+        try:
+            cur.execute("ALTER TABLE entry_intents ADD COLUMN target_r1 REAL;")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        cur.execute("UPDATE meta SET value=? WHERE key='schema_version';", ("8",))
+
     # -------------------------
     # Candidates
     # -------------------------
@@ -229,8 +242,8 @@ class StateStore:
         now_ts = time.time()
         cur.execute("""
         INSERT OR REPLACE INTO entry_intents
-        (strategy_id, symbol, pivot_level, boh_confirmed_at, scheduled_entry_at, size_shares, stop_loss, take_profit, ref_price, dist_pct, created_ts)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        (strategy_id, symbol, pivot_level, boh_confirmed_at, scheduled_entry_at, size_shares, stop_loss, take_profit, ref_price, dist_pct, created_ts, target_r1)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             intent.strategy_id,
             intent.symbol,
@@ -243,6 +256,7 @@ class StateStore:
             intent.ref_price,
             intent.dist_pct,
             now_ts,
+            intent.target_r1,
         ))
 
     def get_entry_intent(self, symbol: str) -> Optional[EntryIntent]:
@@ -251,6 +265,11 @@ class StateStore:
         r = cur.fetchone()
         if r is None:
             return None
+        target_r1 = None
+        try:
+            target_r1 = r["target_r1"]
+        except (IndexError, KeyError):
+            pass
         return EntryIntent(
             strategy_id=r["strategy_id"],
             symbol=r["symbol"],
@@ -262,6 +281,7 @@ class StateStore:
             take_profit=r["take_profit"],
             ref_price=r["ref_price"],
             dist_pct=r["dist_pct"],
+            target_r1=target_r1,
         )
 
     def pop_due_entry_intents(self, now_ts: float) -> List[EntryIntent]:
@@ -269,8 +289,14 @@ class StateStore:
         cur.execute("SELECT * FROM entry_intents WHERE scheduled_entry_at <= ? ORDER BY scheduled_entry_at ASC;", (now_ts,))
         rows = cur.fetchall()
         cur.execute("DELETE FROM entry_intents WHERE scheduled_entry_at <= ?;", (now_ts,))
-        return [
-            EntryIntent(
+        result = []
+        for r in rows:
+            target_r1 = None
+            try:
+                target_r1 = r["target_r1"]
+            except (IndexError, KeyError):
+                pass
+            result.append(EntryIntent(
                 strategy_id=r["strategy_id"],
                 symbol=r["symbol"],
                 pivot_level=r["pivot_level"],
@@ -281,9 +307,9 @@ class StateStore:
                 take_profit=r["take_profit"],
                 ref_price=r["ref_price"],
                 dist_pct=r["dist_pct"],
-            )
-            for r in rows
-        ]
+                target_r1=target_r1,
+            ))
+        return result
 
     def count_due_entry_intents(self, now_ts: float) -> int:
         cur = self.conn.cursor()

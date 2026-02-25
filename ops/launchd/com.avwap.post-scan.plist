@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.avwap.post-scan</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/kevinvanhimbergen/avwap_r3k_scanner/ops/launchd/run_with_env.sh</string>
+        <string>venv/bin/python</string>
+        <string>-u</string>
+        <string>ops/post_scan_pipeline.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/kevinvanhimbergen/avwap_r3k_scanner</string>
+
+    <!-- Weekdays at 08:35 ET (5 min after scan). -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>  <!-- Monday -->
+            <key>Weekday</key><integer>1</integer>
+            <key>Hour</key><integer>8</integer>
+            <key>Minute</key><integer>35</integer>
+        </dict>
+        <dict>  <!-- Tuesday -->
+            <key>Weekday</key><integer>2</integer>
+            <key>Hour</key><integer>8</integer>
+            <key>Minute</key><integer>35</integer>
+        </dict>
+        <dict>  <!-- Wednesday -->
+            <key>Weekday</key><integer>3</integer>
+            <key>Hour</key><integer>8</integer>
+            <key>Minute</key><integer>35</integer>
+        </dict>
+        <dict>  <!-- Thursday -->
+            <key>Weekday</key><integer>4</integer>
+            <key>Hour</key><integer>8</integer>
+            <key>Minute</key><integer>35</integer>
+        </dict>
+        <dict>  <!-- Friday -->
+            <key>Weekday</key><integer>5</integer>
+            <key>Hour</key><integer>8</integer>
+            <key>Minute</key><integer>35</integer>
+        </dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/kevinvanhimbergen/Library/Logs/avwap/post-scan.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/kevinvanhimbergen/Library/Logs/avwap/post-scan.log</string>
+</dict>
+</plist>

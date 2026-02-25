@@ -25,6 +25,16 @@ from execution_v2.boh import Bar10m
 
 
 @dataclass(frozen=True)
+class VolumeProfile:
+    """Session volume profile for rvol gating."""
+    today_cumulative: float
+    avg_cumulative: float
+    rvol: float
+    sample_days: int
+    bar_count_today: int
+
+
+@dataclass(frozen=True)
 class MarketDataConfig:
     api_key: str
     api_secret: str
@@ -134,6 +144,68 @@ class MarketData:
                 }
             )
         return out
+
+
+    def get_session_volume_profile(
+        self,
+        symbol: str,
+        lookback_days: int = 20,
+    ) -> Optional[VolumeProfile]:
+        """Compute relative volume (rvol) for *symbol*.
+
+        Fetches 5-minute bars over *lookback_days*, groups by NY date, and
+        computes cumulative volume up to the current time of day.  Averages
+        historical days' cumulative volume at the same time → rvol = today / avg.
+
+        Returns None if insufficient data (fail-open).
+        """
+        import pytz
+
+        bars = self.get_intraday_bars(symbol, minutes=5, lookback_days=lookback_days + 2)
+        if not bars:
+            return None
+
+        et = pytz.timezone("America/New_York")
+        now_et = datetime.now(et)
+        today_str = now_et.strftime("%Y-%m-%d")
+        cutoff_time = now_et.time()
+
+        # Group bars by NY date and compute cumulative volume up to cutoff time
+        daily_cumvol: dict[str, float] = {}
+        for bar in bars:
+            ts = bar["ts"]
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            bar_et = ts.astimezone(et)
+            bar_date = bar_et.strftime("%Y-%m-%d")
+            bar_time = bar_et.time()
+            if bar_time <= cutoff_time:
+                daily_cumvol[bar_date] = daily_cumvol.get(bar_date, 0.0) + bar["volume"]
+
+        today_vol = daily_cumvol.pop(today_str, None)
+        if today_vol is None or not daily_cumvol:
+            return None
+
+        hist_vols = list(daily_cumvol.values())
+        avg_vol = sum(hist_vols) / len(hist_vols) if hist_vols else 0.0
+        if avg_vol <= 0:
+            return None
+
+        rvol = today_vol / avg_vol
+
+        today_bars = sum(
+            1 for bar in bars
+            if bar["ts"].astimezone(et).strftime("%Y-%m-%d") == today_str
+            and bar["ts"].astimezone(et).time() <= cutoff_time
+        )
+
+        return VolumeProfile(
+            today_cumulative=today_vol,
+            avg_cumulative=round(avg_vol, 2),
+            rvol=round(rvol, 4),
+            sample_days=len(hist_vols),
+            bar_count_today=today_bars,
+        )
 
 
 def from_env() -> MarketData:

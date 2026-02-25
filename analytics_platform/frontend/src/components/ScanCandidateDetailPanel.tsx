@@ -2,9 +2,13 @@
  * ScanCandidateDetailPanel — Slide-out detail panel for scan candidates.
  * Shows full setup context: price levels, AVWAP/VWAP states, extension, structure.
  */
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
+import { Link } from "react-router-dom";
 
+import { api } from "../api";
 import { StatusBadge } from "./Badge";
+import { CandlestickChart, type CandlePoint, type LinePoint, type PriceLevel } from "./CandlestickChart";
 import type { ScanCandidate } from "../types";
 
 function fmtNum(v: number | null | undefined, digits = 2): string {
@@ -52,6 +56,30 @@ export function ScanCandidateDetailPanel({ candidate, onClose }: { candidate: Sc
   const reward = r2 - entry;
   const rr = risk > 0 ? reward / risk : 0;
 
+  // Chart data
+  const [chartCandles, setChartCandles] = useState<CandlePoint[]>([]);
+  const [chartAvwap, setChartAvwap] = useState<LinePoint[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.scanChartData(candidate.symbol, candidate.anchor).then((res) => {
+      if (cancelled) return;
+      const d = res.data as { candles?: CandlePoint[]; avwap?: LinePoint[] };
+      setChartCandles(d.candles ?? []);
+      setChartAvwap(d.avwap ?? []);
+    }).catch(() => {
+      if (!cancelled) { setChartCandles([]); setChartAvwap([]); }
+    });
+    return () => { cancelled = true; };
+  }, [candidate.symbol, candidate.anchor]);
+
+  const chartLevels: PriceLevel[] = [
+    ...(entry > 0 ? [{ price: entry, color: "#3b82f6", label: "Entry" }] : []),
+    ...(stop > 0 ? [{ price: stop, color: "#ef4444", label: "Stop" }] : []),
+    ...(r1 > 0 ? [{ price: r1, color: "#22c55e", label: "R1" }] : []),
+    ...(r2 > 0 ? [{ price: r2, color: "#22c55e", label: "R2" }] : []),
+  ];
+
   return (
     <>
       {/* Backdrop */}
@@ -91,6 +119,12 @@ export function ScanCandidateDetailPanel({ candidate, onClose }: { candidate: Sc
                 <p className="text-xs font-medium font-mono">{candidate.anchor}</p>
               </div>
             )}
+            {candidate.sector_rs != null && (
+              <div>
+                <span className="text-[10px] text-vantage-muted uppercase tracking-wide">Sector RS</span>
+                <p className={`text-xs font-medium font-mono ${candidate.sector_rs >= 1.0 ? "text-vantage-green" : "text-vantage-red"}`}>{fmtNum(candidate.sector_rs, 3)}</p>
+              </div>
+            )}
           </div>
 
           {/* Price Levels */}
@@ -117,8 +151,14 @@ export function ScanCandidateDetailPanel({ candidate, onClose }: { candidate: Sc
             </div>
           </div>
 
+          {/* Chart */}
+          <div className="bg-vantage-bg border border-vantage-border rounded-lg p-3">
+            <p className="text-[10px] text-vantage-muted uppercase tracking-wide mb-2 font-semibold">Chart (90d)</p>
+            <CandlestickChart candles={chartCandles} avwap={chartAvwap} levels={chartLevels} height={280} />
+          </div>
+
           {/* Scores */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div className="bg-vantage-bg border border-vantage-border rounded-lg p-3">
               <p className="text-[10px] text-vantage-muted uppercase tracking-wide">TrendScore</p>
               <p className="font-mono text-lg font-bold">{fmtNum(candidate.trend_score, 1)}</p>
@@ -130,6 +170,10 @@ export function ScanCandidateDetailPanel({ candidate, onClose }: { candidate: Sc
             <div className="bg-vantage-bg border border-vantage-border rounded-lg p-3">
               <p className="text-[10px] text-vantage-muted uppercase tracking-wide">AVWAP Slope</p>
               <p className="font-mono text-lg font-bold">{fmtNum(candidate.avwap_slope, 3)}</p>
+            </div>
+            <div className="bg-vantage-bg border border-vantage-border rounded-lg p-3">
+              <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Confluence</p>
+              <p className={`font-mono text-lg font-bold ${candidate.avwap_confluence != null && candidate.avwap_confluence >= 2 ? "text-vantage-green" : ""}`}>{candidate.avwap_confluence ?? "\u2014"}</p>
             </div>
           </div>
 
@@ -168,6 +212,15 @@ export function ScanCandidateDetailPanel({ candidate, onClose }: { candidate: Sc
             <ContextBadge label="Gap Reset" state={candidate.setup_gap_reset} />
             <ContextBadge label="Structure" state={candidate.setup_structure_state} />
           </div>
+
+          {/* Log Trade Link */}
+          <Link
+            to={`/trade-log?symbol=${encodeURIComponent(candidate.symbol)}&direction=${encodeURIComponent(candidate.direction ?? "long")}&entry_price=${candidate.entry_level ?? ""}&stop_loss=${candidate.stop_loss ?? ""}&target_r1=${candidate.target_r1 ?? ""}&target_r2=${candidate.target_r2 ?? ""}&strategy_source=AVWAP_SCAN`}
+            className="block w-full text-center py-2 bg-vantage-blue text-white text-xs font-medium rounded hover:bg-vantage-blue/80 transition-colors"
+            onClick={onClose}
+          >
+            Log Trade
+          </Link>
         </div>
       </div>
     </>
