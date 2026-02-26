@@ -1728,17 +1728,17 @@ def get_schwab_performance(
     date_min = min(portfolio_dates)
     date_max = max(portfolio_dates)
 
-    # Benchmark prices in the same date range
+    # Benchmark prices — include lookback before date_min for baseline
     bench_rows = _rows(
         conn,
         """
         SELECT date_ny, symbol, close
         FROM benchmark_prices
         WHERE symbol IN ('SPY', 'VTI')
-          AND date_ny >= ? AND date_ny <= ?
+          AND date_ny <= ?
         ORDER BY date_ny ASC
         """,
-        [date_min, date_max],
+        [date_max],
     )
 
     # Index benchmark by (symbol, date)
@@ -1751,8 +1751,18 @@ def get_schwab_performance(
     portfolio_by_date = {r["ny_date"]: r["total_value"] for r in account_rows}
 
     base_value = account_rows[0]["total_value"]
-    spy_base = bench_by.get(("SPY", all_dates[0]))
-    vti_base = bench_by.get(("VTI", all_dates[0]))
+
+    # Find baseline benchmark price: exact match on first date, or closest prior
+    def _find_base(sym: str) -> float | None:
+        exact = bench_by.get((sym, all_dates[0]))
+        if exact is not None:
+            return exact
+        # Walk backwards through sorted benchmark dates
+        prior = [d for (s, d) in bench_by if s == sym and d <= all_dates[0]]
+        return bench_by[(sym, max(prior))] if prior else None
+
+    spy_base = _find_base("SPY")
+    vti_base = _find_base("VTI")
 
     last_spy = spy_base
     last_vti = vti_base

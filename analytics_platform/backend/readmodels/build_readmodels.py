@@ -958,7 +958,7 @@ def build_readmodels(settings: Settings) -> BuildResult:
         benchmark_source.latest_mtime_utc = _iso_mtime(parquet_path)
         try:
             ohlcv_df = pd.read_parquet(parquet_path)
-            sym_col = "Symbol" if "Symbol" in ohlcv_df.columns else "symbol" if "symbol" in ohlcv_df.columns else None
+            sym_col = next((c for c in ("Symbol", "symbol", "Ticker", "ticker") if c in ohlcv_df.columns), None)
             date_col = "Date" if "Date" in ohlcv_df.columns else "date"
             close_col = "Close" if "Close" in ohlcv_df.columns else "close"
 
