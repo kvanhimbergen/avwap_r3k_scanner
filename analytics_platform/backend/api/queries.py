@@ -1690,10 +1690,15 @@ def get_schwab_trade_instructions(conn) -> dict[str, Any]:
     }
 
 
+_SCHWAB_INCEPTION_DATE = "2026-02-18"
+
+
 def get_schwab_performance(
     conn, start: str | None = None, end: str | None = None
 ) -> dict[str, Any]:
     """Portfolio vs SPY vs VTI cumulative return series for the Schwab 401k."""
+    # Ignore test snapshots before inception
+    start = start or _SCHWAB_INCEPTION_DATE
     # Deduplicate to latest snapshot per day
     where, params = _date_clause("ny_date", start, end)
     account_rows = _rows(

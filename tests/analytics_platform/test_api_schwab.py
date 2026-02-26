@@ -163,7 +163,7 @@ def test_trade_instructions_events(analytics_settings) -> None:
 
 def test_schwab_performance_returns_200(analytics_settings) -> None:
     client = _make_client(analytics_settings)
-    resp = client.get("/api/v1/schwab/performance")
+    resp = client.get("/api/v1/schwab/performance?start=2026-02-10")
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert "series" in data
@@ -173,7 +173,7 @@ def test_schwab_performance_returns_200(analytics_settings) -> None:
 
 def test_schwab_performance_data_sufficient(analytics_settings) -> None:
     client = _make_client(analytics_settings)
-    resp = client.get("/api/v1/schwab/performance")
+    resp = client.get("/api/v1/schwab/performance?start=2026-02-10")
     data = resp.json()["data"]
     # We have 2 snapshot dates (2026-02-10, 2026-02-11)
     assert data["data_sufficient"] is True
@@ -182,7 +182,7 @@ def test_schwab_performance_data_sufficient(analytics_settings) -> None:
 
 def test_schwab_performance_series_values(analytics_settings) -> None:
     client = _make_client(analytics_settings)
-    resp = client.get("/api/v1/schwab/performance")
+    resp = client.get("/api/v1/schwab/performance?start=2026-02-10")
     data = resp.json()["data"]
 
     series = data["series"]
@@ -205,7 +205,7 @@ def test_schwab_performance_series_values(analytics_settings) -> None:
 
 def test_schwab_performance_metrics(analytics_settings) -> None:
     client = _make_client(analytics_settings)
-    resp = client.get("/api/v1/schwab/performance")
+    resp = client.get("/api/v1/schwab/performance?start=2026-02-10")
     data = resp.json()["data"]
 
     metrics = data["metrics"]
