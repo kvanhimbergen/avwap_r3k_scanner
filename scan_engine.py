@@ -81,6 +81,7 @@ CANDIDATE_COLUMNS = [
 
 BENCHMARK_TICKERS = (
     "SPY",
+    "VTI",
     "IWM",
     "IWV",
     "QQQ",
