@@ -19,8 +19,6 @@ import type {
   SchwabAccountBalance,
   SchwabPosition,
   SchwabPerformancePayload,
-  TradeInstruction,
-  TradeInstructionsPayload,
   TradeLogSummary,
 } from "../types";
 
@@ -53,7 +51,6 @@ export function CommandCenter() {
   const schwab = usePolling(() => api.schwabOverview(), 60_000);
   const perfPoll = usePolling(() => api.schwabPerformance(range), 60_000);
   const trades = usePolling(() => api.todaysTrades({ date }), 30_000);
-  const instructions = usePolling(() => api.schwabTradeInstructions(), 60_000);
   const portfolio = usePolling(() => api.portfolioOverview(), 60_000);
   const tradeLog = usePolling(() => api.tradeLogSummary(), 60_000);
 
@@ -64,13 +61,47 @@ export function CommandCenter() {
   const perfData = perfPoll.data?.data as SchwabPerformancePayload | undefined;
 
   const tradeData = (trades.data?.data ?? {}) as Record<string, unknown>;
-  const events = (tradeData.events ?? []) as Record<string, unknown>[];
+  const allEvents = (tradeData.events ?? []) as Record<string, unknown>[];
+  const events = allEvents.filter(ev => (ev.book_id as string) === "SCHWAB_401K_MANUAL");
   const anyRebalance = tradeData.any_rebalance as boolean | undefined;
-  const hasTrades = tradeData.has_trades as boolean | undefined;
+  const coordinator = tradeData.coordinator as Record<string, unknown> | null;
+  const accountValue = latestAccount?.total_value ?? 0;
 
-  const instructionsData = instructions.data?.data as TradeInstructionsPayload | undefined;
-  const actionableCount = instructionsData?.days?.reduce((sum, d) => sum + d.actionable_count, 0) ?? 0;
-  const actionableDollars = instructionsData?.days?.flatMap(d => d.intents).filter(i => i.actionable).reduce((sum, i) => sum + Math.abs(i.dollar_amount), 0) ?? 0;
+  // Build global target allocation from V3+V4+V5 weighted targets
+  const rawSplit = (coordinator?.capital_split ?? {}) as Record<string, number>;
+  const capitalSplit = new Map<string, number>();
+  for (const [key, weight] of Object.entries(rawSplit)) {
+    capitalSplit.set(`RAEC_401K_${key.toUpperCase()}`, weight);
+  }
+  const allocations = (tradeData.allocations ?? []) as { strategy_id: string; alloc_type: string; symbol: string; weight_pct: number }[];
+  const globalTarget = new Map<string, number>();
+  for (const a of allocations) {
+    if (a.alloc_type !== "target") continue;
+    const weight = capitalSplit.get(a.strategy_id);
+    if (weight == null) continue; // skip non-Schwab (V2)
+    globalTarget.set(a.symbol, (globalTarget.get(a.symbol) ?? 0) + a.weight_pct * weight);
+  }
+
+  // Compare global target vs actual Schwab positions → dollar trades
+  const currentBySymbol = new Map<string, number>();
+  for (const p of positions) currentBySymbol.set(p.symbol, p.weight_pct ?? 0);
+  // Include symbols from both positions and targets
+  const allSymbols = new Set([...globalTarget.keys(), ...currentBySymbol.keys()]);
+  const TRADE_THRESHOLD = 2_500; // skip trades below $2,500
+  const netBySymbol = new Map<string, number>();
+  for (const symbol of allSymbols) {
+    const targetPct = globalTarget.get(symbol) ?? 0;
+    const currentPct = currentBySymbol.get(symbol) ?? 0;
+    const deltaDollars = ((targetPct - currentPct) / 100) * accountValue;
+    if (Math.abs(deltaDollars) >= TRADE_THRESHOLD) {
+      netBySymbol.set(symbol, deltaDollars);
+    }
+  }
+  const actionList = [...netBySymbol.entries()]
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+    .map(([symbol, amt]) => ({ symbol, side: amt > 0 ? "BUY" as const : "SELL" as const, dollars: Math.abs(amt) }));
+  const actionableCount = actionList.length;
+  const actionableDollars = actionList.reduce((sum, a) => sum + a.dollars, 0);
 
   const portfolioData = (portfolio.data?.data ?? {}) as Record<string, unknown>;
   const latest = portfolioData.latest as Record<string, unknown> | undefined;
@@ -214,6 +245,26 @@ export function CommandCenter() {
                   : "No trades needed today"}
               </div>
 
+              {/* Action list — net trades per symbol */}
+              {actionList.length > 0 && (
+                <div className="space-y-1.5">
+                  {actionList.map((a) => (
+                    <div
+                      key={a.symbol}
+                      className={`flex items-center justify-between rounded-md px-3 py-1.5 text-xs font-mono ${
+                        a.side === "BUY" ? "bg-vantage-green/[0.06]" : "bg-vantage-red/[0.06]"
+                      }`}
+                    >
+                      <span className={`font-bold w-10 ${a.side === "BUY" ? "text-vantage-green" : "text-vantage-red"}`}>
+                        {a.side}
+                      </span>
+                      <span className="font-semibold">{formatCurrency(a.dollars, 0)}</span>
+                      <span className="text-vantage-text font-semibold">{a.symbol}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* Strategy rows */}
               <div className="space-y-2">
                 {events.map((ev, i) => {
@@ -239,18 +290,14 @@ export function CommandCenter() {
                 })}
               </div>
 
-              {/* Actionable trades link */}
-              {actionableCount > 0 && (
+              {/* Link to full trade page */}
+              {actionList.length > 0 && (
                 <div className="mt-auto pt-3 border-t border-vantage-border">
                   <Link
                     to="/trade"
-                    className="flex items-center justify-between text-xs text-vantage-blue hover:text-vantage-blue/80 transition-colors"
+                    className="text-xs text-vantage-blue hover:text-vantage-blue/80 transition-colors"
                   >
-                    <span>
-                      <span className="font-mono font-bold">{actionableCount}</span> trade{actionableCount !== 1 ? "s" : ""}
-                      {actionableDollars > 0 && <span className="text-vantage-muted ml-1">({formatCurrency(actionableDollars, 0)})</span>}
-                    </span>
-                    <span>View trade tickets &rarr;</span>
+                    Full details &rarr;
                   </Link>
                 </div>
               )}
@@ -271,43 +318,43 @@ export function CommandCenter() {
               <StatusBadge variant="active">ALIGNED</StatusBadge>
             ) : null}
           </div>
-          {positions.length === 0 ? (
+          {positions.length === 0 && globalTarget.size === 0 ? (
             <p className="text-xs text-vantage-muted py-4 text-center">No positions found</p>
           ) : (() => {
-            // Merge positions with today's trade instructions
-            const todayIntents = instructionsData?.days?.flatMap(d => d.intents) ?? [];
-            const intentBySymbol = new Map<string, TradeInstruction>();
-            for (const intent of todayIntents) intentBySymbol.set(intent.symbol, intent);
-
-            // Build unified rows: every position + any intent-only symbols
+            // Build unified rows: positions + any target-only symbols
             const symbolsSeen = new Set<string>();
-            const rows: { symbol: string; value: number | null; currentPct: number | null; targetPct: number | null; tradeDollars: number | null; side: string | null; actionable: boolean }[] = [];
+            const rows: { symbol: string; value: number | null; currentPct: number; targetPct: number; tradeDollars: number | null; side: string | null; actionable: boolean }[] = [];
 
             for (const p of [...positions].sort((a, b) => (b.weight_pct ?? 0) - (a.weight_pct ?? 0))) {
               symbolsSeen.add(p.symbol);
-              const intent = intentBySymbol.get(p.symbol);
+              const targetPct = globalTarget.get(p.symbol) ?? 0;
+              const deltaDollars = ((targetPct - (p.weight_pct ?? 0)) / 100) * accountValue;
+              const aboveThreshold = Math.abs(deltaDollars) >= TRADE_THRESHOLD;
               rows.push({
                 symbol: p.symbol,
                 value: p.market_value,
-                currentPct: intent ? intent.current_pct : p.weight_pct,
-                targetPct: intent ? intent.target_pct : p.weight_pct,
-                tradeDollars: intent ? intent.dollar_amount : null,
-                side: intent ? intent.side : null,
-                actionable: intent?.actionable ?? false,
+                currentPct: p.weight_pct ?? 0,
+                targetPct,
+                tradeDollars: aboveThreshold ? deltaDollars : null,
+                side: aboveThreshold ? (deltaDollars > 0 ? "BUY" : "SELL") : null,
+                actionable: aboveThreshold,
               });
             }
-            // Add intent-only symbols (new positions to open)
-            for (const intent of todayIntents) {
-              if (!symbolsSeen.has(intent.symbol)) {
-                rows.push({
-                  symbol: intent.symbol,
-                  value: null,
-                  currentPct: intent.current_pct,
-                  targetPct: intent.target_pct,
-                  tradeDollars: intent.dollar_amount,
-                  side: intent.side,
-                  actionable: intent.actionable,
-                });
+            // Add target-only symbols (new positions to open)
+            for (const [symbol, targetPct] of globalTarget) {
+              if (!symbolsSeen.has(symbol)) {
+                const deltaDollars = (targetPct / 100) * accountValue;
+                if (Math.abs(deltaDollars) >= TRADE_THRESHOLD) {
+                  rows.push({
+                    symbol,
+                    value: null,
+                    currentPct: 0,
+                    targetPct,
+                    tradeDollars: deltaDollars,
+                    side: deltaDollars > 0 ? "BUY" : "SELL",
+                    actionable: true,
+                  });
+                }
               }
             }
 
@@ -335,16 +382,14 @@ export function CommandCenter() {
                       >
                         <td className="py-2 px-2 font-mono font-semibold">{r.symbol}</td>
                         <td className="py-2 px-2 font-mono text-right">{formatCurrency(r.value, 0)}</td>
-                        <td className="py-2 px-2 font-mono text-right">{r.currentPct != null ? `${r.currentPct.toFixed(1)}%` : "\u2014"}</td>
-                        <td className="py-2 px-2 font-mono text-right font-semibold">{r.targetPct != null ? `${r.targetPct.toFixed(1)}%` : "\u2014"}</td>
+                        <td className="py-2 px-2 font-mono text-right">{`${r.currentPct.toFixed(1)}%`}</td>
+                        <td className="py-2 px-2 font-mono text-right font-semibold">{`${r.targetPct.toFixed(1)}%`}</td>
                         <td className={`py-2 px-2 font-mono text-right font-semibold ${
                           hasTrade ? (isBuy ? "text-vantage-green" : "text-vantage-red") : "text-vantage-muted"
                         }`}>
                           {hasTrade
                             ? `${isBuy ? "+" : "\u2212"}${formatCurrency(Math.abs(r.tradeDollars!), 0)}`
-                            : r.tradeDollars != null
-                              ? <span className="opacity-40">{formatCurrency(Math.abs(r.tradeDollars), 0)}</span>
-                              : "\u2014"}
+                            : "\u2014"}
                         </td>
                       </tr>
                     );

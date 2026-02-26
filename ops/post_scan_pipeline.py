@@ -10,12 +10,10 @@ Runs after the daily AVWAP scan completes.  Executes these steps in order:
 5. s2_letf_orb_aggro          → ledger/STRATEGY_SIGNALS/S2_LETF_ORB_AGGRO/{date}.jsonl
 6. s2_letf_orb_alpaca         → bracket orders from S2 candidates (Alpaca paper)
 7. raec_401k_coordinator      → ledger/RAEC_REBALANCE/RAEC_401K_COORD/{date}.jsonl
-8. raec_401k_v2               → Alpaca paper rebalance (V2 dynamic factor rotation)
 
 Steps 1→2 are sequential (throttle reads regime output).
 Steps 3→4 are optional — if Schwab API is down, RAEC falls back to stale state.
 Steps 5→6 are sequential (S2 bracket orders depend on candidate CSV from step 5).
-Steps 7 and 8 are independent but run sequentially for log clarity.
 
 Usage:
     python ops/post_scan_pipeline.py                       # auto-detect today (NY)
@@ -86,13 +84,6 @@ STEPS = [
             "--asof", date,
         ],
     },
-    {
-        "name": "raec_401k_v2",
-        "args": lambda date: [
-            sys.executable, "-m", "strategies.raec_401k_v2",
-            "--asof", date,
-        ],
-    },
 ]
 
 
@@ -104,7 +95,7 @@ def run_pipeline(date: str, *, dry_run: bool = False) -> None:
     for i, step in enumerate(STEPS, 1):
         cmd = step["args"](date)
         if dry_run and step["name"] in {
-            "raec_401k_coordinator", "s2_letf_orb_alpaca", "raec_401k_v2",
+            "raec_401k_coordinator", "s2_letf_orb_alpaca",
         }:
             cmd.append("--dry-run")
         label = f"[{i}/{len(STEPS)}] {step['name']}"
