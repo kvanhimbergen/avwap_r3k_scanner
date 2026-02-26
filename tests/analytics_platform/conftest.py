@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from analytics_platform.backend.config import Settings
@@ -361,6 +362,50 @@ def sample_repo(tmp_path: Path) -> Path:
         for r in [schwab_account_snapshot, schwab_positions_snapshot, schwab_orders_snapshot, schwab_reconciliation]
     ) + "\n"
     (tmp_path / "ledger" / "SCHWAB_401K_MANUAL" / "2026-02-10.jsonl").write_text(schwab_lines, encoding="utf-8")
+
+    # Second Schwab snapshot day for performance chart (need 2+ data points)
+    schwab_account_snapshot_d2 = {
+        "record_type": "SCHWAB_READONLY_ACCOUNT_SNAPSHOT",
+        "snapshot_id": "snap-acct-002",
+        "ny_date": "2026-02-11",
+        "schema_version": 1,
+        "book_id": "SCHWAB_401K_MANUAL",
+        "as_of_utc": "2026-02-11T16:00:00+00:00",
+        "cash": "5000.0000",
+        "market_value": "21500.0000",
+        "total_value": "26500.0000",
+        "provenance": {"module": "analytics.schwab_readonly_storage"},
+    }
+    schwab_positions_snapshot_d2 = {
+        "record_type": "SCHWAB_READONLY_POSITIONS_SNAPSHOT",
+        "snapshot_id": "snap-pos-002",
+        "ny_date": "2026-02-11",
+        "schema_version": 1,
+        "book_id": "SCHWAB_401K_MANUAL",
+        "as_of_utc": "2026-02-11T16:00:00+00:00",
+        "positions": [
+            {"symbol": "TQQQ", "qty": "100.000000", "cost_basis": "6500.0000", "market_value": "8000.0000"},
+            {"symbol": "SOXL", "qty": "50.000000", "cost_basis": "5000.0000", "market_value": "5400.0000"},
+            {"symbol": "BIL", "qty": "200.000000", "cost_basis": "8000.0000", "market_value": "8100.0000"},
+        ],
+        "provenance": {"module": "analytics.schwab_readonly_storage"},
+    }
+    schwab_d2_lines = "\n".join(
+        json.dumps(r) for r in [schwab_account_snapshot_d2, schwab_positions_snapshot_d2]
+    ) + "\n"
+    (tmp_path / "ledger" / "SCHWAB_401K_MANUAL" / "2026-02-11.jsonl").write_text(
+        schwab_d2_lines, encoding="utf-8"
+    )
+
+    # --- Benchmark prices parquet (SPY + VTI) ---
+    (tmp_path / "cache").mkdir(parents=True, exist_ok=True)
+    bench_df = pd.DataFrame([
+        {"Symbol": "SPY", "Date": "2026-02-10", "Close": 500.0},
+        {"Symbol": "SPY", "Date": "2026-02-11", "Close": 505.0},
+        {"Symbol": "VTI", "Date": "2026-02-10", "Close": 250.0},
+        {"Symbol": "VTI", "Date": "2026-02-11", "Close": 253.0},
+    ])
+    bench_df.to_parquet(tmp_path / "cache" / "ohlcv_history.parquet", index=False)
 
     # --- Alpaca order event fixtures ---
     (tmp_path / "ledger" / "ALPACA_PAPER").mkdir(parents=True, exist_ok=True)

@@ -2,6 +2,13 @@ import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
+// Recharts ResponsiveContainer requires ResizeObserver
+globalThis.ResizeObserver = class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
+
 vi.mock("../api", () => ({
   api: {
     schwabOverview: vi.fn().mockResolvedValue({
@@ -41,6 +48,26 @@ vi.mock("../api", () => ({
         total_value: 25922.83,
         threshold_dollars: 250,
         threshold_pct: 0.5,
+      },
+    }),
+    schwabPerformance: vi.fn().mockResolvedValue({
+      data: {
+        series: [
+          { date: "2026-02-10", portfolio: 0.0, spy: 0.0, vti: 0.0 },
+          { date: "2026-02-11", portfolio: 2.23, spy: 1.0, vti: 1.2 },
+        ],
+        metrics: {
+          portfolio_return: 2.23,
+          spy_return: 1.0,
+          vti_return: 1.2,
+          excess_vs_spy: 1.23,
+          excess_vs_vti: 1.03,
+          start_date: "2026-02-10",
+          end_date: "2026-02-11",
+          start_value: 25922.83,
+          end_value: 26500.0,
+        },
+        data_sufficient: true,
       },
     }),
   },
@@ -83,6 +110,20 @@ describe("SchwabAccountPage", () => {
     expect(header).toBeInTheDocument();
     // Strategy short name V3 and subtitle Aggressive should render
     expect(await screen.findByText("V3")).toBeInTheDocument();
+  });
+
+  it("renders performance vs market section", async () => {
+    render(
+      <MemoryRouter>
+        <SchwabAccountPage />
+      </MemoryRouter>,
+    );
+    const heading = await screen.findByText("Performance vs Market");
+    expect(heading).toBeInTheDocument();
+    // Date preset buttons
+    expect(screen.getByText("All")).toBeInTheDocument();
+    expect(screen.getByText("30d")).toBeInTheDocument();
+    expect(screen.getByText("90d")).toBeInTheDocument();
   });
 
   it("renders P&L columns in positions table", async () => {

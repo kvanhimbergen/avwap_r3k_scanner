@@ -1690,6 +1690,115 @@ def get_schwab_trade_instructions(conn) -> dict[str, Any]:
     }
 
 
+def get_schwab_performance(
+    conn, start: str | None = None, end: str | None = None
+) -> dict[str, Any]:
+    """Portfolio vs SPY vs VTI cumulative return series for the Schwab 401k."""
+    # Deduplicate to latest snapshot per day
+    where, params = _date_clause("ny_date", start, end)
+    account_rows = _rows(
+        conn,
+        f"""
+        WITH ranked AS (
+            SELECT ny_date, total_value,
+                   ROW_NUMBER() OVER (PARTITION BY ny_date ORDER BY as_of_utc DESC) AS rn
+            FROM schwab_account_snapshots
+        )
+        SELECT ny_date, total_value
+        FROM ranked
+        {where + ' AND rn = 1' if where else 'WHERE rn = 1'}
+        ORDER BY ny_date ASC
+        """,
+        params,
+    )
+
+    if len(account_rows) < 2:
+        return {
+            "series": [],
+            "metrics": {
+                "portfolio_return": None, "spy_return": None, "vti_return": None,
+                "excess_vs_spy": None, "excess_vs_vti": None,
+                "start_date": None, "end_date": None,
+                "start_value": None, "end_value": None,
+            },
+            "data_sufficient": False,
+        }
+
+    portfolio_dates = {r["ny_date"] for r in account_rows}
+    date_min = min(portfolio_dates)
+    date_max = max(portfolio_dates)
+
+    # Benchmark prices in the same date range
+    bench_rows = _rows(
+        conn,
+        """
+        SELECT date_ny, symbol, close
+        FROM benchmark_prices
+        WHERE symbol IN ('SPY', 'VTI')
+          AND date_ny >= ? AND date_ny <= ?
+        ORDER BY date_ny ASC
+        """,
+        [date_min, date_max],
+    )
+
+    # Index benchmark by (symbol, date)
+    bench_by: dict[tuple[str, str], float] = {}
+    for r in bench_rows:
+        bench_by[(r["symbol"], r["date_ny"])] = r["close"]
+
+    # Build common date set and forward-fill benchmarks
+    all_dates = sorted(portfolio_dates)
+    portfolio_by_date = {r["ny_date"]: r["total_value"] for r in account_rows}
+
+    base_value = account_rows[0]["total_value"]
+    spy_base = bench_by.get(("SPY", all_dates[0]))
+    vti_base = bench_by.get(("VTI", all_dates[0]))
+
+    last_spy = spy_base
+    last_vti = vti_base
+
+    series: list[dict[str, Any]] = []
+    for d in all_dates:
+        pv = portfolio_by_date[d]
+        spy_close = bench_by.get(("SPY", d), last_spy)
+        vti_close = bench_by.get(("VTI", d), last_vti)
+        if spy_close is not None:
+            last_spy = spy_close
+        if vti_close is not None:
+            last_vti = vti_close
+
+        port_ret = ((pv - base_value) / base_value * 100) if base_value else 0
+        spy_ret = ((spy_close - spy_base) / spy_base * 100) if spy_base and spy_close else None
+        vti_ret = ((vti_close - vti_base) / vti_base * 100) if vti_base and vti_close else None
+
+        series.append({
+            "date": d,
+            "portfolio": round(port_ret, 2),
+            "spy": round(spy_ret, 2) if spy_ret is not None else None,
+            "vti": round(vti_ret, 2) if vti_ret is not None else None,
+        })
+
+    last_port = series[-1]["portfolio"] if series else None
+    last_spy_ret = series[-1]["spy"] if series else None
+    last_vti_ret = series[-1]["vti"] if series else None
+
+    return {
+        "series": series,
+        "metrics": {
+            "portfolio_return": last_port,
+            "spy_return": last_spy_ret,
+            "vti_return": last_vti_ret,
+            "excess_vs_spy": round(last_port - last_spy_ret, 2) if last_port is not None and last_spy_ret is not None else None,
+            "excess_vs_vti": round(last_port - last_vti_ret, 2) if last_port is not None and last_vti_ret is not None else None,
+            "start_date": date_min,
+            "end_date": date_max,
+            "start_value": base_value,
+            "end_value": account_rows[-1]["total_value"],
+        },
+        "data_sufficient": True,
+    }
+
+
 _ALPACA_STRATEGY_IDS = {"S1_AVWAP_CORE", "S2_LETF_ORB_AGGRO", "RAEC_401K_V1", "RAEC_401K_V2"}
 _SCHWAB_STRATEGY_IDS = {"RAEC_401K_V3", "RAEC_401K_V4", "RAEC_401K_V5", "RAEC_401K_COORD"}
 

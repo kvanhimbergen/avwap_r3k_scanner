@@ -2,7 +2,9 @@
  * Schwab Account — /ops/schwab
  * Live 401(k) positions, balances, and reconciliation.
  */
+import { useState } from "react";
 import { Landmark, AlertTriangle } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 
 import { api } from "../api";
 import { StatusBadge } from "../components/Badge";
@@ -10,13 +12,29 @@ import { SkeletonCard, SkeletonTable } from "../components/Skeleton";
 import { TradeInstructionsPanel } from "../components/TradeInstructionsPanel";
 import { usePolling } from "../hooks/usePolling";
 import { formatCurrency, formatPercent, pnlColor } from "../lib/format";
-import type { SchwabAccountBalance, SchwabPosition, SchwabOrder, SchwabReconciliation, TradeInstructionsPayload } from "../types";
+import type { SchwabAccountBalance, SchwabPosition, SchwabOrder, SchwabReconciliation, TradeInstructionsPayload, SchwabPerformancePayload } from "../types";
+
+type DatePreset = "all" | "30d" | "90d";
+
+function getDateRange(preset: DatePreset): { start?: string } {
+  if (preset === "all") return {};
+  const days = preset === "30d" ? 30 : 90;
+  const start = new Date(Date.now() - days * 86_400_000);
+  return { start: start.toISOString().slice(0, 10) };
+}
+
+const CHART_TOOLTIP = { backgroundColor: "#111827", border: "1px solid #1f2937", borderRadius: 6, fontSize: 12 };
 
 export function SchwabAccountPage() {
+  const [datePreset, setDatePreset] = useState<DatePreset>("all");
+  const range = getDateRange(datePreset);
+
   const poll = usePolling(() => api.schwabOverview(), 60_000);
   const instructionsPoll = usePolling(() => api.schwabTradeInstructions(), 60_000);
+  const perfPoll = usePolling(() => api.schwabPerformance(range), 60_000);
   const data = poll.data?.data as Record<string, unknown> | undefined;
   const instructionsData = instructionsPoll.data?.data as TradeInstructionsPayload | undefined;
+  const perfData = perfPoll.data?.data as SchwabPerformancePayload | undefined;
 
   const latestAccount = data?.latest_account as SchwabAccountBalance | null;
   const positions = (data?.positions ?? []) as SchwabPosition[];
@@ -63,6 +81,57 @@ export function SchwabAccountPage() {
 
       {/* Trade Instructions */}
       {instructionsData && <TradeInstructionsPanel data={instructionsData} />}
+
+      {/* Performance vs Market */}
+      <div className="bg-vantage-card border border-vantage-border rounded-lg p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold">Performance vs Market</h3>
+          <div className="flex items-center gap-1">
+            {(["all", "30d", "90d"] as DatePreset[]).map((p) => (
+              <button key={p} onClick={() => setDatePreset(p)} className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${datePreset === p ? "bg-vantage-border text-vantage-text" : "text-vantage-muted hover:text-vantage-text"}`}>
+                {p === "all" ? "All" : p}
+              </button>
+            ))}
+          </div>
+        </div>
+        {!perfData?.data_sufficient ? (
+          <p className="text-xs text-vantage-muted py-4 text-center">Need 2+ account snapshots for performance chart</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-5 gap-4 mb-4">
+              {[
+                { label: "Portfolio", value: perfData.metrics.portfolio_return, suffix: "%" },
+                { label: "SPY", value: perfData.metrics.spy_return, suffix: "%" },
+                { label: "VTI", value: perfData.metrics.vti_return, suffix: "%" },
+                { label: "vs SPY", value: perfData.metrics.excess_vs_spy, suffix: "%" },
+                { label: "vs VTI", value: perfData.metrics.excess_vs_vti, suffix: "%" },
+              ].map((m) => (
+                <div key={m.label}>
+                  <p className="text-[10px] text-vantage-muted uppercase tracking-wide">{m.label}</p>
+                  <p className={`font-mono text-lg font-bold ${m.value != null ? pnlColor(m.value) : "text-vantage-text"}`}>
+                    {m.value != null ? `${m.value >= 0 ? "+" : ""}${m.value.toFixed(2)}${m.suffix}` : "\u2014"}
+                  </p>
+                </div>
+              ))}
+            </div>
+            {perfData.series.length >= 2 && (
+              <div className="h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={perfData.series}>
+                    <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: "#9ca3af" }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: "#9ca3af" }} tickFormatter={(v: number) => `${v}%`} />
+                    <Tooltip contentStyle={CHART_TOOLTIP} formatter={(value: number) => [`${value.toFixed(2)}%`]} />
+                    <ReferenceLine y={0} stroke="#374151" strokeDasharray="3 3" />
+                    <Line type="monotone" dataKey="portfolio" name="Portfolio" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="spy" name="SPY" stroke="#9ca3af" strokeWidth={1.5} strokeDasharray="6 3" dot={false} />
+                    <Line type="monotone" dataKey="vti" name="VTI" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="6 3" dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       {/* Positions */}
       {poll.loading ? (

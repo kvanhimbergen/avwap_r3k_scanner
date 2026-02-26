@@ -1,4 +1,4 @@
-import type { ApiEnvelope, FreshnessRow, KeyValue, TimePoint, TradeInstructionsPayload } from "./types";
+import type { ApiEnvelope, FreshnessRow, KeyValue, TimePoint, TradeInstructionsPayload, SchwabPerformancePayload } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "";
 
@@ -108,6 +108,9 @@ export const api = {
 
   schwabTradeInstructions: () =>
     get<TradeInstructionsPayload>("/api/v1/schwab/trade-instructions"),
+
+  schwabPerformance: (args?: { start?: string; end?: string }) =>
+    get<SchwabPerformancePayload>(`/api/v1/schwab/performance${toQuery(args ?? {})}`),
 
   performance: (args?: { start?: string; end?: string; strategy_id?: string; book_id?: string }) =>
     get<KeyValue>(`/api/v1/performance${toQuery(args ?? {})}`),

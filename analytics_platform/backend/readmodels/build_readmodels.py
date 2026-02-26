@@ -958,33 +958,30 @@ def build_readmodels(settings: Settings) -> BuildResult:
         benchmark_source.latest_mtime_utc = _iso_mtime(parquet_path)
         try:
             ohlcv_df = pd.read_parquet(parquet_path)
-            # Filter to SPY benchmark
-            if "Symbol" in ohlcv_df.columns:
-                spy_df = ohlcv_df[ohlcv_df["Symbol"] == "SPY"]
-            elif "symbol" in ohlcv_df.columns:
-                spy_df = ohlcv_df[ohlcv_df["symbol"] == "SPY"]
-            else:
-                spy_df = pd.DataFrame()
+            sym_col = "Symbol" if "Symbol" in ohlcv_df.columns else "symbol" if "symbol" in ohlcv_df.columns else None
+            date_col = "Date" if "Date" in ohlcv_df.columns else "date"
+            close_col = "Close" if "Close" in ohlcv_df.columns else "close"
 
-            date_col = "Date" if "Date" in spy_df.columns else "date"
-            close_col = "Close" if "Close" in spy_df.columns else "close"
-
-            for _, row in spy_df.iterrows():
-                date_val = row.get(date_col)
-                close_val = row.get(close_col)
-                if date_val is None or close_val is None:
-                    continue
-                if isinstance(date_val, pd.Timestamp):
-                    date_str = date_val.strftime("%Y-%m-%d")
-                else:
-                    date_str = str(date_val)[:10]
-                benchmark_rows.append(
-                    {
-                        "date_ny": date_str,
-                        "symbol": "SPY",
-                        "close": float(close_val),
-                    }
-                )
+            for bench_sym in ("SPY", "VTI"):
+                if sym_col is None:
+                    break
+                sym_df = ohlcv_df[ohlcv_df[sym_col] == bench_sym]
+                for _, row in sym_df.iterrows():
+                    date_val = row.get(date_col)
+                    close_val = row.get(close_col)
+                    if date_val is None or close_val is None:
+                        continue
+                    if isinstance(date_val, pd.Timestamp):
+                        date_str = date_val.strftime("%Y-%m-%d")
+                    else:
+                        date_str = str(date_val)[:10]
+                    benchmark_rows.append(
+                        {
+                            "date_ny": date_str,
+                            "symbol": bench_sym,
+                            "close": float(close_val),
+                        }
+                    )
             benchmark_source.row_count = len(benchmark_rows)
         except Exception as exc:  # noqa: BLE001
             benchmark_source.parse_status = "error"

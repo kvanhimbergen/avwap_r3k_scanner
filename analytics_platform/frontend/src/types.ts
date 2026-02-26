@@ -358,6 +358,31 @@ export interface TradeInstructionsPayload {
   threshold_pct: number;
 }
 
+export interface SchwabPerformancePoint {
+  date: string;
+  portfolio: number;
+  spy: number | null;
+  vti: number | null;
+}
+
+export interface SchwabPerformanceMetrics {
+  portfolio_return: number | null;
+  spy_return: number | null;
+  vti_return: number | null;
+  excess_vs_spy: number | null;
+  excess_vs_vti: number | null;
+  start_date: string | null;
+  end_date: string | null;
+  start_value: number | null;
+  end_value: number | null;
+}
+
+export interface SchwabPerformancePayload {
+  series: SchwabPerformancePoint[];
+  metrics: SchwabPerformanceMetrics;
+  data_sufficient: boolean;
+}
+
 export interface SchwabReconciliation {
   ny_date: string;
   as_of_utc: string;
