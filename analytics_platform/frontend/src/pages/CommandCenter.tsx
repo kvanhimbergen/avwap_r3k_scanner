@@ -4,7 +4,7 @@
  */
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, PieChart, Pie, Cell } from "recharts";
 
 import { api } from "../api";
 import { StatCard } from "../components/StatCard";
@@ -13,7 +13,7 @@ import { SkeletonCard } from "../components/Skeleton";
 import { ErrorState } from "../components/ErrorState";
 import { usePolling } from "../hooks/usePolling";
 import { formatCurrency, formatPercent, pnlColor } from "../lib/format";
-import { getMeta } from "../lib/strategies";
+import { getMeta, regimeColor } from "../lib/strategies";
 import type {
   KeyValue,
   SchwabAccountBalance,
@@ -102,6 +102,29 @@ export function CommandCenter() {
     .map(([symbol, amt]) => ({ symbol, side: amt > 0 ? "BUY" as const : "SELL" as const, dollars: Math.abs(amt) }));
   const actionableCount = actionList.length;
   const actionableDollars = actionList.reduce((sum, a) => sum + a.dollars, 0);
+
+  // Strategy position counts — count of symbols in each strategy's target allocation
+  const strategyPositionCounts = new Map<string, number>();
+  for (const a of allocations) {
+    if (a.alloc_type !== "target" || !capitalSplit.has(a.strategy_id)) continue;
+    strategyPositionCounts.set(a.strategy_id, (strategyPositionCounts.get(a.strategy_id) ?? 0) + 1);
+  }
+
+  // Symbol → strategy attribution — which strategies include each symbol
+  const symbolStrategies = new Map<string, Set<string>>();
+  for (const a of allocations) {
+    if (a.alloc_type !== "target" || !capitalSplit.has(a.strategy_id)) continue;
+    if (!symbolStrategies.has(a.symbol)) symbolStrategies.set(a.symbol, new Set());
+    symbolStrategies.get(a.symbol)!.add(a.strategy_id);
+  }
+
+  // Donut chart data — from capitalSplit entries
+  const donutData = [...capitalSplit.entries()].map(([sid, weight]) => ({
+    name: getMeta(sid).shortName,
+    value: weight * 100,
+    color: getMeta(sid).color,
+    dollars: weight * accountValue,
+  }));
 
   const portfolioData = (portfolio.data?.data ?? {}) as Record<string, unknown>;
   const latest = portfolioData.latest as Record<string, unknown> | undefined;
@@ -265,21 +288,28 @@ export function CommandCenter() {
                 </div>
               )}
 
-              {/* Strategy rows */}
+              {/* Strategy roster */}
               <div className="space-y-2">
                 {events.map((ev, i) => {
                   const sid = ev.strategy_id as string;
                   const meta = getMeta(sid);
                   const regime = ev.regime as string | null;
                   const shouldRebalance = ev.should_rebalance as boolean;
+                  const allocPct = capitalSplit.get(sid);
+                  const posCount = strategyPositionCounts.get(sid) ?? 0;
                   return (
                     <div key={i} className="flex items-center gap-2 text-xs">
                       <span
                         className="w-2 h-2 rounded-full shrink-0"
-                        style={{ backgroundColor: meta.color }}
+                        style={{ backgroundColor: regimeColor(regime) }}
+                        title={regime ?? "unknown"}
                       />
                       <span className="font-mono font-semibold w-8 shrink-0">{meta.shortName}</span>
                       <RegimeBadge regime={regime} />
+                      {allocPct != null && (
+                        <span className="font-mono text-vantage-muted">{`${(allocPct * 100).toFixed(0)}%`}</span>
+                      )}
+                      <span className="font-mono text-vantage-muted">{posCount} pos</span>
                       <span className="ml-auto">
                         <StatusBadge variant={shouldRebalance ? "warning" : "active"}>
                           {shouldRebalance ? "REBALANCE" : "HOLD"}
@@ -367,6 +397,7 @@ export function CommandCenter() {
                     <th className="py-2 px-2 text-right text-vantage-muted font-medium">Current</th>
                     <th className="py-2 px-2 text-right text-vantage-muted font-medium">Target</th>
                     <th className="py-2 px-2 text-right text-vantage-muted font-medium">Trade</th>
+                    <th className="py-2 px-2 text-left text-vantage-muted font-medium">Strategies</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -391,6 +422,19 @@ export function CommandCenter() {
                             ? `${isBuy ? "+" : "\u2212"}${formatCurrency(Math.abs(r.tradeDollars!), 0)}`
                             : "\u2014"}
                         </td>
+                        <td className="py-2 px-2">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {[...(symbolStrategies.get(r.symbol) ?? [])].map((sid) => {
+                              const m = getMeta(sid);
+                              return (
+                                <span key={sid} className="flex items-center gap-0.5 text-[10px] text-vantage-muted">
+                                  <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ backgroundColor: m.color }} />
+                                  {m.shortName}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -407,35 +451,70 @@ export function CommandCenter() {
           )}
         </div>
 
-        {/* Alpaca Paper (40%) */}
+        {/* Capital Allocation (40%) */}
         <div className="lg:col-span-2 bg-vantage-card border border-vantage-border rounded-lg p-4 flex flex-col">
-          <h3 className="text-sm font-semibold mb-3">Alpaca Paper</h3>
+          <h3 className="text-sm font-semibold mb-3">Capital Allocation</h3>
           <div className="space-y-3 flex-1">
-            <div>
-              <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Equity</p>
-              <p className="font-mono text-lg font-bold">
-                {alpacaEquity != null ? formatCurrency(alpacaEquity, 0) : "\u2014"}
-              </p>
+            {/* Donut chart */}
+            {donutData.length > 0 && (
+              <div className="h-[170px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={donutData}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius={50}
+                      outerRadius={75}
+                      paddingAngle={2}
+                    >
+                      {donutData.map((d, i) => (
+                        <Cell key={i} fill={d.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={CHART_TOOLTIP}
+                      formatter={(value: number, name: string) => [`${value.toFixed(0)}%`, name]}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Dollar breakdown per strategy */}
+            <div className="space-y-1.5">
+              {donutData.map((d) => (
+                <div key={d.name} className="flex items-center gap-2 text-xs">
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                  <span className="font-mono font-semibold">{d.name}</span>
+                  <span className="font-mono text-vantage-muted">{d.value.toFixed(0)}%</span>
+                  <span className="ml-auto font-mono">{formatCurrency(d.dollars, 0)}</span>
+                </div>
+              ))}
             </div>
-            <div>
-              <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Day P&L</p>
-              <p className={`font-mono text-lg font-bold ${pnlColor(alpacaDayPnl)}`}>
-                {alpacaDayPnl != null ? formatCurrency(alpacaDayPnl, 0) : "\u2014"}
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] text-vantage-muted uppercase tracking-wide">Open Swing Trades</p>
-              <p className="font-mono text-lg font-bold">
-                {logSummary?.open_count != null ? logSummary.open_count : "\u2014"}
-              </p>
-            </div>
-            <div className="mt-auto pt-3 border-t border-vantage-border">
-              <Link
-                to="/trade-log"
-                className="text-xs text-vantage-blue hover:text-vantage-blue/80 transition-colors"
-              >
-                View trade log &rarr;
-              </Link>
+
+            {/* Compact Alpaca metrics */}
+            <div className="pt-3 border-t border-vantage-border">
+              <p className="text-[10px] text-vantage-muted uppercase tracking-wide mb-2">Alpaca Paper</p>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <p className="text-[10px] text-vantage-muted">Equity</p>
+                  <p className="font-mono font-bold">{alpacaEquity != null ? formatCurrency(alpacaEquity, 0) : "\u2014"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-vantage-muted">Day P&L</p>
+                  <p className={`font-mono font-bold ${pnlColor(alpacaDayPnl)}`}>{alpacaDayPnl != null ? formatCurrency(alpacaDayPnl, 0) : "\u2014"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-vantage-muted">Open Trades</p>
+                  <p className="font-mono font-bold">{logSummary?.open_count != null ? logSummary.open_count : "\u2014"}</p>
+                </div>
+              </div>
+              <div className="mt-2">
+                <Link to="/trade-log" className="text-xs text-vantage-blue hover:text-vantage-blue/80 transition-colors">
+                  View trade log &rarr;
+                </Link>
+              </div>
             </div>
           </div>
         </div>
