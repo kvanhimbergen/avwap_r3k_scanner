@@ -19,6 +19,8 @@ from execution_v2.strategy_registry import StrategyID
 from utils.atomic_write import atomic_write_text
 
 
+# Signal ledger uses SCHWAB_401K_MANUAL; execution routes to ALPACA_PAPER
+# via s2_letf_orb_alpaca.py (separate book for order placement).
 BOOK_ID = book_ids.SCHWAB_401K_MANUAL
 STRATEGY_ID = StrategyID.S2_LETF_ORB_AGGRO.value
 

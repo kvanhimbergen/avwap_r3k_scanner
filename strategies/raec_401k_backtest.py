@@ -79,9 +79,9 @@ def run_single_backtest(
         symbol_returns[sym] = _daily_returns(provider, sym, trading_days)
 
     # State
+    cash_sym = strategy.FALLBACK_CASH_SYMBOL
     equity = initial_capital
-    allocations: dict[str, float] = {"BIL": 100.0}  # start 100% cash
-    last_regime = ""
+    allocations: dict[str, float] = {cash_sym: 100.0}  # start 100% cash
     last_eval_date = ""
     peak_equity = equity
     regime_history: list[tuple[date, str]] = []
@@ -93,8 +93,9 @@ def run_single_backtest(
         # 1. Apply daily returns to current allocations
         day_return = 0.0
         for sym, pct in allocations.items():
-            if sym == "BIL":
-                day_return += (pct / 100.0) * (5.0 / 252 / 100)  # ~5% annual cash yield
+            if sym == cash_sym:
+                # Approximate cash yield: ~5% annualized / 252 trading days
+                day_return += (pct / 100.0) * (5.0 / 252 / 100)
             else:
                 sym_ret = symbol_returns.get(sym, {}).get(day, 0.0)
                 day_return += (pct / 100.0) * sym_ret
@@ -162,7 +163,6 @@ def run_single_backtest(
         if not regime_history or regime_history[-1][1] != signal.regime:
             regime_history.append((day, signal.regime))
 
-        last_regime = signal.regime
         last_eval_date = asof_str
 
     return BacktestResult(

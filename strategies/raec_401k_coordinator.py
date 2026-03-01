@@ -136,13 +136,13 @@ def run_coordinator(
 
     # Post each sub-strategy's ticket independently
     posting_enabled = slack_post_enabled() if post_enabled is None else post_enabled
+    adapter = adapter_override or (book_router.select_trading_client(BOOK_ID) if not dry_run else None)
     rebalanced: list[str] = []
     posted: list[str] = []
     for key, result in sub_results.items():
         if result.should_rebalance:
             rebalanced.append(key)
             if not dry_run:
-                adapter = adapter_override or book_router.select_trading_client(BOOK_ID)
                 strategy = SUB_STRATEGIES[key]
                 ticket_message = _build_sub_ticket(key=key, result=result, split=split, cap=cap)
                 summary_intents = result.intents

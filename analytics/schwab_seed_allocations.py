@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from zoneinfo import ZoneInfo
 
@@ -57,6 +60,13 @@ def positions_to_allocations(
 
     if cash > 0:
         allocs[cash_symbol] = round((cash / total_value) * 100, 1)
+
+    total_pct = sum(allocs.values())
+    if abs(total_pct - 100.0) > SUM_TOLERANCE:
+        logger.warning(
+            "Allocation sum %.1f%% deviates from 100%% by more than %.1f%%",
+            total_pct, SUM_TOLERANCE,
+        )
 
     return allocs
 

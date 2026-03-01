@@ -57,6 +57,10 @@ def date_ny(dt: datetime) -> str:
     return dt.astimezone(_NY_TZ).date().isoformat()
 
 
+def stable_json_dumps(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
 def compact_json(value: Any) -> Optional[str]:
     try:
         return json.dumps(value, sort_keys=True, separators=(",", ":"))

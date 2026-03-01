@@ -18,8 +18,7 @@ WINDOW_LABEL_DEFAULT = "20D"
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-def stable_json_dumps(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+from analytics.util import stable_json_dumps  # noqa: E402,F811 — canonical location
 
 
 def round_notional(value: float | None) -> float | None:

@@ -345,182 +345,182 @@
 ## MEDIUM Issues
 
 ### #35 - [MEDIUM] Strategies: `_load_latest_csv_allocations` silently swallows all exceptions
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_base.py:666-674`
 - **Description:** Bare `except Exception: return None` hides parsing errors, permission errors, corrupt CSV data. A schema change in Schwab exports would be invisible.
 - **Fix:** Log the exception before returning None.
-> Comment:
+> Comment: Added `import logging` + module-level `logger` to `raec_401k_base.py`. Changed bare `except Exception: return None` to log with `logger.warning("Failed to load CSV allocations", exc_info=True)` before returning None.
 
 ---
 
 ### #36 - [MEDIUM] Strategies: `_get_cash_symbol` hardcodes "BIL" as primary lookup
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_base.py:263-267`
 - **Description:** Always tries BIL first regardless of `FALLBACK_CASH_SYMBOL` config. If a strategy wanted a different cash symbol, BIL is still tried first.
 - **Fix:** Use `self.FALLBACK_CASH_SYMBOL` as the primary lookup.
-> Comment:
+> Comment: Swapped logic: now tries `self.FALLBACK_CASH_SYMBOL` first, falls back to "BIL" only if configured symbol has no price data.
 
 ---
 
 ### #37 - [MEDIUM] Strategies: `_universe` strips "BIL" but not the configured `fallback_cash_symbol`
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_base.py:269-272`
 - **Description:** Hardcoded BIL removal from universe. If a strategy used a different cash symbol, BIL would remain in the universe while the new cash symbol is also added.
 - **Fix:** Remove the configured cash symbol, not hardcoded "BIL".
-> Comment:
+> Comment: Now excludes both the resolved `cash_symbol` and `self.FALLBACK_CASH_SYMBOL` from the universe before appending the resolved cash symbol.
 
 ---
 
 ### #38 - [MEDIUM] Strategies: Coordinator adapter re-created every loop iteration
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_coordinator.py:138`
 - **Description:** `adapter_override or book_router.select_trading_client(BOOK_ID)` is called on every iteration of the sub_results loop. The adapter should be created once before the loop.
 - **Fix:** Hoist adapter creation above the loop.
-> Comment:
+> Comment: Hoisted adapter creation above the loop. Only creates when `not dry_run` (set to None otherwise).
 
 ---
 
 ### #39 - [MEDIUM] Strategies: Backtest hardcodes BIL starting allocation and 5% yield assumption
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_backtest.py:83, 96-97`
 - **Description:** `allocations = {"BIL": 100.0}` is hardcoded. `5.0/252/100` assumes 5% annual yield for BIL which may not match reality.
 - **Fix:** Source from strategy config for the cash symbol; document or parameterize the yield assumption.
-> Comment:
+> Comment: Replaced hardcoded "BIL" with `strategy.FALLBACK_CASH_SYMBOL` via `cash_sym` local. Added comment documenting the 5% annualized yield assumption.
 
 ---
 
 ### #40 - [MEDIUM] Strategies: Unused variable `last_regime` in backtest
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_backtest.py:84`
 - **Description:** `last_regime = ""` is assigned and updated but never read. Dead code.
 - **Fix:** Remove it.
-> Comment:
+> Comment: Removed `last_regime = ""` initialization and the `last_regime = signal.regime` assignment at line 166.
 
 ---
 
 ### #41 - [MEDIUM] Strategies: `s2_letf_orb_aggro` BOOK_ID is SCHWAB but execution is on ALPACA
-- [ ] Done
+- [x] Done
 - **File:** `strategies/s2_letf_orb_aggro.py:22`
 - **Description:** Signal ledger records say `SCHWAB_401K_MANUAL` but downstream execution in `s2_letf_orb_alpaca.py` uses `ALPACA_PAPER`. Confusing for ledger analysis.
 - **Fix:** Use a signal-specific book ID or document the mapping.
-> Comment:
+> Comment: Added a comment above BOOK_ID explaining that signal ledger uses SCHWAB_401K_MANUAL while execution routes to ALPACA_PAPER via s2_letf_orb_alpaca.py.
 
 ---
 
 ### #42 - [MEDIUM] Strategies: `_allocs.py` prints to stdout instead of logging
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_allocs.py:212`
 - **Description:** `print(f"Ignoring non-universe symbol: {symbol}")` intermingles with structured pipeline output.
 - **Fix:** Use `logging.warning()`.
-> Comment:
+> Comment: Added `import logging` + module-level `logger` to `raec_401k_allocs.py`. Replaced `print()` with `logger.warning()`.
 
 ---
 
 ### #43 - [MEDIUM] Strategies: `_allocs.py` state file loaded without `_load_state` helper
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_allocs.py:300-302`
 - **Description:** Manual `json.loads(state_path.read_text())` bypasses any error handling or migration logic in `_load_state`.
 - **Fix:** Use the shared `_load_state` helper.
-> Comment:
+> Comment: Replaced manual `json.loads(state_path.read_text())` with `strategy_module._load_state(state_path)` which handles missing files gracefully.
 
 ---
 
 ### #44 - [MEDIUM] Analytics: Redundant Schwab API calls in individual methods
-- [ ] Done
+- [x] Done
 - **File:** `analytics/schwab_readonly_live_adapter.py:75-114`
 - **Description:** `load_balance_snapshot()` and `load_positions_snapshot()` each call `_get_account_data()` independently. If a caller invokes both, it makes two API calls for the same data, wasting rate budget and risking inconsistency.
 - **Fix:** Cache the last response with a short TTL, or always go through `load_all_snapshots()`.
-> Comment:
+> Comment: Added `_account_cache` instance variable. `_get_account_data()` now caches the response per adapter instance, so multiple calls reuse the same data.
 
 ---
 
 ### #45 - [MEDIUM] Analytics: Population stddev used instead of sample stddev
-- [ ] Done
+- [x] Done
 - **File:** `analytics/portfolio.py:264-269`
 - **Description:** `_stddev()` divides by `len(values)` (population) instead of `len(values)-1` (sample). For 5-day rolling windows, this underestimates volatility by ~10%.
 - **Fix:** Use `len(values) - 1` (Bessel's correction).
-> Comment:
+> Comment: Applied Bessel's correction (divide by `len-1` instead of `len`). Changed guard from `not values` to `len(values) < 2`. Updated test expectation to match.
 
 ---
 
 ### #46 - [MEDIUM] Analytics: E2 features import private functions from E1
-- [ ] Done
+- [x] Done
 - **File:** `analytics/regime_e2_features.py:7-17`
 - **Description:** Imports underscore-prefixed "private" functions like `_normalize_columns`, `_filter_as_of`, `_round`, etc. from `regime_e1_features`. Couples e2 deeply to e1 internals.
 - **Fix:** Extract shared functions to a `regime_utils.py` module (rename without underscore).
-> Comment:
+> Comment: Created `analytics/regime_utils.py` with public names (`round_value`, `normalize_columns`, `filter_as_of`, `symbol_history`, `series_tail`, `to_date_string`). E1 now imports from regime_utils and keeps backward-compat aliases. E2 imports directly from regime_utils with public names.
 
 ---
 
 ### #47 - [MEDIUM] Analytics: `schwab_seed_allocations` -- `SUM_TOLERANCE` is dead code
-- [ ] Done
+- [x] Done
 - **File:** `analytics/schwab_seed_allocations.py:33`
 - **Description:** `SUM_TOLERANCE = 2.0` is defined but never used. No validation that allocations sum to ~100%.
 - **Fix:** Add a validation check using the tolerance, or remove the constant.
-> Comment:
+> Comment: Added validation in `positions_to_allocations` that logs a warning when allocation sum deviates from 100% by more than `SUM_TOLERANCE`.
 
 ---
 
 ### #48 - [MEDIUM] Analytics: `regime_throttle_writer` -- no deduplication of records
-- [ ] Done
+- [x] Done
 - **File:** `analytics/regime_throttle_writer.py:108-109`
 - **Description:** Always appends without checking for existing identical records. Running the pipeline twice for the same date produces duplicates.
 - **Fix:** Check existing IDs before appending (like `regime_e1_storage.py` does).
-> Comment:
+> Comment: Added `_existing_regime_ids()` that reads existing records from the ledger file. Before appending, checks if `regime_id` already exists and returns `status: "skipped"` if so.
 
 ---
 
 ### #49 - [MEDIUM] Analytics: Orders query has hardcoded 1-day window
-- [ ] Done
+- [x] Done
 - **File:** `analytics/schwab_readonly_live_adapter.py:117-118`
 - **Description:** `load_orders_snapshot()` queries `now - 1 day` to `now`. If run on Monday morning, Friday evening orders are missed.
 - **Fix:** Use a 3-day window to cover weekends, or make it configurable.
-> Comment:
+> Comment: Changed from `timedelta(days=1)` to `timedelta(days=3)` with comment explaining weekend coverage.
 
 ---
 
 ### #50 - [MEDIUM] Analytics: `_generated_at_for_date` pretends NY date is midnight UTC
-- [ ] Done
+- [x] Done
 - **File:** `analytics/portfolio_decision.py:68-70`
 - **Description:** Creates a `datetime` from a NY date string and sets timezone to UTC. This is semantically wrong -- a NY date should be midnight ET, not midnight UTC.
 - **Fix:** Use `ZoneInfo("America/New_York")` for the timezone.
-> Comment:
+> Comment: Changed `timezone.utc` to `ZoneInfo("America/New_York")` in `_generated_at_for_date`.
 
 ---
 
 ### #51 - [MEDIUM] Analytics: `stable_json_dumps` reimplemented in 5 modules
-- [ ] Done
+- [x] Done
 - **Files:** `analytics/risk_attribution.py:40`, `risk_attribution_rolling.py:21`, `regime_e1_schemas.py:26`, `schwab_readonly_schemas.py:40`, `slippage_model.py:108`
 - **Description:** Identical function copy-pasted across 5 files.
 - **Fix:** Extract to `analytics/util.py` and import from there.
-> Comment:
+> Comment: Added canonical `stable_json_dumps` to `analytics/util.py`. Updated `regime_e1_schemas`, `schwab_readonly_schemas`, `risk_attribution_rolling`, and `slippage_model` to import from util. `risk_attribution.py` kept its own version (has extra `normalize_payload` step).
 
 ---
 
 ### #52 - [MEDIUM] Execution: `_state_dir()` and `DEFAULT_STATE_DIR` duplicated in 3 files
-- [ ] Done
+- [x] Done
 - **Files:** `execution_v2/config_check.py:22-29`, `execution_v2/execution_main.py:145-154`, `execution_v2/state_machine.py:15,248-252`
 - **Description:** Three identical copies of `_state_dir()` with hardcoded `/root/avwap_r3k_scanner/state` default (droplet path, doesn't exist on Mac).
 - **Fix:** Extract to a shared module. Update default to derive from repo root.
-> Comment:
+> Comment: Created `execution_v2/state_helpers.py` with `state_dir()` and `DEFAULT_STATE_DIR` derived from repo root via `__file__`. All 3 files now import from there.
 
 ---
 
 ### #53 - [MEDIUM] Execution: `_resolve_execution_mode` duplicated in 2 files
-- [ ] Done
+- [x] Done
 - **Files:** `execution_v2/config_check.py:37-50`, `execution_v2/execution_main.py:161-180`
 - **Description:** Same logic duplicated with slight differences. Changes to one won't propagate.
 - **Fix:** Extract to single location.
-> Comment:
+> Comment: Added canonical `resolve_execution_mode()` to `execution_v2/state_helpers.py`. Both `config_check` and `execution_main` now import from there. `execution_main` wraps with logging.
 
 ---
 
 ### #54 - [MEDIUM] Execution: Naive timezone assumption in `classify_session_phase`
-- [ ] Done
+- [x] Done
 - **File:** `execution_v2/exits.py:94-107`
 - **Description:** When `ts.tzinfo is None`, the code replaces it with `NY_TZ`, assuming the naive datetime is Eastern. If it is actually UTC (from `datetime.utcnow()` -- see #10), session phase classification will be wrong.
 - **Fix:** Require timezone-aware datetimes; raise if naive.
-> Comment:
+> Comment: Changed from silently assuming NY timezone to raising `ValueError` if a naive datetime is passed.
 
 ---
 

@@ -18,15 +18,13 @@ from pathlib import Path
 
 from execution_v2 import live_gate
 
+from execution_v2.state_helpers import (  # noqa: E402
+    DEFAULT_STATE_DIR,
+    resolve_execution_mode as _resolve_execution_mode,
+    state_dir as _state_dir,
+)
+
 PAPER_BASE_URL = "https://paper-api.alpaca.markets"
-DEFAULT_STATE_DIR = "/root/avwap_r3k_scanner/state"
-
-
-def _state_dir() -> Path:
-    base = os.getenv("AVWAP_STATE_DIR", DEFAULT_STATE_DIR).strip()
-    if not base:
-        base = DEFAULT_STATE_DIR
-    return Path(base)
 
 
 def _normalize_base_url(url: str) -> str:
@@ -34,20 +32,6 @@ def _normalize_base_url(url: str) -> str:
     return url.strip().rstrip("/")
 
 
-def _resolve_execution_mode() -> str:
-    env_mode = os.getenv("EXECUTION_MODE")
-    dry_run_env = os.getenv("DRY_RUN", "0") == "1"
-    valid_modes = {"DRY_RUN", "PAPER_SIM", "LIVE", "ALPACA_PAPER", "SCHWAB_401K_MANUAL"}
-
-    if env_mode:
-        mode = env_mode.strip().upper()
-        if mode not in valid_modes:
-            return "DRY_RUN" if dry_run_env else "LIVE"
-        if mode != "DRY_RUN" and dry_run_env:
-            return "DRY_RUN"
-        return mode
-
-    return "DRY_RUN" if dry_run_env else "LIVE"
 
 
 def run_config_check(state_dir: str | None = None) -> tuple[bool, list[str]]:

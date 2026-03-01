@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import logging
 import re
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from strategies import raec_401k_coordinator
 from strategies import raec_401k_v3, raec_401k_v4, raec_401k_v5  # noqa: F401 — ensure registration
@@ -209,7 +212,7 @@ def _filter_universe(
         if symbol in allowed:
             filtered[symbol] = pct
         else:
-            print(f"Ignoring non-universe symbol: {symbol}")
+            logger.warning("Ignoring non-universe symbol: %s", symbol)
     return filtered
 
 
@@ -297,9 +300,7 @@ def main(argv: list[str] | None = None) -> int:
         fallback_cash_symbol=str(strategy_module.FALLBACK_CASH_SYMBOL),
     )
     state_path = strategy_module._state_path(repo_root)
-    state = {}
-    if state_path.exists():
-        state = json.loads(state_path.read_text())
+    state = strategy_module._load_state(state_path)
     state["book_id"] = strategy_module.BOOK_ID
     state["strategy_id"] = strategy_module.STRATEGY_ID
     state["last_known_allocations"] = allocations

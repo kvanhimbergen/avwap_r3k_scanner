@@ -141,17 +141,15 @@ def _write_portfolio_decision_latest(
         return False
 
 
+from execution_v2.state_helpers import (  # noqa: E402
+    DEFAULT_STATE_DIR,
+    resolve_execution_mode as _resolve_execution_mode_core,
+    state_dir as _state_dir,
+)
+
 PAPER_BASE_URL = "https://paper-api.alpaca.markets"
-DEFAULT_STATE_DIR = "/root/avwap_r3k_scanner/state"
 HEARTBEAT_FILENAME = "execution_heartbeat.json"
 ENTRY_REJECTIONS_MAX_SYMBOLS_DEFAULT = 50
-
-
-def _state_dir() -> Path:
-    base = os.getenv("AVWAP_STATE_DIR", DEFAULT_STATE_DIR).strip()
-    if not base:
-        base = DEFAULT_STATE_DIR
-    return Path(base)
 
 
 def _dry_run_ledger_path() -> Path:
@@ -160,24 +158,12 @@ def _dry_run_ledger_path() -> Path:
 
 def _resolve_execution_mode() -> str:
     env_mode = os.getenv("EXECUTION_MODE")
-    dry_run_env = os.getenv("DRY_RUN", "0") == "1"
-    valid_modes = {"DRY_RUN", "PAPER_SIM", "LIVE", "ALPACA_PAPER", "SCHWAB_401K_MANUAL"}
-
+    result = _resolve_execution_mode_core()
     if env_mode:
         mode = env_mode.strip().upper()
-        if mode not in valid_modes:
-            fallback = "DRY_RUN" if dry_run_env else "LIVE"
-            _log(f"WARNING: unknown EXECUTION_MODE={env_mode}; defaulting to {fallback}")
-            return fallback
-        if mode != "DRY_RUN" and dry_run_env:
-            _log(
-                f"EXECUTION_MODE={mode} but DRY_RUN=1; forcing DRY_RUN "
-                "(DRY_RUN overrides broker routing)"
-            )
-            return "DRY_RUN"
-        return mode
-
-    return "DRY_RUN" if dry_run_env else "LIVE"
+        if result != mode:
+            _log(f"WARNING: EXECUTION_MODE={env_mode} resolved to {result}")
+    return result
 
 
 def run_config_check(state_dir: str | None = None) -> tuple[bool, list[str]]:

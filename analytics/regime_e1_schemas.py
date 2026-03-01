@@ -23,8 +23,7 @@ class RegimeRecord:
     payload: dict[str, Any]
 
 
-def stable_json_dumps(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+from analytics.util import stable_json_dumps  # noqa: E402 — canonical location
 
 
 def build_regime_id(payload: dict[str, Any]) -> str:

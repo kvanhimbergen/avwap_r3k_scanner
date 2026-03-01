@@ -35,6 +35,7 @@ class SchwabReadonlyLiveAdapter:
         self.book_id = book_id
         self.account_hash = account_hash
         self.as_of_utc = as_of_utc
+        self._account_cache: dict | None = None
 
     @classmethod
     def from_config(
@@ -61,7 +62,9 @@ class SchwabReadonlyLiveAdapter:
         )
 
     def _get_account_data(self) -> dict:
-        """Fetch account data with positions from the Schwab API."""
+        """Fetch account data with positions from the Schwab API (cached per instance)."""
+        if self._account_cache is not None:
+            return self._account_cache
         resp = self.client.get_account(
             self.account_hash,
             fields=["positions"],
@@ -70,7 +73,8 @@ class SchwabReadonlyLiveAdapter:
             raise SchwabLiveAdapterError(
                 f"get_account failed: HTTP {resp.status_code}"
             )
-        return resp.json()
+        self._account_cache = resp.json()
+        return self._account_cache
 
     def load_balance_snapshot(self) -> SchwabBalanceSnapshot:
         data = self._get_account_data()
@@ -115,7 +119,7 @@ class SchwabReadonlyLiveAdapter:
 
     def load_orders_snapshot(self) -> SchwabOrdersSnapshot:
         now = datetime.now(tz=timezone.utc)
-        from_dt = now - timedelta(days=1)
+        from_dt = now - timedelta(days=3)  # 3 days to cover weekends
         resp = self.client.get_orders_for_account(
             self.account_hash,
             from_entered_datetime=from_dt,

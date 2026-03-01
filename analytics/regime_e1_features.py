@@ -7,6 +7,15 @@ from typing import Any, Iterable
 
 import pandas as pd
 
+from analytics.regime_utils import (
+    filter_as_of,
+    normalize_columns,
+    round_value,
+    series_tail,
+    symbol_history,
+    to_date_string,
+)
+
 DEFAULT_VOL_LOOKBACK = 20
 DEFAULT_DRAWDOWN_LOOKBACK = 63
 DEFAULT_TREND_SHORT_LOOKBACK = 50
@@ -58,7 +67,7 @@ class RegimeLookbacks:
 
 
 def _round(value: float, places: int = 6) -> float:
-    return round(float(value), places)
+    return round_value(value, places)
 
 
 def _env_positive_int(name: str, default: int, *, minimum: int = 1) -> int:
@@ -95,41 +104,11 @@ def _resolve_lookbacks() -> RegimeLookbacks:
     )
 
 
-def _normalize_columns(history: pd.DataFrame) -> pd.DataFrame:
-    cols = {col.lower(): col for col in history.columns}
-    date_col = cols.get("date")
-    symbol_col = cols.get("ticker") or cols.get("symbol")
-    close_col = cols.get("close")
-    if date_col is None or symbol_col is None or close_col is None:
-        raise ValueError("history missing required columns (date, ticker, close)")
-
-    df = history[[date_col, symbol_col, close_col]].copy()
-    df.columns = ["date", "symbol", "close"]
-    df["date"] = pd.to_datetime(df["date"], utc=False, errors="coerce").dt.normalize()
-    df["symbol"] = df["symbol"].astype(str).str.strip().str.upper()
-    df["close"] = pd.to_numeric(df["close"], errors="coerce")
-    df = df.dropna(subset=["date", "symbol", "close"])
-    return df
-
-
-def _to_date_string(value: pd.Timestamp) -> str:
-    return value.date().isoformat()
-
-
-def _filter_as_of(df: pd.DataFrame, ny_date: str) -> pd.DataFrame:
-    cutoff = pd.Timestamp(ny_date).normalize()
-    return df[df["date"] <= cutoff]
-
-
-def _symbol_history(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
-    subset = df[df["symbol"] == symbol].sort_values("date")
-    return subset
-
-
-def _series_tail(series: pd.Series, count: int) -> pd.Series:
-    if count <= 0:
-        return series.iloc[0:0]
-    return series.iloc[-count:]
+_normalize_columns = normalize_columns
+_to_date_string = to_date_string
+_filter_as_of = filter_as_of
+_symbol_history = symbol_history
+_series_tail = series_tail
 
 
 def _require_length(series: pd.Series, count: int, reason: str, reasons: list[str]) -> bool:

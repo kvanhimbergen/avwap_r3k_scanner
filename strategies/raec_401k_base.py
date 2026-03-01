@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import math
 import os
 from dataclasses import dataclass, field
@@ -12,6 +13,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from statistics import stdev
 from typing import Any, Iterable
+
+logger = logging.getLogger(__name__)
 
 from data.prices import PriceProvider, get_default_price_provider
 from execution_v2 import book_ids, book_router
@@ -261,13 +264,14 @@ class BaseRAECStrategy:
     # -- Cash / universe helpers ----------------------------------------------
 
     def _get_cash_symbol(self, provider: PriceProvider) -> str:
-        series = provider.get_daily_close_series("BIL")
+        series = provider.get_daily_close_series(self.FALLBACK_CASH_SYMBOL)
         if series:
-            return "BIL"
-        return self.FALLBACK_CASH_SYMBOL
+            return self.FALLBACK_CASH_SYMBOL
+        return "BIL"
 
     def _universe(self, cash_symbol: str) -> list[str]:
-        symbols = [sym for sym in self.DEFAULT_UNIVERSE if sym != "BIL"]
+        exclude = {cash_symbol, self.FALLBACK_CASH_SYMBOL}
+        symbols = [sym for sym in self.DEFAULT_UNIVERSE if sym not in exclude]
         symbols.append(cash_symbol)
         return symbols
 
@@ -671,6 +675,7 @@ class BaseRAECStrategy:
             )
             parsed = raec_401k_allocs.parse_schwab_positions_csv(csv_path)
         except Exception:
+            logger.warning("Failed to load CSV allocations", exc_info=True)
             return None
 
         filtered: dict[str, float] = {}

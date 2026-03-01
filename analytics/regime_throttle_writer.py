@@ -55,6 +55,24 @@ def _throttle_ledger_path(repo_root: Path, ny_date: str) -> Path:
     return repo_root / "ledger" / "PORTFOLIO_THROTTLE" / f"{ny_date}.jsonl"
 
 
+def _existing_regime_ids(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    ids: set[str] = set()
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+            rid = rec.get("regime_id")
+            if rid:
+                ids.add(rid)
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return ids
+
+
 def _append_record(path: Path, record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as handle:
@@ -106,6 +124,12 @@ def run_throttle_writer(
         "throttle": throttle,
     }
     path = _throttle_ledger_path(repo_root, ny_date)
+    if regime_id and regime_id in _existing_regime_ids(path):
+        return {
+            "status": "skipped",
+            "record": record,
+            "result": {"ledger_path": str(path), "records_written": 0, "skipped": 1},
+        }
     _append_record(path, record)
     return {
         "status": "written",

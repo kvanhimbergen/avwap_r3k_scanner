@@ -7,13 +7,14 @@ import pandas as pd
 from analytics.regime_e1_features import (
     RegimeFeatureResult,
     RegimeFeatureSet,
-    _normalize_columns,
-    _filter_as_of,
-    _round,
-    _series_tail,
-    _symbol_history,
-    _to_date_string,
     compute_regime_features,
+)
+from analytics.regime_utils import (
+    filter_as_of,
+    normalize_columns,
+    round_value,
+    series_tail,
+    symbol_history,
 )
 
 DEFAULT_E2_LOOKBACK = 63
@@ -24,8 +25,8 @@ def _credit_spread_z(
     df: pd.DataFrame, ny_date: str, lookback: int
 ) -> float:
     """HYG/LQD ratio z-score. Positive z = tight spreads = risk-on."""
-    hyg = _filter_as_of(_symbol_history(df, "HYG"), ny_date)
-    lqd = _filter_as_of(_symbol_history(df, "LQD"), ny_date)
+    hyg = filter_as_of(symbol_history(df, "HYG"), ny_date)
+    lqd = filter_as_of(symbol_history(df, "LQD"), ny_date)
     if hyg.empty or lqd.empty:
         return 0.0
     merged = pd.merge(
@@ -38,12 +39,12 @@ def _credit_spread_z(
     if len(merged) < lookback:
         return 0.0
     ratio = merged["close_hyg"] / merged["close_lqd"]
-    window = _series_tail(ratio, lookback)
+    window = series_tail(ratio, lookback)
     std = window.std(ddof=0)
     if std == 0:
         return 0.0
     z = (window.iloc[-1] - window.mean()) / std
-    return _round(z)
+    return round_value(z)
 
 
 def _relative_strength(
@@ -54,8 +55,8 @@ def _relative_strength(
     lookback: int,
 ) -> float:
     """20-day relative strength of *symbol* vs SPY (return difference)."""
-    sym = _filter_as_of(_symbol_history(df, symbol), ny_date)
-    spy = _filter_as_of(_symbol_history(df, spy_ticker), ny_date)
+    sym = filter_as_of(symbol_history(df, symbol), ny_date)
+    spy = filter_as_of(symbol_history(df, spy_ticker), ny_date)
     if sym.empty or spy.empty:
         return 0.0
     merged = pd.merge(
@@ -71,7 +72,7 @@ def _relative_strength(
     spy_close = merged["close_spy"]
     sym_ret = sym_close.iloc[-1] / sym_close.iloc[-lookback] - 1.0
     spy_ret = spy_close.iloc[-1] / spy_close.iloc[-lookback] - 1.0
-    return _round(sym_ret - spy_ret)
+    return round_value(sym_ret - spy_ret)
 
 
 def compute_e2_features(
@@ -90,10 +91,10 @@ def compute_e2_features(
     assert e1 is not None
 
     try:
-        df = _normalize_columns(history)
+        df = normalize_columns(history)
     except ValueError:
         return e1_result
-    df = _filter_as_of(df, ny_date)
+    df = filter_as_of(df, ny_date)
 
     credit_z = _credit_spread_z(df, ny_date, lookback)
     gld_rs = _relative_strength(df, "GLD", spy_ticker, ny_date, DEFAULT_RS_LOOKBACK)

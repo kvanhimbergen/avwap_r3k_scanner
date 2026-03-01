@@ -37,8 +37,7 @@ def format_value(value: Optional[Decimal]) -> Optional[str]:
     return _format_decimal(value, places=VALUE_PLACES)
 
 
-def stable_json_dumps(payload: dict) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+from analytics.util import stable_json_dumps  # noqa: E402 — canonical location
 
 
 def build_snapshot_id(payload: dict) -> str:

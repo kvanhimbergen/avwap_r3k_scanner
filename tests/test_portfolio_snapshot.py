@@ -120,7 +120,7 @@ def test_drawdown_and_volatility_deterministic() -> None:
     assert series[0]["volatility"] is None
     expected_returns = [0.1, -50.0 / 1100.0]
     mean = sum(expected_returns) / len(expected_returns)
-    variance = sum((value - mean) ** 2 for value in expected_returns) / len(expected_returns)
+    variance = sum((value - mean) ** 2 for value in expected_returns) / (len(expected_returns) - 1)
     expected_vol = variance**0.5
     assert series[1]["volatility"] == pytest.approx(expected_vol)
 

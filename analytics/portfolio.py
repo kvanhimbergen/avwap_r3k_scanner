@@ -262,10 +262,10 @@ def compute_drawdown(
 
 
 def _stddev(values: list[float]) -> float:
-    if not values:
+    if len(values) < 2:
         return 0.0
     mean = sum(values) / len(values)
-    variance = sum((value - mean) ** 2 for value in values) / len(values)
+    variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
     return math.sqrt(variance)
 
 

@@ -12,7 +12,7 @@ from typing import Iterable
 
 from utils.atomic_write import atomic_write_text
 
-DEFAULT_STATE_DIR = "/root/avwap_r3k_scanner/state"
+from execution_v2.state_helpers import DEFAULT_STATE_DIR, state_dir  # noqa: E402
 
 
 @dataclass
@@ -245,11 +245,7 @@ class ConsumedEntriesStore:
         self.save()
 
 
-def _state_dir() -> Path:
-    base = os.getenv("AVWAP_STATE_DIR", DEFAULT_STATE_DIR).strip()
-    if not base:
-        base = DEFAULT_STATE_DIR
-    return Path(base)
+_state_dir = state_dir
 
 
 def resolve_entry_fill_ts_utc(entry_fill_record) -> str | None:

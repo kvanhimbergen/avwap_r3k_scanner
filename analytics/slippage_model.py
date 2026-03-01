@@ -105,5 +105,4 @@ def _append_record(path: Path, record: dict[str, Any]) -> None:
         handle.write(_stable_json_dumps(record) + "\n")
 
 
-def _stable_json_dumps(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+from analytics.util import stable_json_dumps as _stable_json_dumps  # noqa: E402

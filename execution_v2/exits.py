@@ -93,7 +93,7 @@ class SessionPhase(str, Enum):
 
 def classify_session_phase(ts: datetime) -> SessionPhase:
     if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=NY_TZ)
+        raise ValueError("classify_session_phase requires a timezone-aware datetime")
     ts_ny = ts.astimezone(NY_TZ)
     clock = ts_ny.time()
     if time(9, 30) <= clock < time(9, 45):

@@ -6,6 +6,7 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -66,7 +67,7 @@ def _decision_id(*parts: str) -> str:
 
 
 def _generated_at_for_date(date_ny: str) -> str:
-    dt = datetime.fromisoformat(date_ny).replace(tzinfo=timezone.utc)
+    dt = datetime.fromisoformat(date_ny).replace(tzinfo=ZoneInfo("America/New_York"))
     return dt.isoformat()
 
 
