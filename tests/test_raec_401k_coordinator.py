@@ -1,35 +1,15 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from data.prices import FixturePriceProvider
+from helpers import linear_series as _linear_series, make_series as _make_series
 from strategies import raec_401k_coordinator, raec_401k_v3, raec_401k_v4, raec_401k_v5
-
-
-def _make_series(start: date, values: list[float]) -> list[tuple[date, float]]:
-    return [(start + timedelta(days=idx), value) for idx, value in enumerate(values)]
-
-
-def _linear_series(
-    *,
-    start: date,
-    base: float,
-    slope: float,
-    wiggle: float = 0.0,
-    n: int = 320,
-) -> list[tuple[date, float]]:
-    values: list[float] = []
-    for idx in range(n):
-        value = base + (slope * idx)
-        if wiggle:
-            value += wiggle if idx % 2 == 0 else -wiggle
-        values.append(max(1.0, value))
-    return _make_series(start, values)
 
 
 def _all_risk_on_provider() -> FixturePriceProvider:
@@ -354,14 +334,10 @@ def test_coordinator_partial_rebalance(tmp_path: Path) -> None:
     assert len(adapter.calls) == 2
 
 
-def test_coordinator_no_trades_posts_summary(tmp_path: Path) -> None:
-    """When no sub-strategy rebalances, a 'no trades today' message is posted."""
-    provider = _all_risk_on_provider()
-    asof_date = "2026-02-06"
+def _seed_at_target_allocs(tmp_path: Path, provider: FixturePriceProvider, asof_date: str = "2026-02-06") -> None:
+    """Pre-compute targets for each strategy and seed state at target (no rebalance needed)."""
     asof = raec_401k_v3._parse_date(asof_date)
     cash_symbol = "BIL"
-
-    # Pre-compute targets for each strategy and seed state at target
     for module in (raec_401k_v3, raec_401k_v4, raec_401k_v5):
         vti_series = module._sorted_series(provider.get_daily_close_series("VTI"), asof=asof)
         if module is raec_401k_v5:
@@ -371,7 +347,6 @@ def test_coordinator_no_trades_posts_summary(tmp_path: Path) -> None:
             signal = module._compute_anchor_signal(vti_series)
         fm = module._load_symbol_features(provider=provider, asof=asof, cash_symbol=cash_symbol)
         targets = module._targets_for_regime(signal=signal, feature_map=fm, cash_symbol=cash_symbol)
-
         state_path = tmp_path / "state" / "strategies" / module.BOOK_ID / f"{module.STRATEGY_ID}.json"
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps({
@@ -380,9 +355,15 @@ def test_coordinator_no_trades_posts_summary(tmp_path: Path) -> None:
             "last_known_allocations": targets,
         }))
 
+
+def test_coordinator_no_trades_posts_summary(tmp_path: Path) -> None:
+    """When no sub-strategy rebalances, a 'no trades today' message is posted."""
+    provider = _all_risk_on_provider()
+    _seed_at_target_allocs(tmp_path, provider)
+
     adapter = _TrackingAdapter()
     result = raec_401k_coordinator.run_coordinator(
-        asof_date=asof_date,
+        asof_date="2026-02-06",
         repo_root=tmp_path,
         price_provider=provider,
         dry_run=False,
@@ -398,31 +379,11 @@ def test_coordinator_no_trades_posts_summary(tmp_path: Path) -> None:
 def test_coordinator_no_trades_skipped_on_dry_run(tmp_path: Path) -> None:
     """Dry run should NOT post the 'no trades' message."""
     provider = _all_risk_on_provider()
-    asof_date = "2026-02-06"
-    asof = raec_401k_v3._parse_date(asof_date)
-    cash_symbol = "BIL"
-
-    for module in (raec_401k_v3, raec_401k_v4, raec_401k_v5):
-        vti_series = module._sorted_series(provider.get_daily_close_series("VTI"), asof=asof)
-        if module is raec_401k_v5:
-            qqq_series = module._sorted_series(provider.get_daily_close_series("QQQ"), asof=asof)
-            signal = module._compute_anchor_signal(vti_series, qqq_series)
-        else:
-            signal = module._compute_anchor_signal(vti_series)
-        fm = module._load_symbol_features(provider=provider, asof=asof, cash_symbol=cash_symbol)
-        targets = module._targets_for_regime(signal=signal, feature_map=fm, cash_symbol=cash_symbol)
-
-        state_path = tmp_path / "state" / "strategies" / module.BOOK_ID / f"{module.STRATEGY_ID}.json"
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(json.dumps({
-            "last_eval_date": asof_date,
-            "last_regime": signal.regime,
-            "last_known_allocations": targets,
-        }))
+    _seed_at_target_allocs(tmp_path, provider)
 
     adapter = _TrackingAdapter()
     result = raec_401k_coordinator.run_coordinator(
-        asof_date=asof_date,
+        asof_date="2026-02-06",
         repo_root=tmp_path,
         price_provider=provider,
         dry_run=True,

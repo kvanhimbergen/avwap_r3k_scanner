@@ -1,12 +1,38 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
 
 np = pytest.importorskip("numpy")
 pd = pytest.importorskip("pandas")
+
+
+# ── Shared RAEC test helpers ────────────────────────────────────────────────
+
+def make_series(start: date, values: list[float]) -> list[tuple[date, float]]:
+    """Build a (date, price) series from a start date and value list."""
+    return [(start + timedelta(days=idx), value) for idx, value in enumerate(values)]
+
+
+def linear_series(
+    *,
+    start: date,
+    base: float,
+    slope: float,
+    wiggle: float = 0.0,
+    n: int = 320,
+) -> list[tuple[date, float]]:
+    """Generate a trending price series with optional zigzag noise."""
+    values: list[float] = []
+    for idx in range(n):
+        value = base + (slope * idx)
+        if wiggle:
+            value += wiggle if idx % 2 == 0 else -wiggle
+        values.append(max(1.0, value))
+    return make_series(start, values)
 
 
 FORBIDDEN_KEYS = (

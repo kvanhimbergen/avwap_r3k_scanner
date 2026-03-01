@@ -75,6 +75,40 @@ def _hash_payload(payload: dict[str, Any]) -> str:
     return hashlib.sha256(packed.encode("utf-8")).hexdigest()[:20]
 
 
+def source_fingerprint(settings: Settings) -> str:
+    """Cheap fingerprint of source files (counts + mtimes) without reading contents.
+
+    Call this before ``build_readmodels`` to short-circuit when nothing changed.
+    """
+    parts: list[str] = []
+    glob_patterns = [
+        settings.ledger_dir / "PORTFOLIO_DECISIONS" / "*.jsonl",
+        settings.ledger_dir / "STRATEGY_SIGNALS" / S2_STRATEGY_ID / "*.jsonl",
+        settings.ledger_dir / "PORTFOLIO_RISK_CONTROLS" / "*.jsonl",
+        settings.ledger_dir / "PORTFOLIO_THROTTLE" / "*.jsonl",
+        settings.ledger_dir / "REGIME_E1" / "*.jsonl",
+        settings.ledger_dir / "RAEC_REBALANCE" / "**" / "*.jsonl",
+        settings.ledger_dir / "EXECUTION_SLIPPAGE" / "*.jsonl",
+        settings.ledger_dir / "SCHWAB_401K_MANUAL" / "*.jsonl",
+        settings.ledger_dir / "ALPACA_PAPER" / "*.jsonl",
+        settings.ledger_dir / "S2_ALPACA" / "*.jsonl",
+    ]
+    for pattern in glob_patterns:
+        files = sorted(pattern.parent.glob(pattern.name)) if pattern.parent.exists() else []
+        count = len(files)
+        mtime = files[-1].stat().st_mtime if files else 0.0
+        parts.append(f"{pattern}:{count}:{mtime}")
+    # Also include scan CSV and backtest parquets
+    csv_path = settings.scan_candidates_csv
+    if csv_path.exists():
+        parts.append(f"scan:{csv_path.stat().st_mtime}")
+    bt_dir = settings.backtests_dir
+    if bt_dir.exists():
+        bt_files = sorted(bt_dir.glob("*.parquet"))
+        parts.append(f"bt:{len(bt_files)}:{bt_files[-1].stat().st_mtime if bt_files else 0}")
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:20]
+
+
 def _ensure_columns(rows: list[dict[str, Any]], columns: list[str]) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame(columns=columns)
@@ -87,9 +121,8 @@ def _ensure_columns(rows: list[dict[str, Any]], columns: list[str]) -> pd.DataFr
 
 def _write_table(conn, table_name: str, frame: pd.DataFrame) -> None:
     view_name = f"_tmp_{table_name}"
-    conn.execute(f"DROP TABLE IF EXISTS {table_name}")
     conn.register(view_name, frame)
-    conn.execute(f"CREATE TABLE {table_name} AS SELECT * FROM {view_name}")
+    conn.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM {view_name}")
     conn.unregister(view_name)
 
 

@@ -207,8 +207,9 @@ def get_s2_signals(
         clauses.append("selected = ?")
         params.append(bool(selected))
     if reason_code:
-        clauses.append("reason_codes_json LIKE ?")
-        params.append(f"%{reason_code}%")
+        escaped = reason_code.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        clauses.append("reason_codes_json LIKE ? ESCAPE '\\'")
+        params.append(f"%{escaped}%")
 
     where = " WHERE " + " AND ".join(clauses)
     rows = _rows(
@@ -335,57 +336,51 @@ def get_strategy_performance(
         order_params.append(book_id)
     order_where = (" WHERE " + " AND ".join(order_clauses)) if order_clauses else ""
 
-    # Get distinct strategy_ids from order events
-    swing_strategy_rows = _rows(
+    # Batch-fetch all fills and buy counts to avoid N+1 per-strategy queries
+    all_fills = _rows(
         conn,
         f"""
-        SELECT DISTINCT strategy_id
+        SELECT strategy_id, symbol, side, filled_qty, filled_avg_price, filled_at,
+               stop_loss, date_ny, status
         FROM alpaca_order_events
         {order_where}
-        ORDER BY strategy_id
+          {"AND" if order_clauses else "WHERE"} filled_qty > 0
+          AND status IN ('filled', 'FILLED', 'partially_filled', 'PARTIALLY_FILLED')
+        ORDER BY strategy_id, filled_at ASC NULLS LAST, date_ny ASC
         """,
         order_params,
     )
 
-    for row in swing_strategy_rows:
-        sid = row["strategy_id"]
-        if not sid:
-            continue
+    all_buy_counts = _rows(
+        conn,
+        f"""
+        SELECT
+            strategy_id,
+            COUNT(*) AS total_buys,
+            SUM(CASE WHEN filled_qty > 0 AND status IN ('filled', 'FILLED', 'partially_filled', 'PARTIALLY_FILLED') THEN 1 ELSE 0 END) AS filled_buys
+        FROM alpaca_order_events
+        {order_where}
+          {"AND" if order_clauses else "WHERE"} side IN ('buy', 'BUY')
+        GROUP BY strategy_id
+        """,
+        order_params,
+    )
 
-        # Get filled buys and sells for this strategy
-        sid_clauses = list(order_clauses) + ["strategy_id = ?"]
-        sid_params = list(order_params) + [sid]
-        sid_where = " WHERE " + " AND ".join(sid_clauses)
+    # Group fills by strategy_id
+    fills_by_sid: dict[str, list[dict]] = {}
+    for f in all_fills:
+        sid = f.get("strategy_id") or ""
+        if sid:
+            fills_by_sid.setdefault(sid, []).append(f)
 
-        fills = _rows(
-            conn,
-            f"""
-            SELECT symbol, side, filled_qty, filled_avg_price, filled_at,
-                   stop_loss, date_ny, status
-            FROM alpaca_order_events
-            {sid_where}
-              AND filled_qty > 0
-              AND status IN ('filled', 'FILLED', 'partially_filled', 'PARTIALLY_FILLED')
-            ORDER BY filled_at ASC NULLS LAST, date_ny ASC
-            """,
-            sid_params,
-        )
+    buy_counts_by_sid = {
+        r["strategy_id"]: (r["total_buys"] or 0, r["filled_buys"] or 0)
+        for r in all_buy_counts if r.get("strategy_id")
+    }
 
-        # Count total buy orders and filled buy orders for fill rate
-        total_buy_rows = _rows(
-            conn,
-            f"""
-            SELECT
-                COUNT(*) AS total_buys,
-                SUM(CASE WHEN filled_qty > 0 AND status IN ('filled', 'FILLED', 'partially_filled', 'PARTIALLY_FILLED') THEN 1 ELSE 0 END) AS filled_buys
-            FROM alpaca_order_events
-            {sid_where}
-              AND side IN ('buy', 'BUY')
-            """,
-            sid_params,
-        )
-        total_buys = total_buy_rows[0]["total_buys"] if total_buy_rows else 0
-        filled_buys = total_buy_rows[0]["filled_buys"] if total_buy_rows else 0
+    for sid in sorted(fills_by_sid.keys() | buy_counts_by_sid.keys()):
+        fills = fills_by_sid.get(sid, [])
+        total_buys, filled_buys = buy_counts_by_sid.get(sid, (0, 0))
 
         # Pair entries (buy fills) with exits (sell fills) by symbol + time ordering
         buys_by_symbol: dict[str, list[dict]] = {}

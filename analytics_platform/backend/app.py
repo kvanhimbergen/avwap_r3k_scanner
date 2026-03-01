@@ -15,7 +15,7 @@ from analytics_platform.backend.api import queries
 from analytics_platform.backend.config import Settings
 from analytics_platform.backend.db import connect_ro
 from analytics_platform.backend.models import ApiEnvelope, BuildResult, utc_now_iso
-from analytics_platform.backend.readmodels.build_readmodels import build_readmodels
+from analytics_platform.backend.readmodels.build_readmodels import build_readmodels, source_fingerprint
 from analytics_platform.backend.trade_log_db import TradeLogStore
 
 
@@ -32,21 +32,34 @@ class AnalyticsRuntime:
         self.refresh_error: str | None = None
         self.refresh_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
+        self._last_source_fp: str | None = None
+        self._consecutive_failures: int = 0
 
     async def refresh_once(self) -> None:
         async with self._lock:
             try:
+                fp = await asyncio.to_thread(source_fingerprint, self.settings)
+                if fp == self._last_source_fp:
+                    return  # nothing changed on disk
                 result = await asyncio.to_thread(build_readmodels, self.settings)
             except Exception as exc:  # noqa: BLE001 - fail-open service
                 self.refresh_error = str(exc)
+                self._consecutive_failures += 1
                 return
             self.build_result = result
             self.refresh_error = None
+            self._last_source_fp = fp
+            self._consecutive_failures = 0
 
     async def refresh_loop(self) -> None:
         while True:
             await self.refresh_once()
-            await asyncio.sleep(self.settings.refresh_seconds)
+            # Exponential backoff on consecutive failures (cap at 5 min)
+            if self._consecutive_failures > 0:
+                delay = min(self.settings.refresh_seconds * (2 ** self._consecutive_failures), 300)
+            else:
+                delay = self.settings.refresh_seconds
+            await asyncio.sleep(delay)
 
 
 @asynccontextmanager
@@ -62,6 +75,9 @@ async def _lifespan(app: FastAPI):
             runtime.refresh_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await runtime.refresh_task
+        trade_log: TradeLogStore | None = getattr(app.state, "trade_log", None)
+        if trade_log is not None:
+            trade_log.close()
 
 
 def _envelope(runtime: AnalyticsRuntime, data: dict | list) -> dict:

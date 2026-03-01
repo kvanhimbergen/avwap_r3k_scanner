@@ -9,14 +9,16 @@ from execution_v2.config_types import EntryIntent
 from execution_v2.strategy_registry import DEFAULT_STRATEGY_ID
 
 
+_FIXED_TS = datetime(2026, 1, 15, 14, 30, 0, tzinfo=timezone.utc).timestamp()
+
+
 def _intent(symbol: str, qty: int = 10, price: float = 10.0) -> EntryIntent:
-    now = datetime.now(tz=timezone.utc).timestamp()
     return EntryIntent(
         strategy_id=DEFAULT_STRATEGY_ID,
         symbol=symbol,
         pivot_level=1.0,
-        boh_confirmed_at=now,
-        scheduled_entry_at=now,
+        boh_confirmed_at=_FIXED_TS,
+        scheduled_entry_at=_FIXED_TS,
         size_shares=qty,
         stop_loss=9.0,
         take_profit=11.0,
@@ -165,7 +167,7 @@ def test_phase_c_disabled_keeps_live_behavior(monkeypatch, tmp_path) -> None:
 
 def test_allowlist_blocks_symbol_in_live(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("AVWAP_STATE_DIR", str(tmp_path))
-    today = datetime.now(tz=timezone.utc).date().isoformat()
+    today = "2026-01-15"
     ledger_path = live_gate.live_ledger_path(tmp_path, today)
     ledger = live_gate.LiveLedger.initialize(str(ledger_path), today)
     ledger.save()
@@ -189,10 +191,10 @@ def test_allowlist_blocks_symbol_in_live(monkeypatch, tmp_path) -> None:
 
 def test_caps_block_orders_and_notional(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("AVWAP_STATE_DIR", str(tmp_path))
-    today = datetime.now(tz=timezone.utc).date().isoformat()
+    today = "2026-01-15"
     ledger_path = live_gate.live_ledger_path(tmp_path, today)
     ledger = live_gate.LiveLedger.initialize(str(ledger_path), today)
-    ledger.add_entry("order-1", "AAPL", 1000.0, datetime.now(tz=timezone.utc).isoformat())
+    ledger.add_entry("order-1", "AAPL", 1000.0, "2026-01-15T14:30:00+00:00")
     ledger.save()
     caps = live_gate.CapsConfig(
         max_orders_per_day=1,
@@ -214,7 +216,7 @@ def test_caps_block_orders_and_notional(monkeypatch, tmp_path) -> None:
 
 def test_caps_block_positions(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("AVWAP_STATE_DIR", str(tmp_path))
-    today = datetime.now(tz=timezone.utc).date().isoformat()
+    today = "2026-01-15"
     ledger_path = live_gate.live_ledger_path(tmp_path, today)
     ledger = live_gate.LiveLedger.initialize(str(ledger_path), today)
     ledger.save()

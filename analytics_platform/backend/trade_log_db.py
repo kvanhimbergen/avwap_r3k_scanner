@@ -155,9 +155,12 @@ class TradeLogStore:
                 ],
             )
 
-        return {**trade, "exit_price": exit_price, "exit_date": exit_data.get("exit_date"),
-                "exit_reason": exit_data.get("exit_reason", "manual"),
-                "r_multiple": r_multiple, "pnl_dollars": pnl_dollars, "status": "closed"}
+            # Re-read from DB to return the actual persisted state
+            updated = conn.execute(
+                "SELECT * FROM trade_log WHERE id = ?", [trade_id]
+            ).fetchone()
+            cols = [d[0] for d in conn.description]
+        return dict(zip(cols, updated))
 
     def list_trades(
         self,

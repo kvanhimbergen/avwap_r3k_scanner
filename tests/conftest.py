@@ -78,6 +78,13 @@ if repo_root_str not in sys.path:
 
 
 def _ensure_requests_session() -> None:
+    """Workaround for schwab-py shipping a stray ``tests/`` package into site-packages.
+
+    When schwab-py's ``tests/`` shadows this repo's ``tests/`` dir, ``import requests``
+    can resolve to a broken stub.  This reload fallback is still needed after every
+    ``pip install schwab-py`` until the upstream package is fixed.
+    See Known Gotchas in MEMORY.md / CLAUDE.md for cleanup steps.
+    """
     requests_mod = importlib.import_module("requests")
     if hasattr(requests_mod, "Session"):
         return

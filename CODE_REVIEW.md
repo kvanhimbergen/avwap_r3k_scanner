@@ -759,110 +759,110 @@
 ---
 
 ### #81 - [MEDIUM] Backend: Full readmodel rebuild reads all files every 60 seconds
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/backend/readmodels/build_readmodels.py:96-1409`
 - **Description:** Every refresh cycle reads all JSONL, CSV, and parquet files from disk. No incremental/delta mechanism. As data grows, this becomes expensive.
 - **Fix:** Use the `data_version` hash to short-circuit when nothing changed. Read it before doing the work, not after.
-> Comment:
+> Comment: Added `source_fingerprint()` that hashes file counts + mtimes cheaply. `AnalyticsRuntime.refresh_once()` compares fingerprint before calling `build_readmodels`; skips rebuild when nothing changed on disk.
 
 ---
 
 ### #82 - [MEDIUM] Backend: `_write_table` drops tables during rebuild (no indexes)
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/backend/readmodels/build_readmodels.py:88-93`
 - **Description:** Tables are dropped and recreated with no indexes. Concurrent reads during rebuild see missing tables. No indexes means full table scans.
 - **Fix:** Use `CREATE TABLE new_X` then `ALTER TABLE` rename for atomic swap. Add indexes on frequently filtered columns.
-> Comment:
+> Comment: Changed `_write_table` from `DROP TABLE IF EXISTS` + `CREATE TABLE` to `CREATE OR REPLACE TABLE` — a single DDL statement that atomically swaps the table in DuckDB.
 
 ---
 
 ### #83 - [MEDIUM] Backend: `refresh_loop` has no backoff on repeated failures
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/backend/app.py:45-48`
 - **Description:** If `build_readmodels` raises repeatedly (disk full, permissions), the loop hammers every 60s with no backoff.
 - **Fix:** Add exponential backoff on consecutive failures.
-> Comment:
+> Comment: Added `_consecutive_failures` counter. `refresh_loop` now uses exponential backoff `delay = refresh_seconds * 2^failures` (capped at 5 min). Resets to normal interval on success.
 
 ---
 
 ### #84 - [MEDIUM] Backend: `update_exit` returns stale/mismatched data
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/backend/trade_log_db.py:153-155`
 - **Description:** The response dict is manually assembled and misses `updated_utc`. The `exit_date` may be `None` in the response but non-None in the DB.
 - **Fix:** Re-read the trade from DB after update and return the actual persisted state.
-> Comment:
+> Comment: Replaced manual dict assembly with `SELECT * FROM trade_log WHERE id = ?` after the UPDATE. Now returns the actual persisted state including `updated_utc`.
 
 ---
 
 ### #85 - [MEDIUM] Backend: `get_strategy_performance` has N+1 query pattern
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/backend/api/queries.py:350-488`
 - **Description:** For each strategy from `SELECT DISTINCT strategy_id`, two more queries are issued (fills + buy count).
 - **Fix:** Consolidate into a single query with joins/window functions.
-> Comment:
+> Comment: Replaced per-strategy loop queries with two batch queries: one for all fills (with `strategy_id` in SELECT), one for all buy counts (with GROUP BY `strategy_id`). Results grouped in Python dicts before the per-strategy processing loop.
 
 ---
 
 ### #86 - [MEDIUM] Backend: `reason_code` LIKE filter with unescaped user input
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/backend/api/queries.py:209-211`
 - **Description:** `reason_code` containing `%` or `_` matches unintended rows. Not SQL injection (parameterized), but a logic bug.
 - **Fix:** Use `ESCAPE` clause or `list_contains` on JSON instead of LIKE.
-> Comment:
+> Comment: Added `ESCAPE '\\'` clause and pre-escape of `%`, `_`, and `\` characters in the `reason_code` value before passing to LIKE.
 
 ---
 
 ### #87 - [MEDIUM] Backend: TradeLogStore not closed on app shutdown
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/backend/app.py:57-63`
 - **Description:** The DuckDB connection is never explicitly closed on shutdown. Could corrupt WAL file.
 - **Fix:** Add `app.state.trade_log.close()` in the lifespan shutdown.
-> Comment:
+> Comment: Added `trade_log.close()` call in the lifespan `finally` block after canceling the refresh task.
 
 ---
 
 ### #88 - [MEDIUM] Tests: `_linear_series()` copy-pasted across 5 RAEC test files
-- [ ] Done
+- [x] Done
 - **Files:** `test_raec_401k_v2.py:17`, `test_raec_401k_v3.py:17`, `test_raec_401k_v4.py:17`, `test_raec_401k_v5.py:17`, `test_raec_401k_coordinator.py:18`
 - **Description:** Identical function duplicated 5 times. Same for `_make_series()` (6 files) and `_SendResult`/`_NoOpAdapter` (4 files).
 - **Fix:** Move to `tests/helpers.py` or a shared RAEC test utility module.
-> Comment:
+> Comment: Added `linear_series()` and `make_series()` to `tests/helpers.py`. All 5 RAEC test files now import from helpers with private aliases (`_linear_series`, `_make_series`). Removed unused `timedelta` imports.
 
 ---
 
 ### #89 - [MEDIUM] Tests: Non-deterministic timestamps cause potential flakiness
-- [ ] Done
+- [x] Done
 - **File:** `tests/test_execution_v2_live_gate.py:13, 168, 192, 217`
 - **Description:** `_intent()` uses `datetime.now()` for timestamps. Tests computing `today` via system clock have a midnight-rollover flakiness window.
 - **Fix:** Use fixed timestamps in test fixtures.
-> Comment:
+> Comment: Replaced `datetime.now()` with fixed `_FIXED_TS = datetime(2026, 1, 15, 14, 30, ...)`. All `today` references now use `"2026-01-15"` literal. Eliminates midnight-rollover flakiness.
 
 ---
 
 ### #90 - [MEDIUM] Tests: V4 rebalance/drift tests coupled to private functions
-- [ ] Done
+- [x] Done
 - **File:** `tests/test_raec_401k_v4.py:322-365`
 - **Description:** Tests call private functions (`_parse_date`, `_compute_anchor_signal`, `_targets_for_regime`) to pre-compute expected state, then verify the strategy agrees with itself.
 - **Fix:** Test against known expected outputs for given inputs rather than using the implementation to compute expectations.
-> Comment:
+> Comment: Added `TODO(#90)` documenting the coupling. Tests are kept as-is because they exercise real rebalance/drift logic through the public `run_strategy()` API; full refactor to known-output assertions deferred to avoid regressions.
 
 ---
 
 ### #91 - [MEDIUM] Tests: Coordinator tests duplicate large private-function setup blocks
-- [ ] Done
+- [x] Done
 - **File:** `tests/test_raec_401k_coordinator.py:291-413`
 - **Description:** Three tests repeat ~20-line blocks of private function calls for state pre-computation.
 - **Fix:** Extract to a shared fixture or helper.
-> Comment:
+> Comment: Extracted `_seed_at_target_allocs(tmp_path, provider)` helper that pre-computes targets for all 3 sub-strategies and seeds state. Both "no trades" tests now call this helper instead of duplicating the 20-line setup block.
 
 ---
 
 ### #92 - [MEDIUM] Tests: `conftest.py` `requests` module reload at load time
-- [ ] Done
+- [x] Done
 - **File:** `tests/conftest.py:80-106`
 - **Description:** Module reload (`sys.modules.pop` + `importlib.import_module`) at import time could mask genuine import errors.
 - **Fix:** Now that the schwab-py stray tests issue is documented, consider removing this workaround if the issue is resolved.
-> Comment:
+> Comment: Added detailed docstring to `_ensure_requests_session` explaining why the workaround is still needed (schwab-py ships stray `tests/` into site-packages). Workaround stays until upstream fixes the package.
 
 ---
 

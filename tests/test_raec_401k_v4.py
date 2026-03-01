@@ -1,34 +1,14 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from data.prices import FixturePriceProvider
+from helpers import linear_series as _linear_series, make_series as _make_series
 from strategies import raec_401k_v3, raec_401k_v4
-
-
-def _make_series(start: date, values: list[float]) -> list[tuple[date, float]]:
-    return [(start + timedelta(days=idx), value) for idx, value in enumerate(values)]
-
-
-def _linear_series(
-    *,
-    start: date,
-    base: float,
-    slope: float,
-    wiggle: float = 0.0,
-    n: int = 320,
-) -> list[tuple[date, float]]:
-    values: list[float] = []
-    for idx in range(n):
-        value = base + (slope * idx)
-        if wiggle:
-            value += wiggle if idx % 2 == 0 else -wiggle
-        values.append(max(1.0, value))
-    return _make_series(start, values)
 
 
 def _risk_on_provider() -> FixturePriceProvider:
@@ -315,6 +295,10 @@ def test_transition_structure(tmp_path: Path) -> None:
 
 # ---------------------------------------------------------------------------
 # Test: daily rebalance trigger
+# TODO(#90): These tests use private functions (_parse_date, _compute_anchor_signal,
+# _targets_for_regime, etc.) to pre-compute state. Ideally test against known
+# expected outputs for given inputs. Kept as-is because the tests exercise real
+# rebalance logic and refactoring risks regressions.
 # ---------------------------------------------------------------------------
 
 def test_daily_rebalance_trigger(tmp_path: Path) -> None:
