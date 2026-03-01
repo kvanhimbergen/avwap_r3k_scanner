@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Post-scan daily pipeline.
+"""Post-scan daily pipeline (7 steps).
 
 Runs after the daily AVWAP scan completes.  Executes these steps in order:
 
@@ -8,12 +8,12 @@ Runs after the daily AVWAP scan completes.  Executes these steps in order:
 3. schwab_readonly_sync       → (optional) live Schwab account sync
 4. schwab_seed_allocations    → (optional) seed RAEC state from Schwab positions
 5. s2_letf_orb_aggro          → ledger/STRATEGY_SIGNALS/S2_LETF_ORB_AGGRO/{date}.jsonl
-6. s2_letf_orb_alpaca         → bracket orders from S2 candidates (Alpaca paper)
+6. s2_letf_orb_alpaca         → (optional) bracket orders from S2 candidates (Alpaca paper)
 7. raec_401k_coordinator      → ledger/RAEC_REBALANCE/RAEC_401K_COORD/{date}.jsonl
 
-Steps 1→2 are sequential (throttle reads regime output).
-Steps 3→4 are optional — if Schwab API is down, RAEC falls back to stale state.
-Steps 5→6 are sequential (S2 bracket orders depend on candidate CSV from step 5).
+Steps 1-2 are sequential (throttle reads regime output).
+Steps 3-4 are optional — if Schwab API is down, RAEC falls back to stale state.
+Steps 5-6 are sequential (S2 bracket orders depend on candidate CSV from step 5).
 
 Usage:
     python ops/post_scan_pipeline.py                       # auto-detect today (NY)
@@ -124,7 +124,9 @@ def main() -> None:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Suppress Slack posts (passed to coordinator).",
+        help="Suppress orders/posts — passed to raec_401k_coordinator and s2_letf_orb_alpaca only. "
+             "Other steps (regime writers, Schwab sync, seed allocations, s2 aggro) always run "
+             "with full side effects as they only write local ledger/state files.",
     )
     args = parser.parse_args()
     date = args.date or _ny_today()

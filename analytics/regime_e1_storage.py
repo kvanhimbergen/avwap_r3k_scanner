@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from analytics.regime_e1_schemas import (
     RECORD_TYPE_SIGNAL,
@@ -35,7 +38,11 @@ def _load_existing_ids(path: Path) -> set[str]:
             line = line.strip()
             if not line:
                 continue
-            data = json.loads(line)
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                logger.warning("Skipping malformed JSON line in %s", path)
+                continue
             record_type = data.get("record_type")
             if record_type not in {RECORD_TYPE_SIGNAL, RECORD_TYPE_SKIPPED}:
                 continue

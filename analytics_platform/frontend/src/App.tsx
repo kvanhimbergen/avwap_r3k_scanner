@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Layout } from "./components/Layout";
 import { Skeleton } from "./components/Skeleton";
 
@@ -64,81 +65,81 @@ export function App() {
         <Route
           path="/"
           element={
-            <Suspense fallback={<PageFallback />}>
+            <ErrorBoundary><Suspense fallback={<PageFallback />}>
               <CommandCenter />
-            </Suspense>
+            </Suspense></ErrorBoundary>
           }
         />
         <Route
           path="/strategies"
           element={
-            <Suspense fallback={<PageFallback />}>
+            <ErrorBoundary><Suspense fallback={<PageFallback />}>
               <StrategyRoster />
-            </Suspense>
+            </Suspense></ErrorBoundary>
           }
         />
         <Route
           path="/strategies/:id"
           element={
-            <Suspense fallback={<PageFallback />}>
+            <ErrorBoundary><Suspense fallback={<PageFallback />}>
               <StrategyTearsheet />
-            </Suspense>
+            </Suspense></ErrorBoundary>
           }
         />
         <Route
           path="/trade"
           element={
-            <Suspense fallback={<PageFallback />}>
+            <ErrorBoundary><Suspense fallback={<PageFallback />}>
               <TradePage />
-            </Suspense>
+            </Suspense></ErrorBoundary>
           }
         />
         <Route
           path="/lab"
           element={
-            <Suspense fallback={<PageFallback />}>
+            <ErrorBoundary><Suspense fallback={<PageFallback />}>
               <StrategyLab />
-            </Suspense>
+            </Suspense></ErrorBoundary>
           }
         />
         <Route
           path="/blotter"
           element={
-            <Suspense fallback={<PageFallback />}>
+            <ErrorBoundary><Suspense fallback={<PageFallback />}>
               <BlotterPage />
-            </Suspense>
+            </Suspense></ErrorBoundary>
           }
         />
         <Route
           path="/performance"
           element={
-            <Suspense fallback={<PageFallback />}>
+            <ErrorBoundary><Suspense fallback={<PageFallback />}>
               <PerformancePage />
-            </Suspense>
+            </Suspense></ErrorBoundary>
           }
         />
         <Route
           path="/risk"
           element={
-            <Suspense fallback={<PageFallback />}>
+            <ErrorBoundary><Suspense fallback={<PageFallback />}>
               <RiskPage />
-            </Suspense>
+            </Suspense></ErrorBoundary>
           }
         />
         <Route
           path="/scan"
           element={
-            <Suspense fallback={<PageFallback />}>
+            <ErrorBoundary><Suspense fallback={<PageFallback />}>
               <ScanPage />
-            </Suspense>
+            </Suspense></ErrorBoundary>
           }
         />
         <Route
           path="/trade-log"
           element={
-            <Suspense fallback={<PageFallback />}>
+            <ErrorBoundary><Suspense fallback={<PageFallback />}>
               <TradeLogPage />
-            </Suspense>
+            </Suspense></ErrorBoundary>
           }
         />
         <Route
@@ -148,17 +149,17 @@ export function App() {
         <Route
           path="/ops/schwab"
           element={
-            <Suspense fallback={<PageFallback />}>
+            <ErrorBoundary><Suspense fallback={<PageFallback />}>
               <SchwabAccountPage />
-            </Suspense>
+            </Suspense></ErrorBoundary>
           }
         />
         <Route
           path="/ops/system"
           element={
-            <Suspense fallback={<PageFallback />}>
+            <ErrorBoundary><Suspense fallback={<PageFallback />}>
               <SystemPage />
-            </Suspense>
+            </Suspense></ErrorBoundary>
           }
         />
 

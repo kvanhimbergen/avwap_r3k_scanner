@@ -306,10 +306,11 @@ def test_transition_structure(tmp_path: Path) -> None:
         price_provider=provider,
         dry_run=True,
     )
-    if result.regime == "TRANSITION":
-        assert round(sum(result.targets.values()), 1) == 100.0
-        cash_pct = result.targets.get("BIL", 0.0)
-        assert cash_pct >= 14.0  # 15% floor with rounding tolerance
+    if result.regime != "TRANSITION":
+        pytest.skip(f"Synthetic data produced regime={result.regime}, not TRANSITION")
+    assert round(sum(result.targets.values()), 1) == 100.0
+    cash_pct = result.targets.get("BIL", 0.0)
+    assert cash_pct >= 14.0  # 15% floor with rounding tolerance
 
 
 # ---------------------------------------------------------------------------

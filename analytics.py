@@ -18,7 +18,10 @@ def generate_robust_report():
     
     win_rate = len(wins) / len(closed)
     profit_factor = wins['PnL'].sum() / abs(losses['PnL'].sum()) if not losses.empty else 100.0
-    expectancy = (win_rate * wins['PnL'].mean()) - ((1-win_rate) * abs(losses['PnL'].mean()))
+    if losses.empty:
+        expectancy = wins['PnL'].mean() if not wins.empty else 0.0
+    else:
+        expectancy = (win_rate * wins['PnL'].mean()) - ((1-win_rate) * abs(losses['PnL'].mean()))
     
     # SQN Calculation
     sqn = (closed['PnL'].mean() / closed['PnL'].std()) * np.sqrt(len(closed)) if len(closed) > 1 else 0

@@ -630,6 +630,8 @@ def evaluate_and_create_entry_intents(
             continue
 
         daily_bars = md.get_daily_bars(cand.symbol)
+        # Intentionally uses structural stop from daily bars rather than cand.stop_loss
+        # from the scan CSV — the structural stop adapts to current market structure.
         stop_price = exits.compute_stop_price(
             daily_bars,
             entry_day=entry_day,

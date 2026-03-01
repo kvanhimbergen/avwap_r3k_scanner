@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""DEPRECATED — Droplet shut down 2026-02-24.  All services now run locally
+via launchd (see ops/launchd/).  Kept for reference only."""
 from __future__ import annotations
 
 import os

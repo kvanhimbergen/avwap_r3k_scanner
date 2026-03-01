@@ -7,6 +7,7 @@ import { Settings, CheckCircle, AlertTriangle, XCircle } from "lucide-react";
 import { api } from "../api";
 import { StatusBadge } from "../components/Badge";
 import { SkeletonTable } from "../components/Skeleton";
+import { useLayoutData } from "../context/LayoutDataContext";
 import { usePolling } from "../hooks/usePolling";
 import type { FreshnessRow } from "../types";
 
@@ -37,8 +38,8 @@ const STATUS_ICON = {
 const STATUS_BADGE = { ok: "active", warn: "warning", error: "error" } as const;
 
 export function SystemPage() {
+  const { health } = useLayoutData();
   const freshness = usePolling(() => api.freshness(), 60_000);
-  const health = usePolling(() => api.health(), 60_000);
 
   const freshnessRows = (freshness.data?.data?.rows ?? []) as FreshnessRow[];
   const healthData = (health.data?.data ?? {}) as Record<string, unknown>;

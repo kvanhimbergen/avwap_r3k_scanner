@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# DEPRECATED — Droplet shut down 2026-02-24.  All services now run locally
+# via launchd (see ops/launchd/).  Kept for reference only.
 set -euo pipefail
 
 # Install systemd unit files + drop-ins from the repo into /etc/systemd/system.

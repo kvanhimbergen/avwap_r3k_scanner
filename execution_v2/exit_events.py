@@ -275,15 +275,6 @@ def append_exit_event(repo_root: Path, event: dict[str, Any]) -> Path:
     ledger_dir.mkdir(parents=True, exist_ok=True)
     ledger_path = ledger_dir / f"{date_ny}.jsonl"
     payload = serialize_exit_event(event)
-    lines: list[str] = []
-    if ledger_path.exists():
-        try:
-            existing = ledger_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            existing = ""
-        if existing:
-            lines.extend([line for line in existing.splitlines() if line])
-    lines.append(payload)
-    data = "\n".join(lines) + "\n"
-    atomic_write_text(ledger_path, data)
+    with ledger_path.open("a", encoding="utf-8") as f:
+        f.write(payload + "\n")
     return ledger_path

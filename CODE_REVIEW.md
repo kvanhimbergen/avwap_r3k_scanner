@@ -136,209 +136,209 @@
 ## HIGH Issues
 
 ### #12 - [HIGH] Strategies: Coordinator writes state/ledger even in `dry_run` mode
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_coordinator.py:211-220`
 - **Description:** The coordinator unconditionally saves state and writes ledger entries regardless of the `dry_run` flag. A `--dry-run` of the coordinator mutates `last_eval_date` and writes ledger records. Contrast with `raec_401k_base.py:941` which gates on `if not dry_run or allow_state_write`.
 - **Fix:** Gate state/ledger writes on the `dry_run` flag.
-> Comment:
+> Comment: Wrapped `_save_state` and `_write_raec_ledger` calls in `if not dry_run:`. Updated coordinator tests: added `test_coordinator_dry_run_skips_state` and updated `test_coordinator_state_persists` to run with `dry_run=False`.
 
 ---
 
 ### #13 - [HIGH] Strategies: V1/V2 are massive standalone copies diverging from base class
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k.py` (597 lines), `strategies/raec_401k_v2.py` (873 lines)
 - **Description:** V1 and V2 duplicate state management, drift computation, turnover capping, volatility, and signal logic that was later refactored into `raec_401k_base.py`. Bug fixes in the base (e.g., -15% circuit breaker) are not in V1/V2. V2 uses `mom_6m` instead of `mom_3m`, has hardcoded defensive weights, and `top_n=3`. V1 has no circuit breaker at all.
 - **Fix:** Decide: (a) migrate V1/V2 to use `BaseRAECStrategy`, or (b) document them as frozen/legacy and add a clear deprecation notice.
-> Comment:
+> Comment: Option (b) — added FROZEN/LEGACY docstring to both `raec_401k.py` and `raec_401k_v2.py` stating they predate `raec_401k_base.py`, bug fixes are not backported, and no new features should be added.
 
 ---
 
 ### #14 - [HIGH] Strategies: `ref_price` look-ahead bias in V1/V2
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k.py:449-451`, `strategies/raec_401k_v2.py:721-723`
 - **Description:** When attaching `ref_price` to intents, the code calls `provider.get_daily_close_series(sym)` without filtering by `asof` date and takes `series[-1]`. If the provider has future data (backtesting), this introduces look-ahead bias.
 - **Fix:** Use `_sorted_series` which filters correctly by date.
-> Comment:
+> Comment: Replaced `provider.get_daily_close_series(sym)` with `_sorted_series(provider.get_daily_close_series(sym), asof=_parse_date(asof_date))` in both V1 and V2.
 
 ---
 
 ### #15 - [HIGH] Strategies: Hardcoded `total_capital = 237_757.0` default
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_coordinator.py:113`
 - **Description:** `cap = total_capital or 237_757.0` is a stale dollar amount used in display messages and Slack tickets. It will show increasingly incorrect values as the portfolio changes.
 - **Fix:** Source from state, config, or environment variable.
-> Comment:
+> Comment: Now reads `total_capital` from coordinator state file. Falls back to 0.0 with a WARN if not set. Persists `total_capital` into state on non-dry-run writes so subsequent runs auto-pick it up.
 
 ---
 
 ### #16 - [HIGH] Strategies: V1 `main()` declared `-> int` but returns `None`
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k.py:555`
 - **Description:** The function contract is violated. `raise SystemExit(main())` receives `None`.
 - **Fix:** Add `return 0` at the end of `main()`.
-> Comment:
+> Comment: Added `return 0` after the print summary block.
 
 ---
 
 ### #17 - [HIGH] Analytics: Malformed JSON line crashes entire regime pipeline
-- [ ] Done
+- [x] Done
 - **File:** `analytics/regime_e1_storage.py:37-38`
 - **Description:** `_load_existing_ids()` calls `json.loads(line)` with no try/except. One corrupted line in the ledger crashes the full regime run. Compare with `regime_throttle_writer.py:41-43` which correctly catches `json.JSONDecodeError`.
 - **Fix:** Wrap in try/except, log warning, skip bad lines.
-> Comment:
+> Comment: Added `try/except json.JSONDecodeError` with `logger.warning()`, skips malformed lines. Added `logging` import.
 
 ---
 
 ### #18 - [HIGH] Execution: Race condition in JSONL ledger append (read-then-write)
-- [ ] Done
+- [x] Done
 - **File:** `execution_v2/exit_events.py:279-288`, `execution_v2/paper_sim.py:233-237`
 - **Description:** Both use a pattern of reading all lines, adding new ones, then atomically writing the whole file. If two processes execute concurrently, one overwrites the other's appended data. `atomic_write_text()` prevents partial writes but not lost updates.
 - **Fix:** Use append mode (`open(path, "a")`) like `schwab_manual_confirmations.py:233` does correctly.
-> Comment:
+> Comment: Replaced read-then-atomic-write with `open("a")` in both `exit_events.append_exit_event` and `paper_sim.simulate_fills`. Updated corresponding tests in `test_atomic_write.py` to verify append preserves existing data.
 
 ---
 
 ### #19 - [HIGH] Execution: `stop_loss` from scan CSV is silently discarded
-- [ ] Done
+- [x] Done
 - **File:** `execution_v2/buy_loop.py:660-668`
 - **Description:** `EntryIntent` is created with `stop_loss=stop_price` (computed structural stop) instead of `cand.stop_loss` (from scan). The candidate's stop from the CSV is dead data for the entry intent path.
 - **Fix:** Document if intentional. If not, use the scan's stop or a minimum of both.
-> Comment:
+> Comment: Intentional — added comment explaining the structural stop from daily bars is preferred over the scan CSV stop because it adapts to current market structure.
 
 ---
 
 ### #20 - [HIGH] Root: `backtest.py` type annotation `float | float("nan")` is meaningless
-- [ ] Done
+- [x] Done
 - **File:** `backtest.py:56`
 - **Description:** `sharpe: float | float("nan")` unions the type `float` with the runtime value `nan`. This is semantically meaningless and confusing.
 - **Fix:** Change to `sharpe: float`.
-> Comment:
+> Comment: Changed to `sharpe: float`.
 
 ---
 
 ### #21 - [HIGH] Root: `analytics.py` expectancy is `NaN` when there are only wins
-- [ ] Done
+- [x] Done
 - **File:** `analytics.py:21`
 - **Description:** If `losses` is empty, `losses['PnL'].mean()` returns `NaN`, making `expectancy = NaN`. When there are only winning trades, expectancy should equal average PnL, not NaN.
 - **Fix:** Guard: `if losses.empty: expectancy = wins['PnL'].mean()`.
-> Comment:
+> Comment: Added `if losses.empty:` guard returning `wins['PnL'].mean()` (or 0.0 if wins also empty).
 
 ---
 
 ### #22 - [HIGH] Root: `provenance.py` reads entire file into memory for hashing
-- [ ] Done
+- [x] Done
 - **File:** `provenance.py:40-43`
 - **Description:** `handle.read()` loads the full file for SHA-256 hashing. For large parquet files (hundreds of MB), this risks OOM.
 - **Fix:** Use chunked reading with `hashlib.sha256()` + `.update()` in a loop.
-> Comment:
+> Comment: Replaced `_sha256_bytes(handle.read())` with `hashlib.sha256()` + `while chunk := handle.read(1 << 20)` loop (1 MiB chunks).
 
 ---
 
 ### #23 - [HIGH] Root: `sentinel.py` does not account for market holidays
-- [ ] Done
+- [x] Done
 - **File:** `sentinel.py:77-81`
 - **Description:** `is_market_open()` only checks weekday + time range. It will attempt to trade on holidays like Thanksgiving, MLK Day, etc.
 - **Fix:** Use the Alpaca market calendar or a holiday list.
-> Comment:
+> Comment: Added `_US_MARKET_HOLIDAYS` set (2026-2027) and early-return `False` when today's date matches. Lightweight static set avoids API dependency.
 
 ---
 
 ### #24 - [HIGH] Ops: Pipeline docstring says 8 steps but code has 7 (raec_401k_v2 removed)
-- [ ] Done
+- [x] Done
 - **File:** `ops/post_scan_pipeline.py:2-12 vs 32-87`
 - **Description:** The docstring and MEMORY.md reference 8 steps including `raec_401k_v2`, but the `STEPS` list has only 7. Either the step was accidentally removed or the docs are stale.
 - **Fix:** Verify intent. Update docstring and MEMORY.md accordingly.
-> Comment:
+> Comment: Docs were stale — `raec_401k_v2` was intentionally removed from the pipeline. Updated docstring to say "7 steps" and corrected the step list. Updated MEMORY.md. Fixed `test_pipeline_steps_in_correct_order` to expect 7 steps.
 
 ---
 
 ### #25 - [HIGH] Ops: `--dry-run` only propagated to 2 of 7 pipeline steps
-- [ ] Done
+- [x] Done
 - **File:** `ops/post_scan_pipeline.py:97-100`
 - **Description:** The `--dry-run` flag is only appended to `raec_401k_coordinator` and `s2_letf_orb_alpaca`. The other 5 steps execute with full side effects (regime writes, Schwab sync, seed allocations).
 - **Fix:** Either propagate `--dry-run` to all steps, or rename the flag to `--suppress-orders` to accurately describe its scope.
-> Comment:
+> Comment: Clarified the `--help` text to explain that `--dry-run` only suppresses orders/posts for the two order-posting steps. The other steps only write local ledger/state files, so propagation is unnecessary.
 
 ---
 
 ### #26 - [HIGH] Ops: All systemd units reference dead droplet paths
-- [ ] Done
+- [x] Done
 - **File:** `ops/systemd/*`, `tools/verify_systemd.py`
 - **Description:** Per project state, the droplet is shut down. All systemd units hardcode `/root/avwap_r3k_scanner`. `verify_systemd.py`'s expected drop-in list is completely disjoint from what the repo ships. This is dead infrastructure with no deprecation marker.
 - **Fix:** Archive or delete `ops/systemd/`, `install_systemd_units.sh`, `deploy_systemd.sh`, and `verify_systemd.py`.
-> Comment:
+> Comment: Added DEPRECATED notices to `deploy_systemd.sh`, `ops/install_systemd_units.sh`, `tools/verify_systemd.py`, and created `ops/systemd/DEPRECATED.md`. Kept files for reference rather than deleting.
 
 ---
 
 ### #27 - [HIGH] Frontend: Duplicate API polling -- Layout and pages both poll same endpoints
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/frontend/src/components/Layout.tsx:48-50`
 - **Description:** Layout polls `portfolioOverview`, `health`, and `raecDashboard` on 60s intervals. Child pages (CommandCenter, StrategyRoster, RiskPage) also poll the same APIs independently. No shared data layer, no cache deduplication. Network load is doubled.
 - **Fix:** Use React Context, a shared store, or `@tanstack/react-query` for deduplication.
-> Comment:
+> Comment: Created `LayoutDataContext` with `LayoutDataProvider` + `useLayoutData()` hook. Layout wraps children in the provider. Removed duplicate `usePolling` calls from CommandCenter, RiskPage, SystemPage, and StrategyRoster — they now consume shared data via `useLayoutData()`.
 
 ---
 
 ### #28 - [HIGH] Frontend: No ErrorBoundary -- lazy load failures crash entire app
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/frontend/src/App.tsx:11-43`
 - **Description:** All pages use `React.lazy()` with `Suspense` but no `ErrorBoundary`. If a lazy chunk fails to load (network error, deploy mismatch), the entire app crashes to a white screen.
 - **Fix:** Wrap `<Suspense>` in an `ErrorBoundary` with a retry/refresh UI.
-> Comment:
+> Comment: Created `ErrorBoundary.tsx` class component with retry button (reuses `ErrorState`). Wrapped every `<Suspense>` in App.tsx with `<ErrorBoundary>`.
 
 ---
 
 ### #29 - [HIGH] Frontend: Swallowed errors in trade close/delete operations
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/frontend/src/pages/TradeLogPage.tsx:118-133`
 - **Description:** `handleClose` and `handleDelete` have empty `catch {}` blocks. API failures give the user zero feedback -- the trade appears to close but nothing happened.
 - **Fix:** Show a toast/alert on error.
-> Comment:
+> Comment: Added `error` state. `handleClose`/`handleDelete` catch blocks now set error message. Renders a dismissible red error banner below the page header.
 
 ---
 
 ### #30 - [HIGH] Frontend: Unsafe `JSON.parse` without try-catch crashes component
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/frontend/src/pages/SchwabAccountPage.tsx:237`
 - **Description:** `JSON.parse(latestRecon.drift_reason_codes_json)` will throw and crash the component if the JSON is malformed.
 - **Fix:** Wrap in try-catch with a fallback.
-> Comment:
+> Comment: Wrapped in IIFE with `try/catch` — on parse failure, `codes` defaults to empty array and section renders nothing.
 
 ---
 
 ### #31 - [HIGH] Backend: `create_trade` accepts arbitrary unvalidated `dict` body
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/backend/app.py:429-440`
 - **Description:** Using `dict` instead of a Pydantic model means no type validation, no field constraints. Fields like `direction` accept any string, `qty` can be negative, dates are unchecked.
 - **Fix:** Define a Pydantic `CreateTradeRequest` model.
-> Comment:
+> Comment: Added `CreateTradeRequest` (entry_price/qty gt=0, direction regex-validated to long|short) and `CloseTradeRequest` (exit_price gt=0) Pydantic models. Endpoints now use `body.model_dump()`. Removed manual field-checking code.
 
 ---
 
 ### #32 - [HIGH] Backend: DuckDB connection shared across threads
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/backend/trade_log_db.py:26-29`
 - **Description:** A single DuckDB connection is shared across FastAPI's threadpool. DuckDB docs explicitly state connections should not be shared across threads. The `threading.Lock` serializes writes but does not make the connection itself safe.
 - **Fix:** Use connection-per-request or a connection pool.
-> Comment:
+> Comment: Replaced shared `self._conn` + `threading.Lock` with `_connect()` method returning fresh `duckdb.connect()` per operation. All methods now use `with self._connect() as conn:`. Removed `threading` import.
 
 ---
 
 ### #33 - [HIGH] Backend: SQL injection risk in `export_dataset_csv`
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/backend/api/queries.py:732-760`
 - **Description:** While `dataset` is validated against `EXPORT_TABLES`, `date_col` is interpolated into f-strings without parameterization (line 747-748). Safe today because values come from a hardcoded dict, but the pattern is risky if the dict is ever modified.
 - **Fix:** Use parameterized queries for date filtering, or add a comment explaining why f-string is safe here.
-> Comment:
+> Comment: Added safety comment explaining that `table` and `date_col` come from the hardcoded `EXPORT_TABLES` dict (not user input), and date values are parameterized with `?`.
 
 ---
 
 ### #34 - [HIGH] Tests: Vacuous test passes with zero assertions
-- [ ] Done
+- [x] Done
 - **File:** `tests/test_raec_401k_v4.py:309`
 - **Description:** `test_transition_structure` wraps assertions in `if result.regime == "TRANSITION":`. If synthetic data produces a different regime, the test passes with zero assertions -- silently vacuous.
 - **Fix:** Add `assert result.regime == "TRANSITION"` unconditionally, or use `pytest.skip()` with explanation.
-> Comment:
+> Comment: Changed to `if result.regime != "TRANSITION": pytest.skip(...)` so the test is explicitly skipped (visible in output) rather than silently vacuous.
 
 ---
 

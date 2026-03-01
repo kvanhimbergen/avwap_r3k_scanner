@@ -741,6 +741,9 @@ def export_dataset_csv(
         raise KeyError(dataset)
     table, date_col = EXPORT_TABLES[dataset]
 
+    # Safety: table and date_col come from the hardcoded EXPORT_TABLES dict above,
+    # not from user input — f-string interpolation is safe here.  Date values are
+    # passed as parameterized query arguments (?).
     clauses: list[str] = []
     params: list[Any] = []
     if date_col and start:

@@ -1,4 +1,6 @@
 #!/bin/bash
+# DEPRECATED — Droplet shut down 2026-02-24.  All services now run locally
+# via launchd (see ops/launchd/).  Kept for reference only.
 set -euo pipefail
 
 PROJECT_DIR="/root/avwap_r3k_scanner"

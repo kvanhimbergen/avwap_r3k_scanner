@@ -9,6 +9,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from analytics_platform.backend.api import queries
 from analytics_platform.backend.config import Settings
@@ -82,6 +83,26 @@ def _make_api_key_checker(cfg: Settings):
         if token != cfg.api_key:
             raise HTTPException(status_code=401, detail="Invalid or missing API key")
     return _require_api_key
+
+
+class CreateTradeRequest(BaseModel):
+    entry_date: str
+    symbol: str
+    entry_price: float = Field(gt=0)
+    qty: int = Field(gt=0)
+    stop_loss: float = Field(gt=0)
+    direction: str = Field(default="long", pattern=r"^(long|short)$")
+    target_r1: float | None = None
+    target_r2: float | None = None
+    strategy_source: str | None = None
+    scan_date: str | None = None
+    notes: str | None = None
+
+
+class CloseTradeRequest(BaseModel):
+    exit_price: float = Field(gt=0)
+    exit_date: str | None = None
+    exit_reason: str = "manual"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -442,27 +463,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _envelope(runtime, tl.get_summary())
 
     @app.post("/api/v1/trades/log", dependencies=[Depends(require_api_key)])
-    def create_trade(body: dict) -> dict:
+    def create_trade(body: CreateTradeRequest) -> dict:
         runtime: AnalyticsRuntime = app.state.runtime
         tl: TradeLogStore = app.state.trade_log
-        required = {"entry_date", "symbol", "entry_price", "qty", "stop_loss"}
-        missing = required - set(body.keys())
-        if missing:
-            raise HTTPException(status_code=422, detail=f"missing fields: {sorted(missing)}")
         try:
-            row = tl.create(body)
+            row = tl.create(body.model_dump())
         except (ValueError, TypeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _envelope(runtime, row)
 
     @app.put("/api/v1/trades/log/{trade_id}", dependencies=[Depends(require_api_key)])
-    def close_trade(trade_id: str, body: dict) -> dict:
+    def close_trade(trade_id: str, body: CloseTradeRequest) -> dict:
         runtime: AnalyticsRuntime = app.state.runtime
         tl: TradeLogStore = app.state.trade_log
-        if "exit_price" not in body:
-            raise HTTPException(status_code=422, detail="exit_price is required")
         try:
-            row = tl.update_exit(trade_id, body)
+            row = tl.update_exit(trade_id, body.model_dump())
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return _envelope(runtime, row)

@@ -1,4 +1,10 @@
-"""RAEC 401(k) Strategy v1 (ETF-only, Alpaca paper trading)."""
+"""RAEC 401(k) Strategy v1 (ETF-only, Alpaca paper trading).
+
+FROZEN / LEGACY — This module is a standalone implementation that predates
+``raec_401k_base.py``.  Bug fixes applied to the base class (e.g. -15%
+circuit breaker) are NOT present here.  V3-V5 via the coordinator are the
+active strategies.  Do not add new features to this file.
+"""
 
 from __future__ import annotations
 
@@ -443,12 +449,13 @@ def run_strategy(
     intents: list[dict] = []
     if should_rebalance and not notice:
         intents = _build_intents(asof_date=asof_date, targets=targets, current=current_allocs)
+        asof = _parse_date(asof_date)
         # Attach ref_price for Alpaca share quantity computation
         for intent in intents:
             sym = intent["symbol"]
-            series = provider.get_daily_close_series(sym)
-            if series:
-                intent["ref_price"] = series[-1][1]
+            filtered = _sorted_series(provider.get_daily_close_series(sym), asof=asof)
+            if filtered:
+                intent["ref_price"] = filtered[-1][1]
 
     ticket_message = _build_ticket_message(
         asof_date=asof_date,
@@ -590,6 +597,7 @@ def main(argv: list[str] | None = None) -> int:
         f"notice={notice_str}"
     )
 
+    return 0
 
 
 if __name__ == "__main__":

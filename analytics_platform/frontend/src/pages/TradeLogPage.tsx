@@ -115,21 +115,29 @@ export function TradeLogPage() {
   const [closingId, setClosingId] = useState<string | null>(null);
   const [closePrice, setClosePrice] = useState("");
 
+  const [error, setError] = useState<string | null>(null);
+
   async function handleClose(id: string) {
     if (!closePrice) return;
     try {
+      setError(null);
       await api.tradeLogClose(id, { exit_price: parseFloat(closePrice), exit_reason: "manual" });
       setClosingId(null);
       setClosePrice("");
       reload();
-    } catch {}
+    } catch (e) {
+      setError(`Failed to close trade: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   async function handleDelete(id: string) {
     try {
+      setError(null);
       await api.tradeLogDelete(id);
       reload();
-    } catch {}
+    } catch (e) {
+      setError(`Failed to delete trade: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   if (trades.error) return <ErrorState message={trades.error} />;
@@ -143,6 +151,13 @@ export function TradeLogPage() {
           <p className="text-[11px] text-vantage-muted">Manual trade execution tracker</p>
         </div>
       </div>
+
+      {error && (
+        <div className="bg-vantage-red/10 border border-vantage-red/30 text-vantage-red text-sm px-4 py-2 rounded-md flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="ml-4 text-vantage-red/70 hover:text-vantage-red">&times;</button>
+        </div>
+      )}
 
       {/* KPIs */}
       {summary.loading ? (

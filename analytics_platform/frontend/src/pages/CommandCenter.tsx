@@ -11,6 +11,7 @@ import { StatCard } from "../components/StatCard";
 import { StatusBadge, RegimeBadge } from "../components/Badge";
 import { SkeletonCard } from "../components/Skeleton";
 import { ErrorState } from "../components/ErrorState";
+import { useLayoutData } from "../context/LayoutDataContext";
 import { usePolling } from "../hooks/usePolling";
 import { formatCurrency, formatPercent, pnlColor } from "../lib/format";
 import { getMeta, regimeColor } from "../lib/strategies";
@@ -47,11 +48,11 @@ export function CommandCenter() {
 
   const date = todayNY();
 
-  // API calls
+  // API calls (portfolio shared via LayoutDataContext to avoid duplicate polling)
+  const { portfolio } = useLayoutData();
   const schwab = usePolling(() => api.schwabOverview(), 60_000);
   const perfPoll = usePolling(() => api.schwabPerformance(range), 60_000);
   const trades = usePolling(() => api.todaysTrades({ date }), 30_000);
-  const portfolio = usePolling(() => api.portfolioOverview(), 60_000);
   const tradeLog = usePolling(() => api.tradeLogSummary(), 60_000);
 
   // Extract data

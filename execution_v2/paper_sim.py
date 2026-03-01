@@ -231,10 +231,9 @@ def simulate_fills(
         existing_ids.add(intent_id)
 
     if fills:
-        lines = _read_jsonl_lines(ledger_path)
-        lines.extend([json.dumps(fill, sort_keys=True) for fill in fills])
-        data = "\n".join(lines) + "\n"
-        atomic_write_text(ledger_path, data)
+        with ledger_path.open("a", encoding="utf-8") as f:
+            for fill in fills:
+                f.write(json.dumps(fill, sort_keys=True) + "\n")
 
     return fills
 

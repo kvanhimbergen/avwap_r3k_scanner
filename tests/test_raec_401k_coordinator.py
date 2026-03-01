@@ -239,7 +239,8 @@ def test_coordinator_posts_separate_tickets(tmp_path: Path) -> None:
     assert len(result.posted) == 3
 
 
-def test_coordinator_state_persists(tmp_path: Path) -> None:
+def test_coordinator_dry_run_skips_state(tmp_path: Path) -> None:
+    """Coordinator does NOT write its own state/ledger in dry_run mode (#12)."""
     provider = _all_risk_on_provider()
     _seed_all_states(tmp_path, last_regime="RISK_OFF", allocs={"BIL": 100.0})
     raec_401k_coordinator.run_coordinator(
@@ -249,11 +250,30 @@ def test_coordinator_state_persists(tmp_path: Path) -> None:
         dry_run=True,
     )
     state_path = tmp_path / "state" / "strategies" / raec_401k_coordinator.BOOK_ID / f"{raec_401k_coordinator.STRATEGY_ID}.json"
+    assert not state_path.exists()
+
+
+def test_coordinator_state_persists(tmp_path: Path) -> None:
+    """Coordinator writes state/ledger when NOT in dry_run mode."""
+    provider = _all_risk_on_provider()
+    _seed_all_states(tmp_path, last_regime="RISK_OFF", allocs={"BIL": 100.0})
+    adapter = _TrackingAdapter()
+    raec_401k_coordinator.run_coordinator(
+        asof_date="2026-02-06",
+        repo_root=tmp_path,
+        price_provider=provider,
+        dry_run=False,
+        post_enabled=False,
+        adapter_override=adapter,
+        total_capital=100_000.0,
+    )
+    state_path = tmp_path / "state" / "strategies" / raec_401k_coordinator.BOOK_ID / f"{raec_401k_coordinator.STRATEGY_ID}.json"
     assert state_path.exists()
     state = json.loads(state_path.read_text())
     assert state["last_eval_date"] == "2026-02-06"
     assert "sub_regimes" in state
     assert set(state["sub_regimes"].keys()) == {"v3", "v4", "v5"}
+    assert state["total_capital"] == 100_000.0
 
 
 def test_sub_strategies_update_own_state(tmp_path: Path) -> None:

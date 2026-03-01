@@ -54,7 +54,8 @@ def test_exit_events_append_atomic_appends(tmp_path) -> None:
     ]
 
 
-def test_exit_events_append_atomic_failure_leaves_existing(tmp_path, monkeypatch) -> None:
+def test_exit_events_append_preserves_existing(tmp_path) -> None:
+    """append_exit_event uses direct file append — verify existing data is preserved."""
     repo_root = tmp_path
     ts = datetime(2024, 1, 2, tzinfo=timezone.utc)
     existing = exit_events.build_exit_event(event_type="EXIT", symbol="ABC", ts=ts)
@@ -63,15 +64,12 @@ def test_exit_events_append_atomic_failure_leaves_existing(tmp_path, monkeypatch
     ledger_path.write_text(exit_events.serialize_exit_event(existing) + "\n", encoding="utf-8")
 
     new_event = exit_events.build_exit_event(event_type="EXIT", symbol="XYZ", ts=ts)
+    exit_events.append_exit_event(repo_root, new_event)
 
-    def _boom_replace(src, dst):
-        raise OSError("replace interrupted")
-
-    monkeypatch.setattr(atomic_write.os, "replace", _boom_replace)
-    with pytest.raises(OSError, match="replace interrupted"):
-        exit_events.append_exit_event(repo_root, new_event)
-
-    assert ledger_path.read_text(encoding="utf-8") == exit_events.serialize_exit_event(existing) + "\n"
+    lines = ledger_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["symbol"] == "ABC"
+    assert json.loads(lines[1])["symbol"] == "XYZ"
 
 
 def test_portfolio_decision_append_atomic_appends(tmp_path) -> None:
@@ -145,7 +143,8 @@ def test_paper_sim_append_atomic_appends(tmp_path) -> None:
     assert json.loads(lines[0])["intent_id"] == "intent-1"
 
 
-def test_paper_sim_append_atomic_failure_leaves_existing(tmp_path, monkeypatch) -> None:
+def test_paper_sim_append_preserves_existing(tmp_path) -> None:
+    """simulate_fills uses direct file append — verify existing data is preserved."""
     repo_root = tmp_path
     ledger_path = repo_root / "ledger" / "PAPER_SIM" / "2024-01-02.jsonl"
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
@@ -161,19 +160,18 @@ def test_paper_sim_append_atomic_failure_leaves_existing(tmp_path, monkeypatch) 
     )
     now_utc = datetime(2024, 1, 2, tzinfo=timezone.utc)
 
-    def _boom_replace(src, dst):
-        raise OSError("replace interrupted")
+    fills = paper_sim.simulate_fills(
+        [intent],
+        date_ny="2024-01-02",
+        now_utc=now_utc,
+        repo_root=repo_root,
+    )
 
-    monkeypatch.setattr(atomic_write.os, "replace", _boom_replace)
-    with pytest.raises(OSError, match="replace interrupted"):
-        paper_sim.simulate_fills(
-            [intent],
-            date_ny="2024-01-02",
-            now_utc=now_utc,
-            repo_root=repo_root,
-        )
-
-    assert ledger_path.read_text(encoding="utf-8") == existing_payload + "\n"
+    assert len(fills) == 1
+    lines = ledger_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["intent_id"] == "intent-0"
+    assert json.loads(lines[1])["intent_id"] == "intent-1"
 
 
 def test_live_gate_ledger_atomic_appends(tmp_path) -> None:

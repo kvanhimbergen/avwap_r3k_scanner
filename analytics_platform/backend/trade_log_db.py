@@ -6,7 +6,6 @@ analytics readmodel rebuild cycle doesn't destroy user data.
 
 from __future__ import annotations
 
-import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,40 +19,46 @@ def _utc_now() -> str:
 
 
 class TradeLogStore:
-    """Thread-safe CRUD for the trade log."""
+    """Thread-safe CRUD for the trade log.
+
+    Uses connection-per-request rather than a shared connection to avoid
+    DuckDB's thread-safety limitations.
+    """
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
-        self._lock = threading.Lock()
-        self._conn = duckdb.connect(self._db_path)
         self._ensure_schema()
 
+    def _connect(self) -> duckdb.DuckDBPyConnection:
+        return duckdb.connect(self._db_path)
+
     def _ensure_schema(self) -> None:
-        self._conn.execute("""
-        CREATE TABLE IF NOT EXISTS trade_log (
-            id VARCHAR PRIMARY KEY,
-            created_utc VARCHAR NOT NULL,
-            updated_utc VARCHAR NOT NULL,
-            entry_date VARCHAR NOT NULL,
-            symbol VARCHAR NOT NULL,
-            direction VARCHAR NOT NULL DEFAULT 'long',
-            entry_price DOUBLE NOT NULL,
-            qty INTEGER NOT NULL,
-            stop_loss DOUBLE NOT NULL,
-            target_r1 DOUBLE,
-            target_r2 DOUBLE,
-            strategy_source VARCHAR,
-            scan_date VARCHAR,
-            notes VARCHAR,
-            exit_date VARCHAR,
-            exit_price DOUBLE,
-            exit_reason VARCHAR,
-            risk_per_share DOUBLE NOT NULL,
-            r_multiple DOUBLE,
-            pnl_dollars DOUBLE,
-            status VARCHAR NOT NULL DEFAULT 'open'
-        );
-        """)
+        with self._connect() as conn:
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS trade_log (
+                id VARCHAR PRIMARY KEY,
+                created_utc VARCHAR NOT NULL,
+                updated_utc VARCHAR NOT NULL,
+                entry_date VARCHAR NOT NULL,
+                symbol VARCHAR NOT NULL,
+                direction VARCHAR NOT NULL DEFAULT 'long',
+                entry_price DOUBLE NOT NULL,
+                qty INTEGER NOT NULL,
+                stop_loss DOUBLE NOT NULL,
+                target_r1 DOUBLE,
+                target_r2 DOUBLE,
+                strategy_source VARCHAR,
+                scan_date VARCHAR,
+                notes VARCHAR,
+                exit_date VARCHAR,
+                exit_price DOUBLE,
+                exit_reason VARCHAR,
+                risk_per_share DOUBLE NOT NULL,
+                r_multiple DOUBLE,
+                pnl_dollars DOUBLE,
+                status VARCHAR NOT NULL DEFAULT 'open'
+            );
+            """)
 
     def create(self, trade: dict[str, Any]) -> dict[str, Any]:
         """Insert a new open trade. Returns the created record."""
@@ -95,8 +100,8 @@ class TradeLogStore:
             "status": "open",
         }
 
-        with self._lock:
-            self._conn.execute(
+        with self._connect() as conn:
+            conn.execute(
                 """INSERT INTO trade_log VALUES (
                     $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
                 )""",
@@ -106,13 +111,13 @@ class TradeLogStore:
 
     def update_exit(self, trade_id: str, exit_data: dict[str, Any]) -> dict[str, Any]:
         """Close a trade with exit data. Computes R-multiple and P&L."""
-        with self._lock:
-            rows = self._conn.execute(
+        with self._connect() as conn:
+            rows = conn.execute(
                 "SELECT * FROM trade_log WHERE id = ?", [trade_id]
             ).fetchall()
             if not rows:
                 raise KeyError(f"Trade {trade_id} not found")
-            cols = [d[0] for d in self._conn.description]
+            cols = [d[0] for d in conn.description]
             trade = dict(zip(cols, rows[0]))
 
             exit_price = float(exit_data["exit_price"])
@@ -129,7 +134,7 @@ class TradeLogStore:
             r_multiple = round(pnl_per_share / risk_per_share, 4) if risk_per_share > 0 else 0.0
             pnl_dollars = round(pnl_per_share * qty, 2)
 
-            self._conn.execute(
+            conn.execute(
                 """UPDATE trade_log SET
                     exit_date = ?,
                     exit_price = ?,
@@ -173,18 +178,18 @@ class TradeLogStore:
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         params.append(min(max(limit, 1), 5000))
 
-        with self._lock:
-            rows = self._conn.execute(
+        with self._connect() as conn:
+            rows = conn.execute(
                 f"SELECT * FROM trade_log{where} ORDER BY created_utc DESC LIMIT ?",
                 params,
             ).fetchall()
-            cols = [d[0] for d in self._conn.description]
+            cols = [d[0] for d in conn.description]
         return [dict(zip(cols, r)) for r in rows]
 
     def get_summary(self) -> dict[str, Any]:
         """Aggregate statistics across all trades."""
-        with self._lock:
-            rows = self._conn.execute("""
+        with self._connect() as conn:
+            rows = conn.execute("""
                 SELECT
                     COUNT(*) FILTER (WHERE status = 'open') AS open_count,
                     COUNT(*) FILTER (WHERE status = 'closed') AS closed_count,
@@ -210,11 +215,11 @@ class TradeLogStore:
 
     def delete(self, trade_id: str) -> bool:
         """Delete a trade by ID. Returns True if deleted."""
-        with self._lock:
-            result = self._conn.execute(
+        with self._connect() as conn:
+            result = conn.execute(
                 "DELETE FROM trade_log WHERE id = ? RETURNING id", [trade_id]
             ).fetchone()
         return result is not None
 
     def close(self) -> None:
-        self._conn.close()
+        pass  # no persistent connection to close

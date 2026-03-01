@@ -10,6 +10,7 @@ import { api } from "../api";
 import { RegimeBadge } from "../components/Badge";
 import { SkeletonCard, SkeletonChart } from "../components/Skeleton";
 import { ErrorState } from "../components/ErrorState";
+import { useLayoutData } from "../context/LayoutDataContext";
 import { usePolling } from "../hooks/usePolling";
 import { formatCurrency } from "../lib/format";
 import type { TimePoint } from "../types";
@@ -17,10 +18,10 @@ import type { TimePoint } from "../types";
 const CHART_TOOLTIP = { backgroundColor: "#111827", border: "1px solid #1f2937", borderRadius: 6, fontSize: 12 };
 
 export function RiskPage() {
+  const { portfolio } = useLayoutData();
   const risk = usePolling(() => api.riskControls(), 60_000);
   const decisions = usePolling(() => api.decisionsTimeseries(), 60_000);
   const pnl = usePolling(() => api.pnl(), 60_000);
-  const portfolio = usePolling(() => api.portfolioOverview(), 60_000);
 
   if (risk.error) return <ErrorState message={risk.error} />;
 

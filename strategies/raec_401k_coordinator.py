@@ -110,7 +110,14 @@ def run_coordinator(
 ) -> CoordinatorResult:
     provider = price_provider or get_default_price_provider(str(repo_root))
     split = capital_split or dict(DEFAULT_CAPITAL_SPLIT)
-    cap = total_capital or 237_757.0
+    if total_capital is not None:
+        cap = total_capital
+    else:
+        coord_state = _load_state(_state_path(repo_root))
+        cap = coord_state.get("total_capital")
+        if cap is None:
+            print("WARN: total_capital not set — pass --capital or set 'total_capital' in coordinator state")
+            cap = 0.0
 
     # Run each sub-strategy with dry_run=True, allow_state_write=True
     sub_results: dict[str, object] = {}
@@ -207,17 +214,19 @@ def run_coordinator(
         posted=posted,
     )
 
-    # Save coordinator state
-    coord_state_path = _state_path(repo_root)
-    coord_state = _load_state(coord_state_path)
-    coord_state.update({
-        "last_eval_date": asof_date,
-        "capital_split": split,
-        "sub_regimes": {key: r.regime for key, r in sub_results.items()},
-        "sub_rebalanced": rebalanced,
-    })
-    _save_state(coord_state_path, coord_state)
-    _write_raec_ledger(coord_result, repo_root=repo_root)
+    # Save coordinator state (skip in dry_run mode)
+    if not dry_run:
+        coord_state_path = _state_path(repo_root)
+        coord_state = _load_state(coord_state_path)
+        coord_state.update({
+            "last_eval_date": asof_date,
+            "total_capital": cap,
+            "capital_split": split,
+            "sub_regimes": {key: r.regime for key, r in sub_results.items()},
+            "sub_rebalanced": rebalanced,
+        })
+        _save_state(coord_state_path, coord_state)
+        _write_raec_ledger(coord_result, repo_root=repo_root)
 
     return coord_result
 

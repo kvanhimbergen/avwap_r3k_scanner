@@ -53,7 +53,7 @@ class BenchmarkResult:
     total_return: float
     cagr: float
     max_drawdown: float
-    sharpe: float | float("nan")
+    sharpe: float
 
 def backtest_symbol(
     symbol: str,

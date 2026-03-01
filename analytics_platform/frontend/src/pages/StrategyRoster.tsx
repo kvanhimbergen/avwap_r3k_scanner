@@ -12,6 +12,7 @@ import { StatusBadge, RegimeBadge, BookBadge } from "../components/Badge";
 import { SkeletonCard } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
+import { useLayoutData } from "../context/LayoutDataContext";
 import { usePolling } from "../hooks/usePolling";
 import { formatCurrency } from "../lib/format";
 import { getMeta, bookFromId, regimeColor } from "../lib/strategies";
@@ -77,11 +78,10 @@ type BookFilter = "all" | "alpaca" | "schwab";
 export function StrategyRoster() {
   const [bookFilter, setBookFilter] = useState<BookFilter>("all");
 
+  const { portfolio, raec } = useLayoutData();
   const matrix = usePolling(() => api.strategyMatrix(), 45_000);
-  const raec = usePolling(() => api.raecDashboard(), 45_000);
   const readiness = usePolling(() => api.raecReadiness(), 60_000);
   const freshness = usePolling(() => api.freshness(), 60_000);
-  const portfolio = usePolling(() => api.portfolioOverview(), 60_000);
 
   const isLoading = matrix.loading || raec.loading;
   const error = matrix.error || raec.error;

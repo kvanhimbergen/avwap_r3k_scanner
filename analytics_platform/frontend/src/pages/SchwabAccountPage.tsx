@@ -231,14 +231,18 @@ export function SchwabAccountPage() {
               <p className={`font-mono text-xs font-semibold ${latestRecon.drift_intent_count > 0 ? "text-vantage-amber" : ""}`}>{latestRecon.drift_intent_count}</p>
             </div>
           </div>
-          {latestRecon.drift_reason_codes_json && latestRecon.drift_reason_codes_json !== "[]" && (
-            <div className="mt-3 flex items-center gap-2 flex-wrap">
-              <AlertTriangle size={12} className="text-vantage-amber" />
-              {(JSON.parse(latestRecon.drift_reason_codes_json) as string[]).map((code) => (
-                <span key={code} className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-vantage-amber/15 text-vantage-amber">{code}</span>
-              ))}
-            </div>
-          )}
+          {latestRecon.drift_reason_codes_json && latestRecon.drift_reason_codes_json !== "[]" && (() => {
+            let codes: string[] = [];
+            try { codes = JSON.parse(latestRecon.drift_reason_codes_json); } catch { /* malformed */ }
+            return codes.length > 0 ? (
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <AlertTriangle size={12} className="text-vantage-amber" />
+                {codes.map((code) => (
+                  <span key={code} className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-vantage-amber/15 text-vantage-amber">{code}</span>
+                ))}
+              </div>
+            ) : null;
+          })()}
         </div>
       )}
     </div>

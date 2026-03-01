@@ -12,8 +12,7 @@ import {
   Landmark,
   Settings,
 } from "lucide-react";
-import { api } from "../api";
-import { usePolling } from "../hooks/usePolling";
+import { LayoutDataProvider, useLayoutData } from "../context/LayoutDataContext";
 import { formatCurrency, pnlColor } from "../lib/format";
 import { regimeColor } from "../lib/strategies";
 
@@ -45,9 +44,15 @@ function ConnectionDot({ connected }: { connected: boolean }) {
 }
 
 export function Layout() {
-  const portfolio = usePolling(() => api.portfolioOverview(), 60_000);
-  const health = usePolling(() => api.health(), 60_000);
-  const raec = usePolling(() => api.raecDashboard(), 60_000);
+  return (
+    <LayoutDataProvider>
+      <LayoutInner />
+    </LayoutDataProvider>
+  );
+}
+
+function LayoutInner() {
+  const { portfolio, health, raec } = useLayoutData();
 
   const latest = (portfolio.data?.data as any)?.latest ?? {};
   const regime = (raec.data?.data as any)?.by_strategy?.[0]?.latest_regime ?? null;

@@ -39,8 +39,11 @@ def _sha256_bytes(payload: bytes) -> str:
 
 def compute_data_hash(path: Path) -> str:
     ensure_local_path(path)
+    h = hashlib.sha256()
     with open(path, "rb") as handle:
-        return _sha256_bytes(handle.read())
+        while chunk := handle.read(1 << 20):  # 1 MiB chunks
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def compute_config_hash(cfg) -> str:
