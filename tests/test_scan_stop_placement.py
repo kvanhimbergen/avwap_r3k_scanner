@@ -1,17 +1,11 @@
 """Tests for AVWAP-based stop placement in scan_engine."""
 
-import sys
-from pathlib import Path
-
 import pytest
 
 np = pytest.importorskip("numpy")
 pd = pytest.importorskip("pandas")
 
 pytestmark = [pytest.mark.requires_numpy, pytest.mark.requires_pandas]
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
 
 from scan_engine import _find_daily_swing_lows
 

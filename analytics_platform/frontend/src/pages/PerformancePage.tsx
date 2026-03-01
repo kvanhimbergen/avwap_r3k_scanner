@@ -7,6 +7,7 @@ import { TrendingUp } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 import { api } from "../api";
+import { usePageTitle } from "../hooks/usePageTitle";
 import { SkeletonCard, SkeletonChart } from "../components/Skeleton";
 import { usePolling } from "../hooks/usePolling";
 import { formatCurrency, formatPercent, formatNumber, pnlColor } from "../lib/format";
@@ -24,6 +25,7 @@ function getDateRange(preset: DatePreset): { start?: string } {
 const CHART_TOOLTIP = { backgroundColor: "#111827", border: "1px solid #1f2937", borderRadius: 6, fontSize: 12 };
 
 export function PerformancePage() {
+  usePageTitle("Performance");
   const [bookFilter, setBookFilter] = useState("");
   const [datePreset, setDatePreset] = useState<DatePreset>("all");
 

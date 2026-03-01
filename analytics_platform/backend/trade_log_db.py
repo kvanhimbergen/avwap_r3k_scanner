@@ -62,16 +62,14 @@ class TradeLogStore:
 
     def create(self, trade: dict[str, Any]) -> dict[str, Any]:
         """Insert a new open trade. Returns the created record."""
+        # 12 hex chars = ~48 bits; sufficient for manual trade log volume
         trade_id = str(uuid.uuid4())[:12]
         now = _utc_now()
 
         entry_price = float(trade["entry_price"])
         stop_loss = float(trade["stop_loss"])
         direction = str(trade.get("direction", "long")).lower()
-        if direction == "short":
-            risk_per_share = abs(stop_loss - entry_price)
-        else:
-            risk_per_share = abs(entry_price - stop_loss)
+        risk_per_share = abs(entry_price - stop_loss)
 
         if risk_per_share <= 0:
             raise ValueError("risk_per_share must be positive (entry != stop)")

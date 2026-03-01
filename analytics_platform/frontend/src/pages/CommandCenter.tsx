@@ -12,6 +12,7 @@ import { StatusBadge, RegimeBadge } from "../components/Badge";
 import { SkeletonCard } from "../components/Skeleton";
 import { ErrorState } from "../components/ErrorState";
 import { useLayoutData } from "../context/LayoutDataContext";
+import { usePageTitle } from "../hooks/usePageTitle";
 import { usePolling } from "../hooks/usePolling";
 import { formatCurrency, formatPercent, pnlColor } from "../lib/format";
 import { getMeta, regimeColor } from "../lib/strategies";
@@ -43,6 +44,7 @@ const CHART_TOOLTIP = { backgroundColor: "#111827", border: "1px solid #1f2937",
 /* ── Component ────────────────────────────────────── */
 
 export function CommandCenter() {
+  usePageTitle("Command Center");
   const [datePreset, setDatePreset] = useState<DatePreset>("all");
   const range = getDateRange(datePreset);
 

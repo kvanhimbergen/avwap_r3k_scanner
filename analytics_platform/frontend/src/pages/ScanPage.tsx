@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import { ScanSearch } from "lucide-react";
 
 import { api } from "../api";
+import { usePageTitle } from "../hooks/usePageTitle";
 import { StatusBadge } from "../components/Badge";
 import { ScanCandidateDetailPanel } from "../components/ScanCandidateDetailPanel";
 import { SkeletonCard, SkeletonTable } from "../components/Skeleton";
@@ -22,6 +23,7 @@ function fmtNum(v: number | null | undefined, digits = 2): string {
 }
 
 export function ScanPage() {
+  usePageTitle("Scan");
   const [direction, setDirection] = useState("");
   const [symbol, setSymbol] = useState("");
   const [sector, setSector] = useState("");

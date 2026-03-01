@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 """
 Repro: ledger write failure for dry-run ledger.
+
+NOTE: Uses private API (_submit_market_entry). May need updating if internals change.
 """
 
 from __future__ import annotations

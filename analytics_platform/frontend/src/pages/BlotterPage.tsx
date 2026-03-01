@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 import { ScrollText, Download } from "lucide-react";
 
 import { api } from "../api";
+import { usePageTitle } from "../hooks/usePageTitle";
 import { SkeletonCard, SkeletonTable } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
@@ -41,6 +42,7 @@ function daysAgoStr(days: number): string {
 }
 
 export function BlotterPage() {
+  usePageTitle("Blotter");
   const [strategyId, setStrategyId] = useState("");
   const [bookFilter, setBookFilter] = useState("");
   const [symbol, setSymbol] = useState("");

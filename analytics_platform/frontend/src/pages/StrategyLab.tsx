@@ -266,7 +266,7 @@ export function StrategyLab() {
         <div className="flex items-center gap-3">
           <FlaskConical size={24} className="text-purple-400" />
           <div>
-            <h2 className="text-xl font-semibold">Strategy Lab</h2>
+            <h2 className="text-xl font-semibold">Strategy Lab <span className="text-[10px] font-bold text-vantage-amber bg-vantage-amber/15 px-1.5 py-0.5 rounded ml-2">PROTOTYPE</span></h2>
             <p className="text-[11px] text-vantage-muted">AI-powered strategy experimentation and research</p>
           </div>
         </div>

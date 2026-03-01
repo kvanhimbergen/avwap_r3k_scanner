@@ -7,6 +7,7 @@ import { ShieldAlert } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
 
 import { api } from "../api";
+import { usePageTitle } from "../hooks/usePageTitle";
 import { RegimeBadge } from "../components/Badge";
 import { SkeletonCard, SkeletonChart } from "../components/Skeleton";
 import { ErrorState } from "../components/ErrorState";
@@ -18,6 +19,7 @@ import type { TimePoint } from "../types";
 const CHART_TOOLTIP = { backgroundColor: "#111827", border: "1px solid #1f2937", borderRadius: 6, fontSize: 12 };
 
 export function RiskPage() {
+  usePageTitle("Risk");
   const { portfolio } = useLayoutData();
   const risk = usePolling(() => api.riskControls(), 60_000);
   const decisions = usePolling(() => api.decisionsTimeseries(), 60_000);

@@ -1,6 +1,4 @@
-import sys
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 
@@ -8,9 +6,6 @@ np = pytest.importorskip("numpy")
 pd = pytest.importorskip("pandas")
 
 pytestmark = [pytest.mark.requires_numpy, pytest.mark.requires_pandas]
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
 
 from setup_context import compute_setup_context_contract
 from helpers import (

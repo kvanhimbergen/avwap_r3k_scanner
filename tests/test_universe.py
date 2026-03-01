@@ -1,4 +1,3 @@
-import sys
 from pathlib import Path
 
 import pytest
@@ -6,9 +5,6 @@ import pytest
 pytest.importorskip("pandas")
 
 pytestmark = pytest.mark.requires_pandas
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
 
 import universe
 

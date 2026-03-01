@@ -7,6 +7,7 @@ import { ClipboardList } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 
 import { api } from "../api";
+import { usePageTitle } from "../hooks/usePageTitle";
 import { SkeletonCard, SkeletonTable } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
@@ -54,8 +55,8 @@ function TradeEntryForm({ onCreated, prefill }: { onCreated: () => void; prefill
       });
       setForm({ ...form, symbol: "", entry_price: "", qty: "", stop_loss: "", target_r1: "", target_r2: "", notes: "" });
       onCreated();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSubmitting(false);
     }
@@ -93,6 +94,7 @@ function TradeEntryForm({ onCreated, prefill }: { onCreated: () => void; prefill
 }
 
 export function TradeLogPage() {
+  usePageTitle("Trade Log");
   const [searchParams] = useSearchParams();
   const prefill = useMemo(() => {
     const p: Record<string, string> = {};
@@ -196,6 +198,7 @@ export function TradeLogPage() {
       ) : (
         <div className="bg-vantage-card border border-vantage-border rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
+            {/* TODO: add scope="col" to <th>, aria-sort on sortable columns, keyboard nav on clickable rows */}
             <table className="w-full text-xs">
               <thead><tr className="border-b border-vantage-border">
                 <th className="py-2 px-2 text-left text-vantage-muted font-medium">Date</th>

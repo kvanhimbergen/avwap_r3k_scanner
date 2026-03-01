@@ -13,6 +13,7 @@ S1_STRATEGY_ID = "S1_AVWAP_CORE"
 
 
 def _rows(conn, sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]:
+    # Uses fetchdf() for automatic NaN→None conversion; fetchall() would need manual handling
     frame = conn.execute(sql, params or []).fetchdf()
     if frame.empty:
         return []
@@ -766,23 +767,13 @@ def _raec_where(
     start: str | None, end: str | None, strategy_id: str | None, book_id: str | None = None,
 ) -> tuple[str, list[Any]]:
     """Build WHERE clause for RAEC queries with optional date range + strategy + book filter."""
-    clauses: list[str] = []
-    params: list[Any] = []
-    if start:
-        clauses.append("ny_date >= ?")
-        params.append(start)
-    if end:
-        clauses.append("ny_date <= ?")
-        params.append(end)
-    if strategy_id:
-        clauses.append("strategy_id = ?")
-        params.append(strategy_id)
-    if book_id:
-        clauses.append("book_id = ?")
-        params.append(book_id)
-    if not clauses:
-        return "", params
-    return " WHERE " + " AND ".join(clauses), params
+    where, params = _date_clause("ny_date", start, end)
+    for col, val in [("strategy_id", strategy_id), ("book_id", book_id)]:
+        if val:
+            joiner = " AND " if where else " WHERE "
+            where += f"{joiner}{col} = ?"
+            params.append(val)
+    return where, params
 
 
 def get_raec_dashboard(
@@ -1114,20 +1105,12 @@ def get_pnl(
 def _slippage_where(
     start: str | None, end: str | None, strategy_id: str | None
 ) -> tuple[str, list[Any]]:
-    clauses: list[str] = []
-    params: list[Any] = []
-    if start:
-        clauses.append("date_ny >= ?")
-        params.append(start)
-    if end:
-        clauses.append("date_ny <= ?")
-        params.append(end)
+    where, params = _date_clause("date_ny", start, end)
     if strategy_id:
-        clauses.append("strategy_id = ?")
+        joiner = " AND " if where else " WHERE "
+        where += f"{joiner}strategy_id = ?"
         params.append(strategy_id)
-    if not clauses:
-        return "", params
-    return " WHERE " + " AND ".join(clauses), params
+    return where, params
 
 
 def get_slippage_dashboard(
@@ -1224,20 +1207,7 @@ def get_slippage_dashboard(
 # ---------------------------------------------------------------------------
 
 
-def _portfolio_date_clause(
-    column: str, start: str | None, end: str | None
-) -> tuple[str, list[Any]]:
-    clauses: list[str] = []
-    params: list[Any] = []
-    if start:
-        clauses.append(f"{column} >= ?")
-        params.append(start)
-    if end:
-        clauses.append(f"{column} <= ?")
-        params.append(end)
-    if not clauses:
-        return "", params
-    return " WHERE " + " AND ".join(clauses), params
+_portfolio_date_clause = _date_clause
 
 
 def get_portfolio_overview(

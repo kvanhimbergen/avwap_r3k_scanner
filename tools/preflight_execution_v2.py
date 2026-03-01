@@ -57,7 +57,8 @@ def main() -> int:
     # Point Execution V2 at this working copy (prevents accidental /root writes on Mac).
     env["AVWAP_BASE_DIR"] = str(repo_root)
     env["AVWAP_STATE_DIR"] = str(repo_root / "state")
-    # Provide deterministic S2 defaults for dev/local runs (droplet typically sets these via .env/systemd).
+    # Dev/local defaults for S2 config; production values come from .env.
+    # If production config diverges, update these defaults to match.
     env.setdefault("S2_SLEEVES_JSON", '{"sleeves":{"S1_AVWAP_CORE":{"max_daily_loss_usd":250.0,"max_gross_exposure_usd":5000.0,"max_concurrent_positions":5}}}')
     env.setdefault("S2_DAILY_PNL_JSON", '{"S1_AVWAP_CORE":0.0}')
     # Force DRY_RUN semantics regardless of execution_mode routing.

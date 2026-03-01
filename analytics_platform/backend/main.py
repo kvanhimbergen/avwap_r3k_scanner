@@ -7,6 +7,7 @@ import uvicorn
 from analytics_platform.backend.app import create_app
 
 
+# Module-level app required by uvicorn import string "analytics_platform.backend.main:app"
 app = create_app()
 
 

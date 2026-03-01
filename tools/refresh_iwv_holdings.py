@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -20,7 +20,7 @@ def main() -> None:
     snapshot_path.write_text(raw_text)
 
     df = _clean_ishares_data(raw_text)
-    timestamp = datetime.now().isoformat(timespec="seconds")
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(
         "IWV holdings refreshed:",
         f"rows={len(df)}",
