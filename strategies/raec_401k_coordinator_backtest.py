@@ -8,9 +8,6 @@ from data.prices import PriceProvider
 from strategies.raec_401k_backtest import run_coordinator_backtest
 
 
-DEFAULT_CAPITAL_SPLIT = {"v3": 0.40, "v4": 0.30, "v5": 0.30}
-
-
 def run_backtest(
     *,
     start_date: str,
@@ -31,10 +28,12 @@ def run_backtest(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Backtest RAEC 401(k) Coordinator (V3+V4+V5).")
     parser.add_argument("--start", default="2022-01-01", help="Start date (YYYY-MM-DD)")
-    parser.add_argument("--end", default="2026-02-14", help="End date (YYYY-MM-DD)")
+    parser.add_argument("--end", default=None, help="End date (YYYY-MM-DD, default: today)")
     parser.add_argument("--capital", type=float, default=237_757.0, help="Total initial capital")
     args = parser.parse_args()
-    run_backtest(start_date=args.start, end_date=args.end, initial_capital=args.capital)
+    from datetime import date
+    end_date = args.end or date.today().isoformat()
+    run_backtest(start_date=args.start, end_date=end_date, initial_capital=args.capital)
     return 0
 
 

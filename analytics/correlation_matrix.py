@@ -68,7 +68,8 @@ def compute_rolling_correlation(
     # Pivot to get close prices per symbol per date
     prices = df.pivot_table(index="date", columns="symbol", values="close", aggfunc="last")
 
-    # Drop symbols with insufficient data
+    # Drop symbols with insufficient data (intentionally lenient to retain symbols
+    # with partial coverage; tighter thresholds would exclude too many ETFs)
     min_points = lookback_days // 2
     valid_cols = [c for c in prices.columns if prices[c].dropna().shape[0] >= min_points]
     if not valid_cols:

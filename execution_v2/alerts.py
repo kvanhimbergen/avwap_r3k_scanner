@@ -33,11 +33,6 @@ def send_alert(
         # Lazy import to avoid hard dependency at startup
         from alerts.slack import slack_alert  # existing infra
 
-        prefix = f"[{level.upper()}]"
-        if symbol:
-            prefix += f" [{symbol}]"
-
-        text = f"{prefix} {title}\n{message}"
         slack_alert(level.upper(), title, message, component="Trading", project=project)
 
     except Exception:

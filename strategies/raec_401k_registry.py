@@ -16,7 +16,11 @@ def register(strategy: BaseRAECStrategy) -> BaseRAECStrategy:
 
 
 def get(strategy_id: str) -> BaseRAECStrategy:
-    return _REGISTRY[strategy_id]
+    try:
+        return _REGISTRY[strategy_id]
+    except KeyError:
+        available = ", ".join(sorted(_REGISTRY)) or "(none registered)"
+        raise KeyError(f"Unknown strategy {strategy_id!r}; available: {available}") from None
 
 
 def all_strategies() -> dict[str, BaseRAECStrategy]:

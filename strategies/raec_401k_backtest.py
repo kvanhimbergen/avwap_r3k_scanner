@@ -11,6 +11,7 @@ from statistics import stdev
 
 from data.prices import PriceProvider, get_default_price_provider
 from strategies.raec_401k_base import BaseRAECStrategy
+from strategies.raec_401k_coordinator import DEFAULT_CAPITAL_SPLIT
 
 
 # ---------------------------------------------------------------------------
@@ -258,9 +259,6 @@ def print_backtest_results(
 # Coordinator backtest
 # ---------------------------------------------------------------------------
 
-DEFAULT_CAPITAL_SPLIT = {"v3": 0.40, "v4": 0.30, "v5": 0.30}
-
-
 def run_coordinator_backtest(
     *,
     start_date: str,
@@ -434,9 +432,11 @@ def main() -> int:
         help="Strategy to backtest (default: v3)",
     )
     parser.add_argument("--start", default="2022-01-01", help="Start date (YYYY-MM-DD)")
-    parser.add_argument("--end", default="2026-02-14", help="End date (YYYY-MM-DD)")
+    parser.add_argument("--end", default=None, help="End date (YYYY-MM-DD, default: today)")
     parser.add_argument("--capital", type=float, default=100_000.0, help="Initial capital")
     args = parser.parse_args()
+    if args.end is None:
+        args.end = date.today().isoformat()
 
     if args.strategy == "coordinator":
         run_coordinator_backtest(

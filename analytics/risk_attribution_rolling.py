@@ -172,7 +172,7 @@ def build_rolling_summary(
                 "decisions": int(agg["decisions"]),
             }
         )
-    top_symbols.sort(key=lambda item: (item["delta_notional"], item["symbol"]))
+    top_symbols.sort(key=lambda item: (-abs(item["delta_notional"]), item["symbol"]))
     top_symbols = top_symbols[:TOP_SYMBOLS_LIMIT]
 
     payload = {

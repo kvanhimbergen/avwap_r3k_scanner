@@ -11,7 +11,7 @@ This module must remain deterministic and side-effect free.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Optional
 
 
 @dataclass(frozen=True)

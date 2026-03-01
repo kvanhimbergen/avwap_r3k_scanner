@@ -88,7 +88,8 @@ def compute_e2_features(
         return e1_result
 
     e1 = e1_result.feature_set
-    assert e1 is not None
+    if e1 is None:
+        return e1_result
 
     try:
         df = normalize_columns(history)

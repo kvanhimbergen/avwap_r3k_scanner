@@ -134,7 +134,7 @@ class V5Strategy(BaseRAECStrategy):
 _strategy = register(V5Strategy(_CONFIG))
 
 # ---------------------------------------------------------------------------
-# Module-level backward-compatibility shims
+# Module-level shims (public constants + test-accessible helpers)
 # ---------------------------------------------------------------------------
 
 BOOK_ID = _strategy.BOOK_ID
@@ -149,25 +149,13 @@ DRIFT_THRESHOLD_PCT = _strategy.DRIFT_THRESHOLD_PCT
 TARGET_PORTFOLIO_VOL = _strategy.TARGET_PORTFOLIO_VOL
 MAX_SINGLE_ETF_WEIGHT = _strategy.MAX_SINGLE_ETF_WEIGHT
 
-# Functions
-_state_path = _strategy._state_path
-_load_state = _strategy._load_state
-_save_state = _strategy._save_state
+# Helpers exposed for tests (access internals through _strategy instance)
 _parse_date = _strategy._parse_date
 _get_cash_symbol = _strategy._get_cash_symbol
 _sorted_series = _strategy._sorted_series
-_compute_volatility = _strategy._compute_volatility
 _load_symbol_features = _strategy._load_symbol_features
 _rank_symbols = _strategy._rank_symbols
-_normalize_weights = _strategy._normalize_weights
-_apply_weight_cap = _strategy._apply_weight_cap
-_inverse_vol_weights = _strategy._inverse_vol_weights
-_corr = _strategy._corr
-_estimate_portfolio_vol = _strategy._estimate_portfolio_vol
-_weights_to_target_pct = _strategy._weights_to_target_pct
 _targets_for_regime = _strategy._targets_for_regime
-_compute_drift = _strategy._compute_drift
-_apply_turnover_cap = _strategy._apply_turnover_cap
 _build_intents = _strategy._build_intents
 _intent_id = _strategy._intent_id
 
@@ -175,10 +163,6 @@ _intent_id = _strategy._intent_id
 def _compute_anchor_signal(vti_series, qqq_series):
     """Dual-anchor signal (V5 signature: takes vti + qqq series)."""
     return _strategy._compute_dual_anchor_signal(vti_series, qqq_series)
-
-
-def _compute_single_anchor(series):
-    return _strategy._compute_single_anchor_dict(series)
 
 
 def run_strategy(**kwargs):

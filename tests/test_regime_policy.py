@@ -22,7 +22,7 @@ def test_regime_policy_mapping() -> None:
     missing = regime_to_throttle(None, None)
     assert missing["risk_multiplier"] == 0.0
     assert missing["max_new_positions_multiplier"] == 0.0
-    assert missing["reasons"] == ["missing_regime"]
+    assert missing["reasons"] == ["unknown_regime"]
 
 
 def test_regime_policy_low_confidence_haircut() -> None:

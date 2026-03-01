@@ -730,6 +730,7 @@ class BaseRAECStrategy:
         if total_buys <= max_weekly_turnover or total_buys == 0:
             return deltas
         scale = max_weekly_turnover / total_buys
+        # Intentionally scales all deltas (buys AND sells) to keep the portfolio balanced
         return {symbol: delta * scale for symbol, delta in deltas.items()}
 
     def _build_intents(

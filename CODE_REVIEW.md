@@ -869,104 +869,104 @@
 ## LOW Issues
 
 ### #93 - [LOW] Strategies: Backward-compat shims expose private methods as module-level names
-- [ ] Done
+- [x] Done
 - **Files:** `strategies/raec_401k_v3.py:66-85`, `raec_401k_v4.py`, `raec_401k_v5.py`
 - **Description:** Re-exports like `_save_state`, `_state_path` create tight coupling to base class internals.
-> Comment:
+> Comment: Removed all private method shims from v3, v4, v5. No external code imports them.
 
 ---
 
 ### #94 - [LOW] Strategies: `CoordinatorResult.sub_results` typed as `dict[str, object]`
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_coordinator.py:43`
 - **Description:** Should be `dict[str, RunResult]` for IDE support and static analysis.
-> Comment:
+> Comment: Changed all `dict[str, object]` and `result: object` types to use `RunResult` throughout coordinator.
 
 ---
 
 ### #95 - [LOW] Strategies: Registry `get()` raises bare KeyError with no context
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_registry.py:19`
 - **Description:** Should include available strategy names in the error message.
-> Comment:
+> Comment: Added try/except that re-raises KeyError with strategy name and list of available strategies.
 
 ---
 
 ### #96 - [LOW] Strategies: Backtest `--end` date hardcoded to `"2026-02-14"`
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_backtest.py:437`
 - **Description:** Will become stale. Use `date.today().isoformat()` as default.
-> Comment:
+> Comment: Changed default to None with `date.today().isoformat()` fallback in both backtest.py and coordinator_backtest.py.
 
 ---
 
 ### #97 - [LOW] Strategies: `DEFAULT_CAPITAL_SPLIT` defined in 3 places
-- [ ] Done
+- [x] Done
 - **Files:** `raec_401k_coordinator.py:31`, `raec_401k_backtest.py:261`, `raec_401k_coordinator_backtest.py:11`
 - **Description:** Triple definition of `{"v3": 0.40, "v4": 0.30, "v5": 0.30}`. Changes must be synced in 3 places.
-> Comment:
+> Comment: Single source of truth in coordinator.py; backtest.py imports from coordinator; coordinator_backtest.py had unused copy removed.
 
 ---
 
 ### #98 - [LOW] Strategies: `_apply_turnover_cap` scales sells too (not just buys)
-- [ ] Done
+- [x] Done
 - **File:** `strategies/raec_401k_base.py:718-728`
 - **Description:** Scale is computed from `total_buys` only, but applied to all deltas including sells. May be intentional but naming suggests buys-only.
-> Comment:
+> Comment: Added clarifying comment: intentionally scales all deltas (buys AND sells) to keep portfolio balanced.
 
 ---
 
 ### #99 - [LOW] Analytics: "STRESSED" regime maps to (0.0, 0.0) with misleading reason "missing_regime"
-- [ ] Done
+- [x] Done
 - **File:** `analytics/regime_policy.py:13-22`
 - **Description:** Should be an explicit mapping entry or distinct reason code.
-> Comment:
+> Comment: Added "STRESSED" as explicit mapping entry with "stressed_regime" reason; renamed fallback to "unknown_regime". Updated test.
 
 ---
 
 ### #100 - [LOW] Analytics: `correlation_matrix.py` -- `lookback_days // 2` is a loose threshold
-- [ ] Done
+- [x] Done
 - **File:** `analytics/correlation_matrix.py:72-73`
 - **Description:** Only 30 data points required for a 60-day window. May produce noisy correlations.
-> Comment:
+> Comment: Added clarifying comment explaining intentionally lenient threshold to retain ETFs with partial coverage.
 
 ---
 
 ### #101 - [LOW] Analytics: `risk_attribution_rolling.py` sorts "top symbols" ascending
-- [ ] Done
+- [x] Done
 - **File:** `analytics/risk_attribution_rolling.py:176`
 - **Description:** Sorts ascending by delta_notional, showing smallest impact first. "Top" usually implies largest.
-> Comment:
+> Comment: Changed sort to descending by absolute delta_notional so largest-impact symbols appear first.
 
 ---
 
 ### #102 - [LOW] Analytics: `regime_e2_features.py` uses bare `assert` for non-None check
-- [ ] Done
+- [x] Done
 - **File:** `analytics/regime_e2_features.py:90`
 - **Description:** `assert e1 is not None` can be stripped with `-O` flag. Use explicit `if` check in production code.
-> Comment:
+> Comment: Replaced bare assert with `if e1 is None: return e1_result` guard.
 
 ---
 
 ### #103 - [LOW] Analytics: `schwab_auth.py` prints partial credential to stdout
-- [ ] Done
+- [x] Done
 - **File:** `analytics/schwab_auth.py:30`
 - **Description:** First 8 chars of OAuth client ID printed. Low risk but could end up in logs.
-> Comment:
+> Comment: Reduced to first 4 chars with masking: `[:4]****`.
 
 ---
 
 ### #104 - [LOW] Execution: Unused import `Iterable` in `pivots.py`
-- [ ] Done
+- [x] Done
 - **File:** `execution_v2/pivots.py:4`
-> Comment:
+> Comment: Removed unused `Iterable` import.
 
 ---
 
 ### #105 - [LOW] Execution: Unused variable `text` in `alerts.py`
-- [ ] Done
+- [x] Done
 - **File:** `execution_v2/alerts.py:40`
-> Comment:
+> Comment: Removed unused `text` variable and `prefix` construction; `slack_alert` was already called directly.
 
 ---
 

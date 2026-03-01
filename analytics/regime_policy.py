@@ -14,13 +14,16 @@ def regime_to_throttle(regime_label: str | None, confidence: float | None) -> di
         "RISK_ON": (1.0, 1.0),
         "NEUTRAL": (0.6, 0.7),
         "RISK_OFF": (0.2, 0.3),
+        "STRESSED": (0.0, 0.0),
     }
 
     if normalized_label in mapping:
         risk_multiplier, max_new_positions_multiplier = mapping[normalized_label]
+        if normalized_label == "STRESSED":
+            reasons.append("stressed_regime")
     else:
         risk_multiplier, max_new_positions_multiplier = (0.0, 0.0)
-        reasons.append("missing_regime")
+        reasons.append("unknown_regime")
 
     if confidence is not None and confidence < 0.6:
         risk_multiplier *= 0.5

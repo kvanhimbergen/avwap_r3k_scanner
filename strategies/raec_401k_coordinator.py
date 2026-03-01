@@ -13,7 +13,7 @@ from data.prices import PriceProvider, get_default_price_provider
 from execution_v2 import book_ids, book_router
 from execution_v2.schwab_manual_adapter import slack_post_enabled
 from strategies import raec_401k_v3, raec_401k_v4, raec_401k_v5  # noqa: F401 — ensure registration
-from strategies.raec_401k_base import BaseRAECStrategy
+from strategies.raec_401k_base import BaseRAECStrategy, RunResult
 from strategies.raec_401k_registry import get as _get_strategy
 from utils.atomic_write import atomic_write_text
 
@@ -40,7 +40,7 @@ SUB_STRATEGIES: dict[str, BaseRAECStrategy] = {
 @dataclass(frozen=True)
 class CoordinatorResult:
     asof_date: str
-    sub_results: dict[str, object]
+    sub_results: dict[str, RunResult]
     capital_split: dict[str, float]
     rebalanced: list[str]
     posted: list[str]
@@ -120,7 +120,7 @@ def run_coordinator(
             cap = 0.0
 
     # Run each sub-strategy with dry_run=True, allow_state_write=True
-    sub_results: dict[str, object] = {}
+    sub_results: dict[str, RunResult] = {}
     for key, strategy in SUB_STRATEGIES.items():
         pct = split.get(key, 0.0) * 100.0
         sub_cap = cap * split.get(key, 0.0)
@@ -234,7 +234,7 @@ def run_coordinator(
 def _build_no_trades_message(
     *,
     asof_date: str,
-    sub_results: dict[str, object],
+    sub_results: dict[str, RunResult],
     split: dict[str, float],
 ) -> str:
     lines = [
@@ -254,7 +254,7 @@ def _build_no_trades_message(
 def _build_sub_ticket(
     *,
     key: str,
-    result: object,
+    result: RunResult,
     split: dict[str, float],
     cap: float,
 ) -> str:

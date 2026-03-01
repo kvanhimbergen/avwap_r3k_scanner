@@ -65,4 +65,4 @@ def test_portfolio_throttle_writer_missing_regime(tmp_path: Path) -> None:
     throttle = record["throttle"]
     assert throttle["risk_multiplier"] == 0.0
     assert throttle["max_new_positions_multiplier"] == 0.0
-    assert throttle["reasons"] == ["missing_regime", "missing_regime_ledger"]
+    assert throttle["reasons"] == ["unknown_regime", "missing_regime_ledger"]

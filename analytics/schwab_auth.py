@@ -27,7 +27,7 @@ def run_auth_flow() -> int:
     import schwab
 
     print(f"Starting OAuth flow ...")
-    print(f"  client_id:    {config.client_id[:8]}...")
+    print(f"  client_id:    {config.client_id[:4]}****")
     print(f"  redirect_uri: {config.redirect_uri}")
     print(f"  token_path:   {config.token_path}")
     print()
