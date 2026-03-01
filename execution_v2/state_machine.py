@@ -94,7 +94,8 @@ class SymbolExecutionStateStore:
             return
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as exc:
+            print(f"[state_machine] WARN: corrupt state file {self.path}: {exc}", flush=True)
             self._loaded = True
             return
         self.snapshot = SymbolExecutionSnapshot.from_dict(payload, self.date_ny)
@@ -216,7 +217,8 @@ class ConsumedEntriesStore:
             return
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as exc:
+            print(f"[state_machine] WARN: corrupt consumed-entries file {self.path}: {exc}", flush=True)
             self._loaded = True
             return
         consumed = payload.get("consumed") or []

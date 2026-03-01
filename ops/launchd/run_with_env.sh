@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-REPO_DIR="/Users/kevinvanhimbergen/avwap_r3k_scanner"
+REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_DIR"
 
 set -a

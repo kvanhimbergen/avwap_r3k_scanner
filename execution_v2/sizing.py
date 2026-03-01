@@ -71,4 +71,3 @@ def compute_size_shares(
 
     shares = int(dollar_alloc // price)
     return max(shares, 0)
-# Execution V2 placeholder: sizing.py

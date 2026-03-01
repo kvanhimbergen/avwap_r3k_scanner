@@ -217,4 +217,3 @@ def from_env() -> MarketData:
     if not key or not sec:
         raise RuntimeError("Missing Alpaca API credentials in environment")
     return MarketData(MarketDataConfig(api_key=key, api_secret=sec))
-# Execution V2 placeholder: market_data.py

@@ -75,4 +75,3 @@ def compute_pivot_levels(
         r1=r1,
         r2=r2,
     )
-# Execution V2 placeholder: pivots.py

@@ -48,7 +48,7 @@ def slope(series: pd.Series, lookback: int = 20) -> pd.Series:
         den = ((x - x_mean) ** 2).sum()
         return num / den if den != 0 else np.nan
 
-    return series.rolling(lookback, min_periods=lookback).apply(lambda y: _slope(y.values), raw=False)
+    return series.rolling(lookback, min_periods=lookback).apply(lambda y: _slope(y), raw=True)
 
 def rsi(close: pd.Series, n: int = 14) -> pd.Series:
     """Relative Strength Index"""

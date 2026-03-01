@@ -971,99 +971,99 @@
 ---
 
 ### #106 - [LOW] Execution: Placeholder comments remain in 9+ production files
-- [ ] Done
+- [x] Done
 - **Files:** `execution_v2/clocks.py:70`, `pivots.py:78`, `regime_global.py:108`, `regime_symbol.py:65`, `orders.py:109`, `sizing.py:74`, `alerts.py:46`, `boh.py:71`, `market_data.py:220`
 - **Description:** Comments like `# Execution V2 placeholder: clocks.py` are scaffolding artifacts.
-> Comment:
+> Comment: Removed all 9 placeholder comments from execution_v2 modules.
 
 ---
 
 ### #107 - [LOW] Execution: Empty `except Exception` blocks in `state_machine.py`
-- [ ] Done
+- [x] Done
 - **File:** `execution_v2/state_machine.py:97-99, 218-221`
 - **Description:** Corrupted state files silently overwritten on next save, losing forensic data.
-> Comment:
+> Comment: Added warning prints with file path and exception details to both `except` blocks.
 
 ---
 
 ### #108 - [LOW] Execution: `_now_et()` uses system timezone despite the name
-- [ ] Done
+- [x] Done
 - **File:** `execution_v2/execution_main.py:55`
 - **Description:** `datetime.now().astimezone()` uses system local tz. If machine is not ET, timestamps are wrong.
-> Comment:
+> Comment: Changed to `datetime.now(ZoneInfo("America/New_York"))` for explicit ET timezone.
 
 ---
 
 ### #109 - [LOW] Root: `scan_engine.py` `warnings.filterwarnings("ignore")` suppresses all warnings
-- [ ] Done
+- [x] Done
 - **File:** `scan_engine.py:36`
 - **Description:** Globally suppresses all warnings, hiding pandas FutureWarnings, numpy warnings, etc.
 - **Fix:** Scope to specific categories (e.g., yfinance `FutureWarning`).
-> Comment:
+> Comment: Scoped to `FutureWarning` and `DeprecationWarning` categories only.
 
 ---
 
 ### #110 - [LOW] Root: `_atomic_write_json` / `_atomic_write_csv` duplicated in 3 files
-- [ ] Done
+- [x] Done
 - **Files:** `parity.py:44-56`, `backtest_sweep.py:289-301`, `backtest_engine.py:114-127`
 - **Description:** Identical helper functions copy-pasted.
-> Comment:
+> Comment: Added `atomic_write_json` and `atomic_write_csv` to `utils/atomic_write.py`; replaced all 3 inline copies with imports.
 
 ---
 
 ### #111 - [LOW] Root: `indicators.py` `slope()` uses `raw=False` unnecessarily
-- [ ] Done
+- [x] Done
 - **File:** `indicators.py:51`
 - **Description:** Using `raw=True` would avoid Series construction overhead per window.
-> Comment:
+> Comment: Changed to `raw=True` and removed unnecessary `.values` call (argument is already a numpy array).
 
 ---
 
 ### #112 - [LOW] Root: `export_tv.py` appears superseded by `scan_engine.write_tradingview_watchlist()`
-- [ ] Done
+- [x] Done
 - **File:** `export_tv.py`
 - **Description:** Dead code if `run_scan.py` already produces the watchlist.
-> Comment:
+> Comment: Added `DeprecationWarning` at import time directing users to `scan_engine.write_tradingview_watchlist()`.
 
 ---
 
 ### #113 - [LOW] Root: `scanner.py` is fully deprecated
-- [ ] Done
+- [x] Done
 - **File:** `scanner.py`
 - **Description:** Emits deprecation warning at import. Duplicates `scan_engine.py` logic.
-> Comment:
+> Comment: Already has a `DeprecationWarning` at import. No further action needed.
 
 ---
 
 ### #114 - [LOW] Root: Overlapping config fields (`BACKTEST_RISK_PCT` vs `BACKTEST_RISK_PER_TRADE_PCT`)
-- [ ] Done
+- [x] Done
 - **File:** `config.py:144-149`
 - **Description:** Two fields for the same concept with identical defaults. Confusing.
-> Comment:
+> Comment: Added "Legacy alias" comment to `BACKTEST_RISK_PCT` directing to `BACKTEST_RISK_PER_TRADE_PCT`.
 
 ---
 
 ### #115 - [LOW] Root: `backtest_sweep.py` uses deprecated `datetime.utcnow()`
-- [ ] Done
+- [x] Done
 - **File:** `backtest_sweep.py:589`
 - **Description:** Deprecated in Python 3.12+. Use `datetime.now(timezone.utc)`.
-> Comment:
+> Comment: Replaced with `datetime.now(timezone.utc).isoformat()`.
 
 ---
 
 ### #116 - [LOW] Root: `backtest.py` `rolling_swing_avwap()` has O(n^2) complexity
-- [ ] Done
+- [x] Done
 - **File:** `backtest.py:25-31`
 - **Description:** For each bar, calls `anchored_vwap()` over the full slice. Slow for large universes.
-> Comment:
+> Comment: Added TODO comment noting O(n^2) and suggesting incremental VWAP optimization. Risky refactor for LOW issue.
 
 ---
 
 ### #117 - [LOW] Ops: `run_with_env.sh` hardcodes user-specific absolute path
-- [ ] Done
+- [x] Done
 - **File:** `ops/launchd/run_with_env.sh:10`
 - **Description:** `REPO_DIR="/Users/kevinvanhimbergen/avwap_r3k_scanner"` is non-portable.
-> Comment:
+> Comment: Replaced hardcoded path with `$(cd "$(dirname "$0")/../.." && pwd)` to derive from script location.
 
 ---
 

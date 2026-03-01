@@ -111,19 +111,7 @@ def _normalize_date(value: str | date | datetime | pd.Timestamp) -> pd.Timestamp
     return ts.normalize()
 
 
-def _atomic_write_csv(df: pd.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    df.to_csv(tmp_path, index=False)
-    os.replace(tmp_path, path)
-
-
-def _atomic_write_json(payload: dict, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
-    os.replace(tmp_path, path)
+from utils.atomic_write import atomic_write_json as _atomic_write_json, atomic_write_csv as _atomic_write_csv
 
 
 def _round_series(series: pd.Series, decimals: int = 4) -> pd.Series:

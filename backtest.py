@@ -23,6 +23,7 @@ def market_regime_series(index_df: pd.DataFrame, chop_band_pct: float = 0.01) ->
     return reg
 
 def rolling_swing_avwap(df: pd.DataFrame) -> pd.Series:
+    # TODO: O(n^2) — each bar calls anchored_vwap over full slice; optimize with incremental VWAP if perf matters
     av = pd.Series(index=df.index, dtype=float)
     for i in range(cfg.SWING_LOOKBACK, len(df)):
         window = df.iloc[i-cfg.SWING_LOOKBACK:i+1]

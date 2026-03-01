@@ -38,4 +38,3 @@ def send_alert(
     except Exception:
         _safe_print("[alerts] Slack alert failed:")
         traceback.print_exc(file=sys.stdout)
-# Execution V2 placeholder: alerts.py

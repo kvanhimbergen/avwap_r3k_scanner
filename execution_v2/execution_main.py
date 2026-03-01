@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
 
 def _now_et() -> str:
-    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    return datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 def _log(msg: str) -> None:

@@ -1,3 +1,11 @@
+import warnings
+
+warnings.warn(
+    "export_tv.py is deprecated. scan_engine.write_tradingview_watchlist() handles TV export.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import pandas as pd
 import os
 

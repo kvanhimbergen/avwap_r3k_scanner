@@ -68,4 +68,3 @@ def boh_confirmed_option2(
         return BOHResult(True, break_bar_ts=bar_prev.ts, confirm_bar_ts=bar_last.ts)
 
     return BOHResult(False)
-# Execution V2 placeholder: boh.py

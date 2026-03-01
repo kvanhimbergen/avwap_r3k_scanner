@@ -105,4 +105,3 @@ def classify_global_regime(spy_daily: list[DailyBar], cfg: GlobalRegimeConfig) -
         return GlobalRegime.DEFENSIVE
 
     return GlobalRegime.NORMAL
-# Execution V2 placeholder: regime_global.py

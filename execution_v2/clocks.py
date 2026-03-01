@@ -67,4 +67,3 @@ def snapshot_at(dt_et: datetime) -> ClockSnapshot:
         market_open=market_open,
         entry_window_open=entry_window_open,
     )
-# Execution V2 placeholder: clocks.py

@@ -62,4 +62,3 @@ def classify_symbol_regime(x: SymbolInputs, cfg: SymbolRegimeConfig) -> SymbolRe
         return SymbolRegime.HOLD_ONLY
 
     return SymbolRegime.ADD if x.has_position else SymbolRegime.ENTER
-# Execution V2 placeholder: regime_symbol.py

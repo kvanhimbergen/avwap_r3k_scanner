@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
+
+import pandas as pd
 
 
 def _fsync_dir(path: Path) -> None:
@@ -71,3 +74,20 @@ def atomic_append_line(path: str | Path, line: str) -> None:
     finally:
         os.close(fd)
     _fsync_dir(target.parent)
+
+
+def atomic_write_json(payload: dict, path: str | Path) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target.with_suffix(target.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+    os.replace(tmp_path, target)
+
+
+def atomic_write_csv(df: pd.DataFrame, path: str | Path) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target.with_suffix(target.suffix + ".tmp")
+    df.to_csv(tmp_path, index=False)
+    os.replace(tmp_path, target)

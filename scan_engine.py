@@ -33,7 +33,8 @@ from universe import load_universe
 # --- Global Config & Tracking ---
 BAD_TICKERS: set[str] = set()
 PBT_DIAG = Counter()
-warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 EARNINGS_CACHE_PATH = Path("cache/earnings_cache.json")
 
 # ALGO TWEAK CONFIGS
