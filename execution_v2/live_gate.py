@@ -26,9 +26,9 @@ def _truthy(value: str) -> bool:
 def _state_dir(override: Optional[str] = None) -> str:
     if override:
         return override
-    base = os.getenv("AVWAP_STATE_DIR", "/root/avwap_r3k_scanner/state").strip()
+    base = os.getenv("AVWAP_STATE_DIR", "").strip()
     if not base:
-        return "/root/avwap_r3k_scanner/state"
+        return str(Path(__file__).resolve().parents[1] / "state")
     return base
 
 

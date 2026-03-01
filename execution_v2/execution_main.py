@@ -2730,7 +2730,9 @@ def run_once(cfg) -> None:
                         consumed_entries_store.mark(intent.symbol, datetime.now(timezone.utc))
                     projected_open_positions += 1
                     if effective_dry_run:
-                        ledgers_written.append("/root/avwap_r3k_scanner/state/dry_run_ledger.json")
+                        ledgers_written.append(
+                            str(Path(__file__).resolve().parents[1] / "state" / "dry_run_ledger.json")
+                        )
                 candidate_notes = store.get_candidate_notes(intent.symbol) or "scan:n/a"
                 send_verbose_alert(
                     "TRADE",

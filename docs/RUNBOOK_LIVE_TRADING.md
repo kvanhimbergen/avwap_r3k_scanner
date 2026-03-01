@@ -3,13 +3,7 @@
 ## 1) Purpose & Scope
 - **Default mode is DRY_RUN.** Live orders are **OFF** unless explicitly enabled by the two-key gate. This is a safety-first runbook for enabling LIVE intentionally.
 - **No strategy changes are in scope.** This runbook only covers operating the existing execution pipeline safely.
-- **No systemd units are committed to git.** All systemd changes are deployment-only and should remain local.
-
-**Operational clarification (important):**
-- All systemd configuration changes must be made using **drop-in files** on the droplet only.
-- Use: `/etc/systemd/system/execution.service.d/*.conf`
-- Do **not** copy systemd unit files or drop-ins into this repository.
-- Before committing any changes, run `git status` and confirm **no systemd files appear**.
+- **No service configuration is committed to git.** Service management (launchd plists, env files) should remain local.
 
 
 ## 2) Safety Model Summary (plain English)
@@ -28,12 +22,7 @@
 - [ ] **Broker credentials configured** (APCA_API_KEY_ID / APCA_API_SECRET_KEY present on the host).
 - [ ] **Phase S2 sleeves configured** (S2_SLEEVES_FILE or S2_SLEEVES_JSON present; active strategies mapped; unsleeved blocked unless explicitly allowed).  
 - [ ] **System time/timezone are correct** (host clock aligned; logs show ET timestamps).
-- [ ] **execution.service is running** and **DRY_RUN is enforced** via a systemd drop-in or environment.
-
-**Safe inspection commands (examples):**
-- `systemctl status execution.service`
-- `journalctl -u execution.service -n 200 --no-pager`
-- `date`
+- [ ] **Execution service is running** and **DRY_RUN is enforced** via environment variables.
 
 ## 3.5) Go / No-Go Gate Before Enabling LIVE (Hard Requirement)
 
@@ -55,7 +44,7 @@ If any item above is not satisfied, do **not** proceed.
 
 ### 4.1 Generate a confirm token file (safe)
 ```bash
-STATE_DIR="${AVWAP_STATE_DIR:-/root/avwap_r3k_scanner/state}"
+STATE_DIR="${AVWAP_STATE_DIR:-./state}"
 mkdir -p "${STATE_DIR}"
 TOKEN="$(openssl rand -hex 16)"
 printf "%s" "${TOKEN}" > "${STATE_DIR}/live_confirm_token.txt"
@@ -63,7 +52,7 @@ chmod 600 "${STATE_DIR}/live_confirm_token.txt"
 ```
 
 ### 4.2 Configure environment variables (operator action guidance)
-Set **both** of the following in the systemd drop-in or service environment (do **not** commit changes to git):
+Set **both** of the following in the service environment (do **not** commit changes to git):
 ```bash
 LIVE_TRADING=1
 LIVE_CONFIRM_TOKEN=<paste token from live_confirm_token.txt>
@@ -79,18 +68,14 @@ MAX_LIVE_NOTIONAL_PER_SYMBOL=250
 ```
 
 ### 4.3 Ensure DRY_RUN is removed only after two-key is set
-- Confirm the drop-in (or environment source) includes `LIVE_TRADING=1` and `LIVE_CONFIRM_TOKEN`.
+- Confirm the environment source includes `LIVE_TRADING=1` and `LIVE_CONFIRM_TOKEN`.
 - **Then** remove/override `DRY_RUN=1` in the same place.
-- Reload and restart the service:
-```bash
-systemctl daemon-reload
-systemctl restart execution.service
-```
+- Restart the execution service.
 
 ### 4.4 Live ledger requirement
 The live ledger must exist at:
 ```
-${AVWAP_BASE_DIR:-/root/avwap_r3k_scanner}/ledger/ALPACA_LIVE/<YYYY-MM-DD>.jsonl
+${AVWAP_BASE_DIR:-.}/ledger/ALPACA_LIVE/<YYYY-MM-DD>.jsonl
 ```
 **Behavior:** If the ledger is missing or unreadable, LIVE is **blocked for that cycle** and the system remains in DRY_RUN. This is fail-closed.
 
@@ -99,14 +84,14 @@ ${AVWAP_BASE_DIR:-/root/avwap_r3k_scanner}/ledger/ALPACA_LIVE/<YYYY-MM-DD>.jsonl
 This procedure allows controlled exposure for one session/day.
 
 **Enable (pre-market):**
-- Set `LIVE_TRADING=1` and `LIVE_CONFIRM_TOKEN` in the systemd drop-in.
+- Set `LIVE_TRADING=1` and `LIVE_CONFIRM_TOKEN` in the environment.
 - Ensure caps and allowlist are conservative.
 - Remove or override `DRY_RUN=1`.
 - Restart the service and confirm logs show:
   - `Gate mode=LIVE status=PASS ...`
 
 **Disable (after market close):**
-- Re-enable `DRY_RUN=1` in the same systemd drop-in.
+- Re-enable `DRY_RUN=1` in the environment.
 - Optionally remove `LIVE_TRADING=1`.
 - Restart the service.
 - Confirm logs show:
@@ -241,24 +226,22 @@ MAX_RISK_PER_SHARE_DOLLARS=3.00
 ## 7) Emergency Procedures (No thinking required)
 ### Immediate disable via env kill switch
 ```bash
-# In systemd drop-in or service env
+# In service environment
 KILL_SWITCH=1
-systemctl daemon-reload
-systemctl restart execution.service
+# Then restart the execution service
 ```
 
 ### Immediate disable via state file kill switch
 ```bash
-STATE_DIR="${AVWAP_STATE_DIR:-/root/avwap_r3k_scanner/state}"
+STATE_DIR="${AVWAP_STATE_DIR:-./state}"
 touch "${STATE_DIR}/KILL_SWITCH"
 ```
 
 ### Fallback: force DRY_RUN
 ```bash
-# In systemd drop-in or service env
+# In service environment
 DRY_RUN=1
-systemctl daemon-reload
-systemctl restart execution.service
+# Then restart the execution service
 ```
 
 ### Confirm shutdown state
@@ -291,8 +274,8 @@ systemctl restart execution.service
 - `LIVE_TRADING=1` → **required** for LIVE.
 - `LIVE_CONFIRM_TOKEN` → **required** and must match file.
 - `KILL_SWITCH=1` → disables LIVE immediately.
-- `AVWAP_STATE_DIR` → overrides state dir (default: `/root/avwap_r3k_scanner/state`).
-- `AVWAP_BASE_DIR` → overrides repo root (default: `/root/avwap_r3k_scanner`).
+- `AVWAP_STATE_DIR` → overrides state dir (default: `<repo-root>/state`).
+- `AVWAP_BASE_DIR` → overrides repo root (default: derived from script location).
 - `ALLOWLIST_SYMBOLS` → comma-separated; empty allows all.
 - `PHASE_C=1` → enables Phase C constraints (one-day permit + single-symbol allowlist).
 - `LIVE_ENABLE_DATE_NY` → required when `PHASE_C=1`; must match today's NY date (YYYY-MM-DD).
@@ -302,16 +285,11 @@ systemctl restart execution.service
 - `MAX_LIVE_NOTIONAL_PER_SYMBOL` (default **1000.0**)
 
 ### File paths (Phase 6)
-- State dir: `/root/avwap_r3k_scanner/state` (override via `AVWAP_STATE_DIR`)
+- State dir: `<repo-root>/state` (override via `AVWAP_STATE_DIR`)
 - Kill switch file: `${STATE_DIR}/KILL_SWITCH`
 - Confirm token file: `${STATE_DIR}/live_confirm_token.txt`
-- Live ledger: `${AVWAP_BASE_DIR:-/root/avwap_r3k_scanner}/ledger/ALPACA_LIVE/<YYYY-MM-DD>.jsonl`
+- Live ledger: `${AVWAP_BASE_DIR:-.}/ledger/ALPACA_LIVE/<YYYY-MM-DD>.jsonl`
 
 ### Safe inspection commands
-- `systemctl status execution.service`
-- `systemctl cat execution.service`
-- `systemctl cat execution.service.d/override.conf`
-- `journalctl -u execution.service -n 200 --no-pager`
-- `journalctl -u execution.service --since "today" --no-pager`
 - `cat ${STATE_DIR}/live_confirm_token.txt`
-- `cat ${AVWAP_BASE_DIR:-/root/avwap_r3k_scanner}/ledger/ALPACA_LIVE/<YYYY-MM-DD>.jsonl`
+- `cat ${AVWAP_BASE_DIR:-.}/ledger/ALPACA_LIVE/<YYYY-MM-DD>.jsonl`

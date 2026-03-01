@@ -170,9 +170,9 @@ def _watchlist_path_from_env() -> str:
     watchlist_file = os.getenv("WATCHLIST_FILE", "daily_candidates.csv").strip()
     if os.path.isabs(watchlist_file):
         return watchlist_file
-    base_dir = os.getenv("AVWAP_BASE_DIR", "/root/avwap_r3k_scanner").strip()
+    base_dir = os.getenv("AVWAP_BASE_DIR", "").strip()
     if not base_dir:
-        base_dir = os.getcwd()
+        base_dir = str(Path(__file__).resolve().parents[1])
     return os.path.join(base_dir, watchlist_file)
 
 
@@ -332,9 +332,10 @@ def maybe_send_daily_summary(
     resolved_mode = execution_mode or ("DRY_RUN" if dry_run else "LIVE")
     display = _display_mode(resolved_mode)
     if resolved_mode == "DRY_RUN":
+        _repo = str(Path(__file__).resolve().parents[1])
         ledger_path = ledger_path or os.getenv(
             "DRY_RUN_LEDGER_PATH",
-            "/root/avwap_r3k_scanner/state/dry_run_ledger.json",
+            os.path.join(_repo, "state", "dry_run_ledger.json"),
         )
         message = build_dry_run_daily_summary(ledger_path, today)
         title = f"Daily summary ({display})"
@@ -342,7 +343,7 @@ def maybe_send_daily_summary(
         from execution_v2 import alpaca_paper
 
         path = ledger_path or os.path.join(
-            os.getenv("AVWAP_BASE_DIR", "/root/avwap_r3k_scanner"),
+            os.getenv("AVWAP_BASE_DIR", _repo),
             "ledger",
             "ALPACA_PAPER",
             f"{today}.jsonl",

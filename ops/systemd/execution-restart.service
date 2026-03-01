@@ -1,6 +1,0 @@
-[Unit]
-Description=AVWAP Bot - Restart Execution After Daily Scan
-
-[Service]
-Type=oneshot
-ExecStart=/bin/systemctl restart execution.service

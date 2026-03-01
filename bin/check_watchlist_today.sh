@@ -2,7 +2,7 @@
 set -euo pipefail
 
 WATCHLIST_FILE="${WATCHLIST_FILE:-daily_candidates.csv}"
-BASE_DIR="/root/avwap_r3k_scanner"
+BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 FILE_PATH="${BASE_DIR}/${WATCHLIST_FILE}"
 
 if [[ ! -f "${FILE_PATH}" ]]; then

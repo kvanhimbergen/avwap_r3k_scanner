@@ -33,7 +33,7 @@ Safety: when `DRY_RUN=1`, LIVE cannot be enabled accidentally even if `EXECUTION
 
 | Mode | Uses Alpaca broker | Uses synthetic fills | Ledger location | When to use |
 | --- | --- | --- | --- | --- |
-| DRY_RUN | No | Yes (logging only) | `/root/avwap_r3k_scanner/state/dry_run_ledger.json` | Safe no-order validation of scheduling/gates. |
+| DRY_RUN | No | Yes (logging only) | `state/dry_run_ledger.json` | Safe no-order validation of scheduling/gates. |
 | PAPER_SIM | No | Yes (deterministic fills) | `ledger/PAPER_SIM/<YYYY-MM-DD>.jsonl` | Deterministic evaluation of fills/positions/PnL. |
 | ALPACA_PAPER | Yes (APCA keys + paper base URL) | No | `ledger/ALPACA_PAPER/<YYYY-MM-DD>.jsonl` | Broker-integrated paper trading with real order status/fills. |
 | LIVE | Yes (live keys) | No | Live broker only (no persistent ledger) | Production execution. |

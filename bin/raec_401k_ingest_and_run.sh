@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_DIR="/root/avwap_r3k_scanner"
+BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_PYTHON="${BASE_DIR}/venv/bin/python"
 TODAY_NY="$(TZ=America/New_York date +%F)"
 

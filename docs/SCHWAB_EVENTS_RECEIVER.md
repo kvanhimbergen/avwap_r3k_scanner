@@ -18,24 +18,10 @@ export SLACK_EVENTS_CHANNEL_ID="C1234567890"
 python -m execution_v2.slack_events_receiver
 ```
 
-## Example systemd Unit (Droplet)
-```ini
-[Unit]
-Description=AVWAP Schwab Slack Events Receiver
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/root/avwap_r3k_scanner
-Environment=SLACK_SIGNING_SECRET=...
-Environment=SLACK_EVENTS_CHANNEL_ID=C1234567890
-Environment=SLACK_EVENTS_BIND_HOST=0.0.0.0
-Environment=SLACK_EVENTS_BIND_PORT=8081
-ExecStart=/usr/bin/python -m execution_v2.slack_events_receiver
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
+## Example launchd / service configuration
+Set the required environment variables and run:
+```bash
+python -m execution_v2.slack_events_receiver
 ```
 
 ## Confirmation Grammar (Threaded Reply)
