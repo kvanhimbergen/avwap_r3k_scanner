@@ -27,8 +27,7 @@ function todayNY(): string {
 }
 
 export function TradePage() {
-  const date = todayNY();
-  const trades = usePolling(() => api.todaysTrades({ date }), 30_000);
+  const trades = usePolling(() => api.todaysTrades({ date: todayNY() }), 30_000);
 
   const data = (trades.data?.data ?? {}) as Record<string, unknown>;
   const coordinator = data.coordinator as Record<string, unknown> | null;
@@ -78,7 +77,7 @@ export function TradePage() {
 
       {/* KPI Row */}
       {loading ? (
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <SkeletonCard /><SkeletonCard /><SkeletonCard /><SkeletonCard />
         </div>
       ) : (

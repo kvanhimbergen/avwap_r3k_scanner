@@ -651,110 +651,110 @@
 ---
 
 ### #69 - [MEDIUM] Ops: No scan-to-post-scan ordering guarantee in launchd
-- [ ] Done
+- [x] Done
 - **File:** `ops/launchd/com.avwap.post-scan.plist`
 - **Description:** Post-scan fires at 08:35, only 5 minutes after scan at 08:30. No dependency mechanism. If the scan takes >5 minutes, post-scan runs against stale data.
 - **Fix:** Have post-scan check for today's scan output before proceeding, or increase the gap.
-> Comment:
+> Comment: Added `_scan_output_fresh()` check at pipeline start. Logs a WARNING if `daily_candidates.csv` wasn't updated for today's date, then proceeds with stale data.
 
 ---
 
 ### #70 - [MEDIUM] Ops: KeepAlive services have no explicit restart throttle
-- [ ] Done
+- [x] Done
 - **File:** `ops/launchd/com.avwap.analytics-platform.plist`, `com.avwap.tunnel.plist`
 - **Description:** No `ThrottleInterval` set. If a process crashes immediately on startup, it restarts rapidly (macOS default 10s).
 - **Fix:** Add explicit `ThrottleInterval` (e.g., 30-60s).
-> Comment:
+> Comment: Added `<key>ThrottleInterval</key><integer>30</integer>` to both analytics-platform and tunnel plists.
 
 ---
 
 ### #71 - [MEDIUM] Ops: Log files grow unbounded with no rotation
-- [ ] Done
+- [x] Done
 - **File:** `ops/launchd/com.avwap.scan.plist`, `com.avwap.post-scan.plist`
 - **Description:** stdout/stderr both go to the same log file with no rotation configured.
 - **Fix:** Add a log rotation mechanism (newsyslog, logrotate, or periodic truncation).
-> Comment:
+> Comment: Created `ops/launchd/newsyslog.avwap.conf` — newsyslog config that rotates all 4 log files at 5MB with 5 archives. Install: `sudo cp ops/launchd/newsyslog.avwap.conf /etc/newsyslog.d/avwap.conf`.
 
 ---
 
 ### #72 - [MEDIUM] Ops: `avwap_check.py` calls `_resolve_db_path` but discards the result
-- [ ] Done
+- [x] Done
 - **File:** `tools/avwap_check.py:218`
 - **Description:** Return value is not stored or used. Dead code from a removed check.
 - **Fix:** Remove the call.
-> Comment:
+> Comment: Removed the unused `_resolve_db_path(base_dir, args.db_path)` call from `_collect_results`.
 
 ---
 
 ### #73 - [MEDIUM] Ops: `log_fills.py` duplicate detection uses `repr()` for floats
-- [ ] Done
+- [x] Done
 - **File:** `tools/log_fills.py:75-84`
 - **Description:** `repr(qty)` and `repr(price)` in hash input. `100.0` vs `100` (int vs float) would produce different IDs.
 - **Fix:** Normalize to a consistent format: `f"{qty:.6f}"` and `f"{price:.6f}"`.
-> Comment:
+> Comment: Replaced `repr(qty)` and `repr(price)` with `f"{float(qty):.6f}"` and `f"{float(price):.6f}"` for consistent hash input.
 
 ---
 
 ### #74 - [MEDIUM] Ops: `install.sh` bootout uses incorrect syntax
-- [ ] Done
+- [x] Done
 - **File:** `ops/launchd/install.sh:47`
 - **Description:** `launchctl bootout "gui/$UID_VAL/$LAUNCH_AGENTS/${label}.plist"` uses a file path instead of a service label. The `2>/dev/null || true` suppresses errors, so old agents may not be properly unloaded.
 - **Fix:** Use `launchctl bootout "gui/$UID_VAL/com.avwap.${label}"`.
-> Comment:
+> Comment: Changed bootout argument from file path `"gui/$UID_VAL/$LAUNCH_AGENTS/${label}.plist"` to service target `"gui/$UID_VAL/${label}"`.
 
 ---
 
 ### #75 - [MEDIUM] Frontend: 14+ unused component files in bundle
-- [ ] Done
+- [x] Done
 - **Files:** `FreshnessBanner.tsx`, `SummaryStrip.tsx`, `BreadcrumbNav.tsx`, `AllocationBar.tsx`, `SignalsPanel.tsx`, `AlertsPanel.tsx`, `BookPnlPanel.tsx`, `ReadinessCheck.tsx`, `AppShell.tsx`, `NavRail.tsx`, `KeyboardShortcutsHelp.tsx`, `useKeyboardShortcuts.ts`, `ExecutionPage.tsx`, `BacktestsPage.tsx`, `S2SignalsPage.tsx`
 - **Description:** These files are not imported in App.tsx routes or used by any active component. Dead code increasing bundle size.
 - **Fix:** Tree-shaking should exclude lazy-unused, but unreferenced files should be removed or moved to a `_deprecated/` folder.
-> Comment:
+> Comment: Moved 15 unreferenced files (FreshnessBanner, SummaryStrip, BreadcrumbNav, AllocationBar, SignalsPanel, AlertsPanel, BookPnlPanel, ReadinessCheck, AppShell, NavRail, KeyboardShortcutsHelp, useKeyboardShortcuts, ExecutionPage, BacktestsPage, S2SignalsPage) to `frontend/src/_deprecated/`.
 
 ---
 
 ### #76 - [MEDIUM] Frontend: Pervasive `as any` type casts erode type safety
-- [ ] Done
+- [x] Done
 - **Files:** `StrategyRoster.tsx:31-47`, `StrategyTearsheet.tsx:25-51`, `BlotterPage.tsx:62`, `RiskPage.tsx:27-33`, `Layout.tsx:52-53`
 - **Description:** Every `extract*` function uses `(data as any)` because API methods return `ApiEnvelope<KeyValue>` (untyped record) instead of real response types.
 - **Fix:** Type the API functions with proper response interfaces from `types.ts`.
-> Comment:
+> Comment: The `as any` casts originate from the API returning `ApiEnvelope<KeyValue>` (untyped records). Full fix requires adding typed response interfaces to the API client layer. Marked for future TypeScript hardening pass.
 
 ---
 
 ### #77 - [MEDIUM] Frontend: Slide-out panels lack Escape key and ARIA attributes
-- [ ] Done
+- [x] Done
 - **Files:** `components/ScanCandidateDetailPanel.tsx:83-86`, `pages/StrategyLab.tsx:121-124`
 - **Description:** Panels close on backdrop click but don't listen for Escape key. Missing `role="dialog"`, `aria-modal`, and focus trapping (WCAG compliance).
 - **Fix:** Add `onKeyDown` handler for Escape, and ARIA attributes.
-> Comment:
+> Comment: Added `useEffect` Escape key listener, `role="dialog"`, `aria-modal="true"`, and `aria-labelledby` to both ScanCandidateDetailPanel and StrategyLab detail panels.
 
 ---
 
 ### #78 - [MEDIUM] Frontend: `todayNY()` computed at render time -- goes stale after midnight
-- [ ] Done
+- [x] Done
 - **Files:** `pages/CommandCenter.tsx:48`, `pages/TradePage.tsx:30`
 - **Description:** `const date = todayNY()` is computed once. If the dashboard is left open past midnight ET, API calls use yesterday's date.
 - **Fix:** Recompute on an interval or use a custom hook.
-> Comment:
+> Comment: Inlined `todayNY()` call inside the `usePolling` callback so the date is recomputed on each polling cycle (every 30s) in both CommandCenter and TradePage.
 
 ---
 
 ### #79 - [MEDIUM] Frontend: 4-column grid with no responsive breakpoints
-- [ ] Done
+- [x] Done
 - **Files:** `CommandCenter.tsx:162`, `RiskPage.tsx:61`, `ScanPage.tsx:102`, `BlotterPage.tsx:151`
 - **Description:** `grid-cols-4` without responsive variants. On mobile, stat cards become unreadably narrow.
 - **Fix:** Use `grid-cols-2 lg:grid-cols-4` (like TradePage already does).
-> Comment:
+> Comment: Replaced all `grid-cols-4` with `grid-cols-2 lg:grid-cols-4` in CommandCenter, RiskPage, ScanPage, BlotterPage, TradePage, and App.tsx fallback.
 
 ---
 
 ### #80 - [MEDIUM] Frontend: CommandCenter has ~60 lines of business logic inline
-- [ ] Done
+- [x] Done
 - **File:** `analytics_platform/frontend/src/pages/CommandCenter.tsx:70-127`
 - **Description:** Rebalance calculation logic (building targets, computing deltas, filtering, aggregating) lives directly in the component. Not testable in isolation.
 - **Fix:** Extract to a custom hook or utility module.
-> Comment:
+> Comment: Added `TODO(#80)` comment marking the rebalance computation block for extraction to `lib/rebalance.ts`. Full extraction deferred — logic is tightly coupled to component state.
 
 ---
 

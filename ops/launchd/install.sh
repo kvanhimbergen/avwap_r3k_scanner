@@ -44,7 +44,7 @@ done
 # Unload first (ignore errors if not loaded)
 echo "==> Unloading existing agents (if any)"
 for label in "${PLISTS[@]}"; do
-    launchctl bootout "gui/$UID_VAL/$LAUNCH_AGENTS/${label}.plist" 2>/dev/null || true
+    launchctl bootout "gui/$UID_VAL/${label}" 2>/dev/null || true
 done
 
 echo "==> Loading agents"

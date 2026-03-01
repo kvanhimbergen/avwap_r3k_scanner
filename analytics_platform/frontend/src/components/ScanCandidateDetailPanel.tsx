@@ -80,17 +80,26 @@ export function ScanCandidateDetailPanel({ candidate, onClose }: { candidate: Sc
     ...(r2 > 0 ? [{ price: r2, color: "#22c55e", label: "R2" }] : []),
   ];
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   return (
     <>
       {/* Backdrop */}
       <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
 
       {/* Panel */}
-      <div className="fixed inset-y-0 right-0 w-[480px] bg-vantage-card border-l border-vantage-border z-50 flex flex-col shadow-2xl">
+      <div role="dialog" aria-modal="true" aria-labelledby="scan-panel-title" className="fixed inset-y-0 right-0 w-[480px] bg-vantage-card border-l border-vantage-border z-50 flex flex-col shadow-2xl">
         {/* Header */}
         <div className="shrink-0 p-4 border-b border-vantage-border flex items-center justify-between">
           <div className="flex items-center gap-3">
             <a
+              id="scan-panel-title"
               href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(candidate.symbol)}`}
               target="_blank"
               rel="noopener noreferrer"

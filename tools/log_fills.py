@@ -78,8 +78,8 @@ def build_manual_fill_id(
         strategy_id,
         symbol,
         side,
-        repr(qty),
-        repr(price),
+        f"{float(qty):.6f}" if qty is not None else "",
+        f"{float(price):.6f}",
     ])
     return hashlib.sha256(parts.encode("utf-8")).hexdigest()
 

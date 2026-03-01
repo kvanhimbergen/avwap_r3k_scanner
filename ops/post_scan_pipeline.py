@@ -26,8 +26,12 @@ import argparse
 import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from zoneinfo import ZoneInfo
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SCAN_OUTPUT = _REPO_ROOT / "daily_candidates.csv"
 
 STEPS = [
     {
@@ -91,7 +95,17 @@ def _ny_today() -> str:
     return datetime.now(tz=ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
 
+def _scan_output_fresh(date: str) -> bool:
+    """Check if today's scan output exists and was modified today."""
+    if not _SCAN_OUTPUT.exists():
+        return False
+    mtime = datetime.fromtimestamp(_SCAN_OUTPUT.stat().st_mtime, tz=ZoneInfo("America/New_York"))
+    return mtime.strftime("%Y-%m-%d") == date
+
+
 def run_pipeline(date: str, *, dry_run: bool = False) -> None:
+    if not _scan_output_fresh(date):
+        print(f"WARNING: scan output {_SCAN_OUTPUT} not fresh for {date}; proceeding with stale data", flush=True)
     for i, step in enumerate(STEPS, 1):
         cmd = step["args"](date)
         if dry_run and step["name"] in {

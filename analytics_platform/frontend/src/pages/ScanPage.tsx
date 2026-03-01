@@ -97,9 +97,9 @@ export function ScanPage() {
 
       {/* KPIs */}
       {scan.loading ? (
-        <div className="grid grid-cols-4 gap-4">{[...Array(4)].map((_, i) => <SkeletonCard key={i} />)}</div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">{[...Array(4)].map((_, i) => <SkeletonCard key={i} />)}</div>
       ) : (
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-vantage-card border border-vantage-border rounded-lg p-4">
             <p className="text-[11px] text-vantage-muted uppercase tracking-wide mb-1">Total</p>
             <p className="font-mono text-2xl font-bold">{kpis.total}</p>

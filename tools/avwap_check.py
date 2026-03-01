@@ -215,7 +215,6 @@ def _collect_results(args: argparse.Namespace) -> List[CheckResult]:
     state_dir = Path(args.state_dir).resolve()
     ledger_dir = Path(args.ledger_dir).resolve()
     cache_dir = Path(args.cache_dir).resolve()
-    _resolve_db_path(base_dir, args.db_path)
 
     results.append(_check_repo_root(base_dir))
     results.append(_check_required_dir("state_dir", state_dir))

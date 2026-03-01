@@ -3,7 +3,7 @@
  * AI-powered strategy experimentation page.
  * Pipeline funnel, experiment cards, detail slide-out with AI chat.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FlaskConical, Send, MessageCircle, X, Play, Pause, Trash2, ChevronDown } from "lucide-react";
 
 import { StatusBadge, CountBadge } from "../components/Badge";
@@ -118,17 +118,25 @@ function DetailPanel({ experiment, onClose }: { experiment: Experiment; onClose:
     setChatInput("");
   }
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
   return (
     <>
       {/* Backdrop */}
       <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
 
       {/* Panel */}
-      <div className="fixed inset-y-0 right-0 w-[480px] bg-vantage-card border-l border-vantage-border z-50 flex flex-col shadow-2xl">
+      <div role="dialog" aria-modal="true" aria-labelledby="lab-panel-title" className="fixed inset-y-0 right-0 w-[480px] bg-vantage-card border-l border-vantage-border z-50 flex flex-col shadow-2xl">
         {/* Header */}
         <div className="shrink-0 p-4 border-b border-vantage-border flex items-center justify-between">
           <div>
-            <h2 className="text-base font-semibold">{experiment.name}</h2>
+            <h2 id="lab-panel-title" className="text-base font-semibold">{experiment.name}</h2>
             <StatusBadge variant={STATUS_BADGE_MAP[experiment.status]}>
               {experiment.status.toUpperCase()}
             </StatusBadge>

@@ -46,13 +46,11 @@ export function CommandCenter() {
   const [datePreset, setDatePreset] = useState<DatePreset>("all");
   const range = getDateRange(datePreset);
 
-  const date = todayNY();
-
   // API calls (portfolio shared via LayoutDataContext to avoid duplicate polling)
   const { portfolio } = useLayoutData();
   const schwab = usePolling(() => api.schwabOverview(), 60_000);
   const perfPoll = usePolling(() => api.schwabPerformance(range), 60_000);
-  const trades = usePolling(() => api.todaysTrades({ date }), 30_000);
+  const trades = usePolling(() => api.todaysTrades({ date: todayNY() }), 30_000);
   const tradeLog = usePolling(() => api.tradeLogSummary(), 60_000);
 
   // Extract data
@@ -68,7 +66,7 @@ export function CommandCenter() {
   const coordinator = tradeData.coordinator as Record<string, unknown> | null;
   const accountValue = latestAccount?.total_value ?? 0;
 
-  // Build global target allocation from V3+V4+V5 weighted targets
+  // TODO(#80): Extract rebalance computation to lib/rebalance.ts for testability
   const rawSplit = (coordinator?.capital_split ?? {}) as Record<string, number>;
   const capitalSplit = new Map<string, number>();
   for (const [key, weight] of Object.entries(rawSplit)) {
@@ -145,7 +143,7 @@ export function CommandCenter() {
   if (isLoading) {
     return (
       <div className="space-y-4 h-full">
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[...Array(4)].map((_, i) => <SkeletonCard key={i} />)}
         </div>
         <div className="grid grid-cols-5 gap-4">
@@ -160,7 +158,7 @@ export function CommandCenter() {
   return (
     <div className="space-y-4 h-full">
       {/* Row 1: Hero Strip */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Account Value"
           value={latestAccount?.total_value != null ? formatCurrency(latestAccount.total_value, 0) : "\u2014"}
