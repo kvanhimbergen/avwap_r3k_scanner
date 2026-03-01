@@ -107,7 +107,7 @@ class CFG:
 
     WEEKEND_MODE: bool = True
 
-    PBT_EMA20_PROX_PCT: float = 3.0  # within 1% of EMA20 counts as a pullback
+    PBT_EMA20_PROX_PCT: float = 3.0  # within 3% of EMA20 counts as a pullback
 
     PBT_REQUIRE_SMA200_SLOPE: bool = False   # turn off the strictest part first
     PBT_SMA200_SLOPE_LOOKBACK: int = 40

@@ -73,7 +73,7 @@ def test_run_scan_refreshes_benchmarks_without_scanning(monkeypatch: pytest.Monk
     monkeypatch.setattr(
         scan_engine,
         "build_liquidity_snapshot",
-        lambda universe, client: pd.DataFrame([{"Ticker": "AAA", "Sector": "Tech"}]),
+        lambda universe, client, **kw: pd.DataFrame([{"Ticker": "AAA", "Sector": "Tech"}]),
     )
     monkeypatch.setattr(scan_engine, "load_universe", lambda: ["AAA"])
     monkeypatch.setattr(scan_engine, "is_near_earnings_cached", lambda *_: False)
@@ -116,7 +116,7 @@ def test_run_scan_backfills_missing_benchmark_history(monkeypatch: pytest.Monkey
     monkeypatch.setattr(
         scan_engine,
         "build_liquidity_snapshot",
-        lambda universe, client: pd.DataFrame([{"Ticker": "AAA", "Sector": "Tech"}]),
+        lambda universe, client, **kw: pd.DataFrame([{"Ticker": "AAA", "Sector": "Tech"}]),
     )
     monkeypatch.setattr(scan_engine, "load_universe", lambda: ["AAA"])
     monkeypatch.setattr(scan_engine, "is_near_earnings_cached", lambda *_: False)
@@ -145,7 +145,7 @@ def test_run_scan_skips_sufficient_benchmark_history(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(
         scan_engine,
         "build_liquidity_snapshot",
-        lambda universe, client: pd.DataFrame([{"Ticker": "AAA", "Sector": "Tech"}]),
+        lambda universe, client, **kw: pd.DataFrame([{"Ticker": "AAA", "Sector": "Tech"}]),
     )
     monkeypatch.setattr(scan_engine, "load_universe", lambda: ["AAA"])
     monkeypatch.setattr(scan_engine, "is_near_earnings_cached", lambda *_: False)

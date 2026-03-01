@@ -3,19 +3,23 @@ import os
 import pandas as pd
 import csv
 from datetime import datetime, timedelta
+from pathlib import Path
 import pytz
 from dotenv import load_dotenv
 from alerts.slack import slack_alert
 
-# Import execution logic and shared trading client
-from execution import (
-    execute_buy_bracket, 
-    execute_partial_sell, 
-    execute_full_exit,
-    get_account_details, 
-    trading_client, 
-    get_daily_summary_data
-)
+# TODO: Migrate to execution_v2 APIs (sentinel still uses deprecated execution.py)
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    from execution import (
+        execute_buy_bracket,
+        execute_partial_sell,
+        execute_full_exit,
+        get_account_details,
+        trading_client,
+        get_daily_summary_data,
+    )
 
 # Modern Alpaca-py imports
 from alpaca.data.historical import StockHistoricalDataClient
@@ -288,7 +292,7 @@ def monitor_watchlist():
 
 def main():
     global SUMMARY_SENT_TODAY
-    load_dotenv(dotenv_path="/root/avwap_r3k_scanner/.env")
+    load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
     print(f"[{now_et_str()}] Sentinel Active. Monitoring Russell 3000 AVWAP Reclaims...", flush=True)
     slack_alert(

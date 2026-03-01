@@ -62,6 +62,11 @@ def should_throttle(key: str, cooldown_seconds: int) -> bool:
     return False
 
 
+def post_webhook(payload: dict) -> None:
+    """Send a raw payload to the Slack webhook (public API)."""
+    return _post(payload)
+
+
 def _post(payload: dict) -> None:
     url = os.getenv("SLACK_WEBHOOK_URL", "").strip()
     if not url:

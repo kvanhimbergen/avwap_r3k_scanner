@@ -45,6 +45,8 @@ def correlation_penalty(
     avg_corr = sum(corrs) / len(corrs)
     if avg_corr <= threshold:
         return 0.0
+    if threshold >= 1.0:
+        return max_penalty
 
     excess = (avg_corr - threshold) / (1.0 - threshold)
     return min(excess * max_penalty, max_penalty)

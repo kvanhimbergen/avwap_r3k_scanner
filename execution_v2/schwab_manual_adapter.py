@@ -122,9 +122,9 @@ def build_slack_payload(message: str) -> dict:
 
 
 def _default_slack_sender(payload: dict) -> dict:
-    from alerts import slack as slack_alerts
+    from alerts.slack import post_webhook
 
-    slack_alerts._post(payload)
+    post_webhook(payload)
     return {
         "channel": payload.get("channel"),
         "ts": None,

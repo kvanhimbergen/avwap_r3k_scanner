@@ -159,13 +159,13 @@ class MarketData:
 
         Returns None if insufficient data (fail-open).
         """
-        import pytz
+        from zoneinfo import ZoneInfo
 
         bars = self.get_intraday_bars(symbol, minutes=5, lookback_days=lookback_days + 2)
         if not bars:
             return None
 
-        et = pytz.timezone("America/New_York")
+        et = ZoneInfo("America/New_York")
         now_et = datetime.now(et)
         today_str = now_et.strftime("%Y-%m-%d")
         cutoff_time = now_et.time()

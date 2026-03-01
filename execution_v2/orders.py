@@ -84,7 +84,10 @@ def build_marketable_limit(
     if ref_price <= 0:
         raise ValueError("ref_price must be positive")
 
-    # Random slippage within band
+    # Random slippage within band.
+    # abs() is intentional: buys always limit above ref_price (willing to pay more),
+    # sells always limit below ref_price (willing to accept less), ensuring limits
+    # are marketable on the unfavorable side.
     rand = random.uniform(-cfg.randomization_pct, cfg.randomization_pct)
     slippage = _clamp(rand, -cfg.max_slippage_pct, cfg.max_slippage_pct)
 

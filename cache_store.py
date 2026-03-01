@@ -46,12 +46,12 @@ def write_parquet(df: pd.DataFrame, path: str):
     if df is None or df.empty:
         return
 
-    # SOP: Downcast types to save memory/space
+    # SOP: Downcast types to save memory/space (float64 preserves precision for all price levels)
     df = df.copy()
     float_cols = ["Open", "High", "Low", "Close"]
     for col in float_cols:
         if col in df.columns:
-            df[col] = df[col].astype("float32")
+            df[col] = df[col].astype("float64")
     
     if "Volume" in df.columns:
         df["Volume"] = df["Volume"].astype("float64") 

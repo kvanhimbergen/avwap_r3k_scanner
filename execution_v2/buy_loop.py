@@ -383,7 +383,7 @@ def evaluate_and_create_entry_intents(
         or _optional_env_float("RISK_BASE_MAX_GROSS_EXPOSURE")
         or float(account_equity)
     )
-    repo_root = Path(".")
+    repo_root = Path(__file__).resolve().parents[1]
     gross_exposure = 0.0
     open_positions_count = 0
     try:

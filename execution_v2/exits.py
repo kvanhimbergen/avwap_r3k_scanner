@@ -964,8 +964,8 @@ def manage_positions(
                         f"stop={desired_stop} >= entry={avg_entry} basis={stop_basis}"
                     )
                     continue
-            except Exception:
-                pass
+            except Exception as exc:
+                log(f"EXIT: stop guardrail check failed for {symbol}: {type(exc).__name__}: {exc}")
 
 
         context = ExitEventContext(

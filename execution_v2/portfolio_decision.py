@@ -96,12 +96,10 @@ def _sort_rejections(rejections: list[RejectedIntent]) -> list[dict[str, Any]]:
 
 
 def _normalize_constraints(constraints: dict[str, Any]) -> dict[str, Any]:
-    normalized: dict[str, Any] = {}
-    for key, value in constraints.items():
+    def _normalize(value: Any) -> Any:
+        if isinstance(value, dict):
+            return dict(sorted((k, _normalize(v)) for k, v in value.items()))
         if isinstance(value, list):
-            normalized[key] = sorted(value)
-        elif isinstance(value, dict):
-            normalized[key] = dict(sorted(value.items()))
-        else:
-            normalized[key] = value
-    return dict(sorted(normalized.items()))
+            return sorted(_normalize(v) if isinstance(v, (dict, list)) else v for v in value)
+        return value
+    return _normalize(constraints)

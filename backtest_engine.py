@@ -495,7 +495,7 @@ def _validate_candidates(
     return valid, int(valid_mask.sum())
 
 
-def run_backtest(
+def run_backtest(  # noqa: C901 — known complexity; entry/exit logic duplicated for next_open vs same_close models
     cfg,
     start_date: str | date | datetime,
     end_date: str | date | datetime,

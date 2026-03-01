@@ -332,13 +332,15 @@ def pick_best_anchor(
 def build_liquidity_snapshot(
     universe: pd.DataFrame,
     data_client: StockHistoricalDataClient,
+    bad_tickers: set[str] | None = None,
 ) -> pd.DataFrame:
     cfg = _cfg()
+    exclude = bad_tickers if bad_tickers is not None else BAD_TICKERS
     is_weekend = datetime.now().weekday() >= 5
     tickers = [
         t.upper()
         for t in universe["Ticker"].tolist()
-        if is_valid_ticker(t) and t not in BAD_TICKERS
+        if is_valid_ticker(t) and t not in exclude
     ]
     rows = []
     batch_size = 100
@@ -691,7 +693,7 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
     BAD_TICKERS = load_bad_tickers()
     universe = load_universe()
 
-    snap = build_liquidity_snapshot(universe, data_client)
+    snap = build_liquidity_snapshot(universe, data_client, bad_tickers=BAD_TICKERS)
     filtered = snap["Ticker"].tolist()
 
     # Sector relative strength
