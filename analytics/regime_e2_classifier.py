@@ -78,7 +78,10 @@ def _confidence(score: float) -> float:
     dist_to_risk_on = abs(score - REGIME_RISK_ON_THRESHOLD)
     dist_to_risk_off = abs(score - REGIME_RISK_OFF_THRESHOLD)
     nearest_dist = min(dist_to_risk_on, dist_to_risk_off)
-    return _clamp(1.0 - 2.0 * nearest_dist)
+    # Max possible distance from any boundary is ~0.35 (at score=0 or 1).
+    # Scale so that max distance → confidence 1.0, zero distance → confidence 0.0.
+    max_dist = (REGIME_RISK_ON_THRESHOLD - REGIME_RISK_OFF_THRESHOLD) / 2.0
+    return _clamp(nearest_dist / max_dist if max_dist > 0 else 0.0)
 
 
 def classify_regime_e2(features: RegimeFeatureSet) -> dict[str, Any]:

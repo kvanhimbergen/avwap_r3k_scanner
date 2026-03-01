@@ -69,9 +69,8 @@ def deflated_sharpe_ratio(
 
     # Adjust observed Sharpe for non-normality
     sr = observed_sharpe
-    sr_adjusted = sr * math.sqrt(
-        1 + (skew / 6) * sr - ((kurtosis - 3) / 24) * sr**2
-    )
+    adjustment = 1 + (skew / 6) * sr - ((kurtosis - 3) / 24) * sr**2
+    sr_adjusted = sr * math.sqrt(max(0.0, adjustment))
 
     # Standard error of the Sharpe ratio estimate
     if T <= 1:

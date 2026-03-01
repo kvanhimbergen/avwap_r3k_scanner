@@ -1,6 +1,13 @@
 import type { ApiEnvelope, FreshnessRow, KeyValue, TimePoint, TradeInstructionsPayload, SchwabPerformancePayload } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "";
+const API_KEY = (import.meta.env.VITE_API_KEY as string | undefined) ?? "";
+
+function authHeaders(): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (API_KEY) h["X-API-Key"] = API_KEY;
+  return h;
+}
 
 async function get<T>(path: string): Promise<ApiEnvelope<T>> {
   const response = await fetch(`${API_BASE}${path}`);
@@ -13,7 +20,7 @@ async function get<T>(path: string): Promise<ApiEnvelope<T>> {
 async function post<T>(path: string, body: unknown): Promise<ApiEnvelope<T>> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(),
     body: JSON.stringify(body),
   });
   if (!response.ok) {
@@ -25,7 +32,7 @@ async function post<T>(path: string, body: unknown): Promise<ApiEnvelope<T>> {
 async function put<T>(path: string, body: unknown): Promise<ApiEnvelope<T>> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders(),
     body: JSON.stringify(body),
   });
   if (!response.ok) {
@@ -35,7 +42,9 @@ async function put<T>(path: string, body: unknown): Promise<ApiEnvelope<T>> {
 }
 
 async function del<T>(path: string): Promise<ApiEnvelope<T>> {
-  const response = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
+  const h: Record<string, string> = {};
+  if (API_KEY) h["X-API-Key"] = API_KEY;
+  const response = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers: h });
   if (!response.ok) {
     throw new Error(`API DELETE ${path} failed with status ${response.status}`);
   }

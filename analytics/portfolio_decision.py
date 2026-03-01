@@ -178,7 +178,14 @@ def load_portfolio_snapshot(path: str) -> tuple[Optional[PortfolioSnapshotInputs
     if capital_value is None:
         return None, ["PORTFOLIO_SNAPSHOT_INVALID"]
 
-    drawdown = metrics.get("drawdown") if isinstance(metrics, dict) else None
+    drawdown_raw = metrics.get("drawdown") if isinstance(metrics, dict) else None
+    if drawdown_raw is None:
+        return None, ["PORTFOLIO_SNAPSHOT_INVALID"]
+    # drawdown may be a dict (e.g. {"max_drawdown": 0.05, ...}) or a float
+    if isinstance(drawdown_raw, dict):
+        drawdown = drawdown_raw.get("max_drawdown")
+    else:
+        drawdown = drawdown_raw
     if drawdown is None:
         return None, ["PORTFOLIO_SNAPSHOT_INVALID"]
 

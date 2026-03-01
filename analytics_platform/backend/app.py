@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import contextlib
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -73,17 +73,33 @@ def _envelope(runtime: AnalyticsRuntime, data: dict | list) -> dict:
     ).to_dict()
 
 
+def _make_api_key_checker(cfg: Settings):
+    """Return a FastAPI dependency that validates the API key on mutating endpoints."""
+    def _require_api_key(request: Request) -> None:
+        if cfg.api_key is None:
+            return  # no key configured = auth disabled (local dev)
+        token = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+        if token != cfg.api_key:
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return _require_api_key
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     cfg = settings or Settings.from_env()
     app = FastAPI(title="Strategy Analytics Platform", version="1.0.0", lifespan=_lifespan)
     app.state.runtime = AnalyticsRuntime(cfg)
+    require_api_key = _make_api_key_checker(cfg)
     trade_log_path = cfg.data_dir / "trade_log.duckdb"
     trade_log_path.parent.mkdir(parents=True, exist_ok=True)
     app.state.trade_log = TradeLogStore(trade_log_path)
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:8788", "http://127.0.0.1:8788", "*"],
+        allow_origins=[
+            "http://localhost:8788",
+            "http://127.0.0.1:8788",
+            "https://avwap.vantagedutch.com",
+        ],
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["*"],
@@ -425,7 +441,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tl: TradeLogStore = app.state.trade_log
         return _envelope(runtime, tl.get_summary())
 
-    @app.post("/api/v1/trades/log")
+    @app.post("/api/v1/trades/log", dependencies=[Depends(require_api_key)])
     def create_trade(body: dict) -> dict:
         runtime: AnalyticsRuntime = app.state.runtime
         tl: TradeLogStore = app.state.trade_log
@@ -439,7 +455,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _envelope(runtime, row)
 
-    @app.put("/api/v1/trades/log/{trade_id}")
+    @app.put("/api/v1/trades/log/{trade_id}", dependencies=[Depends(require_api_key)])
     def close_trade(trade_id: str, body: dict) -> dict:
         runtime: AnalyticsRuntime = app.state.runtime
         tl: TradeLogStore = app.state.trade_log
@@ -451,7 +467,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return _envelope(runtime, row)
 
-    @app.delete("/api/v1/trades/log/{trade_id}")
+    @app.delete("/api/v1/trades/log/{trade_id}", dependencies=[Depends(require_api_key)])
     def delete_trade(trade_id: str) -> dict:
         runtime: AnalyticsRuntime = app.state.runtime
         tl: TradeLogStore = app.state.trade_log
@@ -497,8 +513,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         @app.get("/app/{path:path}")
         async def spa_fallback(path: str) -> Response:
-            static_file = dist_dir / path
-            if static_file.is_file():
+            static_file = (dist_dir / path).resolve()
+            if static_file.is_relative_to(dist_dir.resolve()) and static_file.is_file():
                 return FileResponse(static_file, headers=_NO_CACHE)
             return FileResponse(index_html, headers=_NO_CACHE)
 

@@ -97,8 +97,8 @@ def get_market_regime():
         df = bars.reset_index()
         df['SMA200'] = df['close'].rolling(window=200).mean()
         return df['close'].iloc[-1] > df['SMA200'].iloc[-1]
-    except:
-        return True 
+    except Exception:
+        return True
 
 def get_alpaca_intraday(ticker):
     try:
@@ -106,7 +106,7 @@ def get_alpaca_intraday(ticker):
         bars = data_client.get_stock_bars(req).df
         if bars is None or bars.empty: return None
         return bars.reset_index().rename(columns={'close': 'Close'})
-    except:
+    except Exception:
         return None
 
 def monitor_watchlist():
@@ -198,8 +198,8 @@ def monitor_watchlist():
         if reclaimed and ticker not in TRADED_TODAY and is_bullish:
             try:
                 trading_client.get_open_position(ticker)
-                TRADED_TODAY.add(ticker) 
-            except:
+                TRADED_TODAY.add(ticker)
+            except Exception:
                 print(f"🚀 Signal: {ticker} reclaimed. Stop: ${structural_stop}")
                 execute_buy_bracket(ticker, structural_stop, r2_target)
                 OPEN_TRADE_STATS[ticker] = {
@@ -273,7 +273,8 @@ def monitor_watchlist():
                         throttle_seconds=120,
                     )
                     # Remove from tracking after trim if you wish, or keep for R2 tracking
-                except: pass
+                except Exception:
+                    pass
 
 def main():
     global SUMMARY_SENT_TODAY

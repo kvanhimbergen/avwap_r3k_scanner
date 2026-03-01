@@ -763,7 +763,7 @@ def reconcile_stop_order(
     if order_id:
         state.stop_order_id = str(order_id)
     state.stop_price = desired_stop
-    state.last_stop_update_ts = datetime.utcnow().timestamp()
+    state.last_stop_update_ts = datetime.now(timezone.utc).timestamp()
     return state
 
 

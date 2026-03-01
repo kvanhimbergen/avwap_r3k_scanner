@@ -54,13 +54,29 @@ PAPER = os.getenv("ALPACA_PAPER", "1") != "0"
 ET = pytz.timezone("America/New_York")
 
 # ----------------------------
-# ALPACA TRADING CLIENT
+# ALPACA TRADING CLIENT (lazy)
 # ----------------------------
-trading_client = TradingClient(
-    os.getenv("APCA_API_KEY_ID"),
-    os.getenv("APCA_API_SECRET_KEY"),
-    paper=PAPER,
-)
+_trading_client: TradingClient | None = None
+
+
+def _get_trading_client() -> TradingClient:
+    global _trading_client
+    if _trading_client is None:
+        key = os.getenv("APCA_API_KEY_ID")
+        secret = os.getenv("APCA_API_SECRET_KEY")
+        if not key or not secret:
+            raise RuntimeError("APCA_API_KEY_ID and APCA_API_SECRET_KEY must be set")
+        _trading_client = TradingClient(key, secret, paper=PAPER)
+    return _trading_client
+
+
+class _LazyTradingClient:
+    """Proxy that defers TradingClient construction until first attribute access."""
+    def __getattr__(self, name: str):
+        return getattr(_get_trading_client(), name)
+
+
+trading_client: TradingClient = _LazyTradingClient()  # type: ignore[assignment]
 
 # ----------------------------
 # STATE

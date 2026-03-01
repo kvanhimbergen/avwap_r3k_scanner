@@ -12,6 +12,7 @@ class Settings:
     db_path: Path
     refresh_seconds: int = 60
     enable_scheduler: bool = True
+    api_key: str | None = None
 
     @property
     def ledger_dir(self) -> Path:
@@ -40,10 +41,12 @@ class Settings:
         db_path = Path(os.getenv("ANALYTICS_DB_PATH", str(data_dir / "analytics.duckdb"))).resolve()
         refresh_seconds = int(os.getenv("ANALYTICS_REFRESH_SECONDS", "60"))
         enable_scheduler = os.getenv("ANALYTICS_ENABLE_SCHEDULER", "1").strip() == "1"
+        api_key = os.getenv("ANALYTICS_API_KEY") or None
         return cls(
             repo_root=root,
             data_dir=data_dir,
             db_path=db_path,
             refresh_seconds=max(15, refresh_seconds),
             enable_scheduler=enable_scheduler,
+            api_key=api_key,
         )

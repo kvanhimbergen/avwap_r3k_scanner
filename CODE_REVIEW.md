@@ -1,0 +1,1199 @@
+# Code Review - AVWAP R3K Scanner
+
+**Reviewer:** Claude (Professional SE / UI-UX / Code Review)
+**Date:** 2026-03-01
+**Scope:** Full codebase (~1,083 files, excluding venv/node_modules/.git)
+**Methodology:** Fair evaluation -- real bugs and meaningful issues only, no style nitpicks
+
+---
+
+## Summary
+
+| Area | Critical | High | Medium | Low | Total |
+|------|----------|------|--------|-----|-------|
+| Security & Auth | 4 | 2 | 1 | 0 | **7** |
+| Strategies | 2 | 4 | 9 | 7 | **22** |
+| Analytics | 2 | 4 | 8 | 6 | **20** |
+| Execution / Data | 1 | 4 | 11 | 8 | **24** |
+| Ops / Infra | 0 | 4 | 7 | 5 | **16** |
+| Frontend (React) | 2 | 4 | 6 | 5 | **17** |
+| Backend (FastAPI) | 0 | 3 | 6 | 6 | **15** |
+| Tests | 0 | 1 | 6 | 4 | **11** |
+| **Total** | **11** | **26** | **54** | **41** | **132** |
+
+---
+
+## How to use this file
+
+- **Checkbox**: Mark `[x]` when the issue is resolved
+- **Comment**: Add notes under the `> Comment:` block
+- Issues are numbered globally (`#1`, `#2`, ...) for easy reference
+- Severity: `CRITICAL` > `HIGH` > `MEDIUM` > `LOW`
+
+---
+
+## CRITICAL Issues
+
+### #1 - [CRITICAL] Backend: No authentication on any endpoint (publicly accessible)
+- [x] Done
+- **File:** `analytics_platform/backend/app.py:92-509`
+- **Description:** All endpoints -- including `POST/PUT/DELETE /api/v1/trades/log` -- have zero authentication. The server binds to `0.0.0.0` and is exposed via Cloudflare tunnel to `avwap.vantagedutch.com`. Anyone on the internet can create, modify, or delete trade records.
+- **Fix:** Add at minimum an API key middleware or basic auth. Consider `127.0.0.1` as default bind address.
+> Comment:
+
+---
+
+### #2 - [CRITICAL] Backend: CORS wildcard `"*"` allows cross-origin mutations
+- [x] Done
+- **File:** `analytics_platform/backend/app.py:84-90`
+- **Description:** `allow_origins` includes `"*"`, making the specific origin entries redundant. Any website visited by a user on the same network can make mutating API requests. Combined with #1, this is an open door.
+- **Fix:** Remove `"*"` from `allow_origins`. Keep only the specific localhost origins and the production domain.
+> Comment:
+
+---
+
+### #3 - [CRITICAL] Backend: Path traversal in SPA fallback handler
+- [x] Done
+- **File:** `analytics_platform/backend/app.py:498-503`
+- **Description:** `/app/{path:path}` joins user input directly with `dist_dir` without sanitization. A request like `/app/../../.env` can read arbitrary files. `pathlib /` does not prevent traversal.
+- **Fix:** Add `if not static_file.resolve().is_relative_to(dist_dir.resolve()): return 404`.
+> Comment:
+
+---
+
+### #4 - [CRITICAL] Sentinel: Bare `except:` clauses swallow errors in trading logic
+- [x] Done
+- **File:** `sentinel.py:100, 109, 202, 276`
+- **Description:** Multiple bare `except:` clauses (not `except Exception:`) catch `SystemExit` and `KeyboardInterrupt`. Line 202 uses exception handling to determine "no position exists", hiding real API errors. Line 276 swallows failures to trim a live position.
+- **Fix:** Replace bare `except:` with `except Exception:` at minimum. For line 202, use the Alpaca API's proper "position not found" response.
+> Comment:
+
+---
+
+### #5 - [CRITICAL] Execution: Trading client instantiated at import time with possibly-None credentials
+- [x] Done
+- **File:** `execution.py:59-63`
+- **Description:** `TradingClient(os.getenv("APCA_API_KEY_ID"), ...)` is at module level. If env vars are unset, `None` is passed. Any module importing `execution.py` triggers this, even if no trading is intended.
+- **Fix:** Lazy initialization -- construct the client only when first needed.
+> Comment:
+
+---
+
+### #6 - [CRITICAL] Frontend: `usePolling` stale closure bug -- filter changes are never reflected
+- [x] Done
+- **File:** `analytics_platform/frontend/src/hooks/usePolling.ts:11-52`
+- **Description:** The `useEffect` dependency array only includes `[intervalMs]`. The `loader` function is captured in a closure that never updates. Changing date range, filters, or book in CommandCenter, PerformancePage, SchwabAccountPage, ScanPage, or BlotterPage will NOT cause the poll to use the new values until a full remount.
+- **Fix:** Store `loader` in a `useRef` and read it inside the interval callback, or include `loader` in the dependency array.
+> Comment:
+
+---
+
+### #7 - [CRITICAL] Analytics: `deflated_sharpe.py` -- `math.sqrt` of potentially negative value
+- [x] Done
+- **File:** `analytics/deflated_sharpe.py:72-73`
+- **Description:** `sr_adjusted = sr * math.sqrt(1 + (skew/6)*sr - ((kurtosis-3)/24)*sr**2)`. For high-kurtosis or high-Sharpe strategies, the expression inside `sqrt()` goes negative, causing a `ValueError` crash.
+- **Fix:** Clamp the inner expression to `max(0, ...)` before taking the square root.
+> Comment:
+
+---
+
+### #8 - [CRITICAL] Analytics: Drawdown throttle guard compares dict to float -- never fires
+- [x] Done
+- **File:** `analytics/portfolio_decision.py:181, 207, 295`
+- **Description:** `metrics.get("drawdown")` returns the full drawdown dict (with keys `series`, `max_drawdown`, etc.), not a float. On line 295, `snapshot_inputs.drawdown >= config.max_drawdown_pct_block` silently evaluates to `False` (dict vs float comparison in Python 3). The drawdown throttle is completely broken.
+- **Fix:** Extract the numeric value: `metrics.get("drawdown", {}).get("max_drawdown", 0.0)`.
+> Comment:
+
+---
+
+### #9 - [CRITICAL] Analytics: E2 confidence function is inverted
+- [x] Done
+- **File:** `analytics/regime_e2_classifier.py:78-81`
+- **Description:** `_confidence(score)` returns **highest** confidence at boundary crossings and **lowest** far from boundaries -- the exact opposite of the docstring's intent. The formula `1.0 - 2.0 * nearest_dist` is maximized when `nearest_dist` is 0 (at a boundary).
+- **Fix:** Invert the formula: `confidence = 2.0 * nearest_dist` (clamped to [0, 1]).
+> Comment:
+
+---
+
+### #10 - [CRITICAL] Execution: Deprecated `datetime.utcnow()` in trading code
+- [x] Done
+- **File:** `execution_v2/exits.py:766`
+- **Description:** `datetime.utcnow()` returns a naive datetime, deprecated since Python 3.12 (project uses 3.14). In timezone-sensitive trading code, mixing naive and aware datetimes produces incorrect timestamps and comparison errors.
+- **Fix:** Replace with `datetime.now(timezone.utc)`.
+> Comment:
+
+---
+
+### #11 - [CRITICAL] Frontend: `usePolling.refresh` has unstable identity, breaks memoization
+- [x] Done
+- **File:** `analytics_platform/frontend/src/pages/TradeLogPage.tsx:106-109`
+- **Description:** `refresh` from `usePolling` is recreated every render (not wrapped in `useCallback`). Any `useCallback` depending on `trades.refresh` or `summary.refresh` is effectively useless -- new function identity every render.
+- **Fix:** Wrap `refresh` in `useCallback` inside the hook, or use a ref-based pattern.
+> Comment:
+
+---
+
+## HIGH Issues
+
+### #12 - [HIGH] Strategies: Coordinator writes state/ledger even in `dry_run` mode
+- [ ] Done
+- **File:** `strategies/raec_401k_coordinator.py:211-220`
+- **Description:** The coordinator unconditionally saves state and writes ledger entries regardless of the `dry_run` flag. A `--dry-run` of the coordinator mutates `last_eval_date` and writes ledger records. Contrast with `raec_401k_base.py:941` which gates on `if not dry_run or allow_state_write`.
+- **Fix:** Gate state/ledger writes on the `dry_run` flag.
+> Comment:
+
+---
+
+### #13 - [HIGH] Strategies: V1/V2 are massive standalone copies diverging from base class
+- [ ] Done
+- **File:** `strategies/raec_401k.py` (597 lines), `strategies/raec_401k_v2.py` (873 lines)
+- **Description:** V1 and V2 duplicate state management, drift computation, turnover capping, volatility, and signal logic that was later refactored into `raec_401k_base.py`. Bug fixes in the base (e.g., -15% circuit breaker) are not in V1/V2. V2 uses `mom_6m` instead of `mom_3m`, has hardcoded defensive weights, and `top_n=3`. V1 has no circuit breaker at all.
+- **Fix:** Decide: (a) migrate V1/V2 to use `BaseRAECStrategy`, or (b) document them as frozen/legacy and add a clear deprecation notice.
+> Comment:
+
+---
+
+### #14 - [HIGH] Strategies: `ref_price` look-ahead bias in V1/V2
+- [ ] Done
+- **File:** `strategies/raec_401k.py:449-451`, `strategies/raec_401k_v2.py:721-723`
+- **Description:** When attaching `ref_price` to intents, the code calls `provider.get_daily_close_series(sym)` without filtering by `asof` date and takes `series[-1]`. If the provider has future data (backtesting), this introduces look-ahead bias.
+- **Fix:** Use `_sorted_series` which filters correctly by date.
+> Comment:
+
+---
+
+### #15 - [HIGH] Strategies: Hardcoded `total_capital = 237_757.0` default
+- [ ] Done
+- **File:** `strategies/raec_401k_coordinator.py:113`
+- **Description:** `cap = total_capital or 237_757.0` is a stale dollar amount used in display messages and Slack tickets. It will show increasingly incorrect values as the portfolio changes.
+- **Fix:** Source from state, config, or environment variable.
+> Comment:
+
+---
+
+### #16 - [HIGH] Strategies: V1 `main()` declared `-> int` but returns `None`
+- [ ] Done
+- **File:** `strategies/raec_401k.py:555`
+- **Description:** The function contract is violated. `raise SystemExit(main())` receives `None`.
+- **Fix:** Add `return 0` at the end of `main()`.
+> Comment:
+
+---
+
+### #17 - [HIGH] Analytics: Malformed JSON line crashes entire regime pipeline
+- [ ] Done
+- **File:** `analytics/regime_e1_storage.py:37-38`
+- **Description:** `_load_existing_ids()` calls `json.loads(line)` with no try/except. One corrupted line in the ledger crashes the full regime run. Compare with `regime_throttle_writer.py:41-43` which correctly catches `json.JSONDecodeError`.
+- **Fix:** Wrap in try/except, log warning, skip bad lines.
+> Comment:
+
+---
+
+### #18 - [HIGH] Execution: Race condition in JSONL ledger append (read-then-write)
+- [ ] Done
+- **File:** `execution_v2/exit_events.py:279-288`, `execution_v2/paper_sim.py:233-237`
+- **Description:** Both use a pattern of reading all lines, adding new ones, then atomically writing the whole file. If two processes execute concurrently, one overwrites the other's appended data. `atomic_write_text()` prevents partial writes but not lost updates.
+- **Fix:** Use append mode (`open(path, "a")`) like `schwab_manual_confirmations.py:233` does correctly.
+> Comment:
+
+---
+
+### #19 - [HIGH] Execution: `stop_loss` from scan CSV is silently discarded
+- [ ] Done
+- **File:** `execution_v2/buy_loop.py:660-668`
+- **Description:** `EntryIntent` is created with `stop_loss=stop_price` (computed structural stop) instead of `cand.stop_loss` (from scan). The candidate's stop from the CSV is dead data for the entry intent path.
+- **Fix:** Document if intentional. If not, use the scan's stop or a minimum of both.
+> Comment:
+
+---
+
+### #20 - [HIGH] Root: `backtest.py` type annotation `float | float("nan")` is meaningless
+- [ ] Done
+- **File:** `backtest.py:56`
+- **Description:** `sharpe: float | float("nan")` unions the type `float` with the runtime value `nan`. This is semantically meaningless and confusing.
+- **Fix:** Change to `sharpe: float`.
+> Comment:
+
+---
+
+### #21 - [HIGH] Root: `analytics.py` expectancy is `NaN` when there are only wins
+- [ ] Done
+- **File:** `analytics.py:21`
+- **Description:** If `losses` is empty, `losses['PnL'].mean()` returns `NaN`, making `expectancy = NaN`. When there are only winning trades, expectancy should equal average PnL, not NaN.
+- **Fix:** Guard: `if losses.empty: expectancy = wins['PnL'].mean()`.
+> Comment:
+
+---
+
+### #22 - [HIGH] Root: `provenance.py` reads entire file into memory for hashing
+- [ ] Done
+- **File:** `provenance.py:40-43`
+- **Description:** `handle.read()` loads the full file for SHA-256 hashing. For large parquet files (hundreds of MB), this risks OOM.
+- **Fix:** Use chunked reading with `hashlib.sha256()` + `.update()` in a loop.
+> Comment:
+
+---
+
+### #23 - [HIGH] Root: `sentinel.py` does not account for market holidays
+- [ ] Done
+- **File:** `sentinel.py:77-81`
+- **Description:** `is_market_open()` only checks weekday + time range. It will attempt to trade on holidays like Thanksgiving, MLK Day, etc.
+- **Fix:** Use the Alpaca market calendar or a holiday list.
+> Comment:
+
+---
+
+### #24 - [HIGH] Ops: Pipeline docstring says 8 steps but code has 7 (raec_401k_v2 removed)
+- [ ] Done
+- **File:** `ops/post_scan_pipeline.py:2-12 vs 32-87`
+- **Description:** The docstring and MEMORY.md reference 8 steps including `raec_401k_v2`, but the `STEPS` list has only 7. Either the step was accidentally removed or the docs are stale.
+- **Fix:** Verify intent. Update docstring and MEMORY.md accordingly.
+> Comment:
+
+---
+
+### #25 - [HIGH] Ops: `--dry-run` only propagated to 2 of 7 pipeline steps
+- [ ] Done
+- **File:** `ops/post_scan_pipeline.py:97-100`
+- **Description:** The `--dry-run` flag is only appended to `raec_401k_coordinator` and `s2_letf_orb_alpaca`. The other 5 steps execute with full side effects (regime writes, Schwab sync, seed allocations).
+- **Fix:** Either propagate `--dry-run` to all steps, or rename the flag to `--suppress-orders` to accurately describe its scope.
+> Comment:
+
+---
+
+### #26 - [HIGH] Ops: All systemd units reference dead droplet paths
+- [ ] Done
+- **File:** `ops/systemd/*`, `tools/verify_systemd.py`
+- **Description:** Per project state, the droplet is shut down. All systemd units hardcode `/root/avwap_r3k_scanner`. `verify_systemd.py`'s expected drop-in list is completely disjoint from what the repo ships. This is dead infrastructure with no deprecation marker.
+- **Fix:** Archive or delete `ops/systemd/`, `install_systemd_units.sh`, `deploy_systemd.sh`, and `verify_systemd.py`.
+> Comment:
+
+---
+
+### #27 - [HIGH] Frontend: Duplicate API polling -- Layout and pages both poll same endpoints
+- [ ] Done
+- **File:** `analytics_platform/frontend/src/components/Layout.tsx:48-50`
+- **Description:** Layout polls `portfolioOverview`, `health`, and `raecDashboard` on 60s intervals. Child pages (CommandCenter, StrategyRoster, RiskPage) also poll the same APIs independently. No shared data layer, no cache deduplication. Network load is doubled.
+- **Fix:** Use React Context, a shared store, or `@tanstack/react-query` for deduplication.
+> Comment:
+
+---
+
+### #28 - [HIGH] Frontend: No ErrorBoundary -- lazy load failures crash entire app
+- [ ] Done
+- **File:** `analytics_platform/frontend/src/App.tsx:11-43`
+- **Description:** All pages use `React.lazy()` with `Suspense` but no `ErrorBoundary`. If a lazy chunk fails to load (network error, deploy mismatch), the entire app crashes to a white screen.
+- **Fix:** Wrap `<Suspense>` in an `ErrorBoundary` with a retry/refresh UI.
+> Comment:
+
+---
+
+### #29 - [HIGH] Frontend: Swallowed errors in trade close/delete operations
+- [ ] Done
+- **File:** `analytics_platform/frontend/src/pages/TradeLogPage.tsx:118-133`
+- **Description:** `handleClose` and `handleDelete` have empty `catch {}` blocks. API failures give the user zero feedback -- the trade appears to close but nothing happened.
+- **Fix:** Show a toast/alert on error.
+> Comment:
+
+---
+
+### #30 - [HIGH] Frontend: Unsafe `JSON.parse` without try-catch crashes component
+- [ ] Done
+- **File:** `analytics_platform/frontend/src/pages/SchwabAccountPage.tsx:237`
+- **Description:** `JSON.parse(latestRecon.drift_reason_codes_json)` will throw and crash the component if the JSON is malformed.
+- **Fix:** Wrap in try-catch with a fallback.
+> Comment:
+
+---
+
+### #31 - [HIGH] Backend: `create_trade` accepts arbitrary unvalidated `dict` body
+- [ ] Done
+- **File:** `analytics_platform/backend/app.py:429-440`
+- **Description:** Using `dict` instead of a Pydantic model means no type validation, no field constraints. Fields like `direction` accept any string, `qty` can be negative, dates are unchecked.
+- **Fix:** Define a Pydantic `CreateTradeRequest` model.
+> Comment:
+
+---
+
+### #32 - [HIGH] Backend: DuckDB connection shared across threads
+- [ ] Done
+- **File:** `analytics_platform/backend/trade_log_db.py:26-29`
+- **Description:** A single DuckDB connection is shared across FastAPI's threadpool. DuckDB docs explicitly state connections should not be shared across threads. The `threading.Lock` serializes writes but does not make the connection itself safe.
+- **Fix:** Use connection-per-request or a connection pool.
+> Comment:
+
+---
+
+### #33 - [HIGH] Backend: SQL injection risk in `export_dataset_csv`
+- [ ] Done
+- **File:** `analytics_platform/backend/api/queries.py:732-760`
+- **Description:** While `dataset` is validated against `EXPORT_TABLES`, `date_col` is interpolated into f-strings without parameterization (line 747-748). Safe today because values come from a hardcoded dict, but the pattern is risky if the dict is ever modified.
+- **Fix:** Use parameterized queries for date filtering, or add a comment explaining why f-string is safe here.
+> Comment:
+
+---
+
+### #34 - [HIGH] Tests: Vacuous test passes with zero assertions
+- [ ] Done
+- **File:** `tests/test_raec_401k_v4.py:309`
+- **Description:** `test_transition_structure` wraps assertions in `if result.regime == "TRANSITION":`. If synthetic data produces a different regime, the test passes with zero assertions -- silently vacuous.
+- **Fix:** Add `assert result.regime == "TRANSITION"` unconditionally, or use `pytest.skip()` with explanation.
+> Comment:
+
+---
+
+## MEDIUM Issues
+
+### #35 - [MEDIUM] Strategies: `_load_latest_csv_allocations` silently swallows all exceptions
+- [ ] Done
+- **File:** `strategies/raec_401k_base.py:666-674`
+- **Description:** Bare `except Exception: return None` hides parsing errors, permission errors, corrupt CSV data. A schema change in Schwab exports would be invisible.
+- **Fix:** Log the exception before returning None.
+> Comment:
+
+---
+
+### #36 - [MEDIUM] Strategies: `_get_cash_symbol` hardcodes "BIL" as primary lookup
+- [ ] Done
+- **File:** `strategies/raec_401k_base.py:263-267`
+- **Description:** Always tries BIL first regardless of `FALLBACK_CASH_SYMBOL` config. If a strategy wanted a different cash symbol, BIL is still tried first.
+- **Fix:** Use `self.FALLBACK_CASH_SYMBOL` as the primary lookup.
+> Comment:
+
+---
+
+### #37 - [MEDIUM] Strategies: `_universe` strips "BIL" but not the configured `fallback_cash_symbol`
+- [ ] Done
+- **File:** `strategies/raec_401k_base.py:269-272`
+- **Description:** Hardcoded BIL removal from universe. If a strategy used a different cash symbol, BIL would remain in the universe while the new cash symbol is also added.
+- **Fix:** Remove the configured cash symbol, not hardcoded "BIL".
+> Comment:
+
+---
+
+### #38 - [MEDIUM] Strategies: Coordinator adapter re-created every loop iteration
+- [ ] Done
+- **File:** `strategies/raec_401k_coordinator.py:138`
+- **Description:** `adapter_override or book_router.select_trading_client(BOOK_ID)` is called on every iteration of the sub_results loop. The adapter should be created once before the loop.
+- **Fix:** Hoist adapter creation above the loop.
+> Comment:
+
+---
+
+### #39 - [MEDIUM] Strategies: Backtest hardcodes BIL starting allocation and 5% yield assumption
+- [ ] Done
+- **File:** `strategies/raec_401k_backtest.py:83, 96-97`
+- **Description:** `allocations = {"BIL": 100.0}` is hardcoded. `5.0/252/100` assumes 5% annual yield for BIL which may not match reality.
+- **Fix:** Source from strategy config for the cash symbol; document or parameterize the yield assumption.
+> Comment:
+
+---
+
+### #40 - [MEDIUM] Strategies: Unused variable `last_regime` in backtest
+- [ ] Done
+- **File:** `strategies/raec_401k_backtest.py:84`
+- **Description:** `last_regime = ""` is assigned and updated but never read. Dead code.
+- **Fix:** Remove it.
+> Comment:
+
+---
+
+### #41 - [MEDIUM] Strategies: `s2_letf_orb_aggro` BOOK_ID is SCHWAB but execution is on ALPACA
+- [ ] Done
+- **File:** `strategies/s2_letf_orb_aggro.py:22`
+- **Description:** Signal ledger records say `SCHWAB_401K_MANUAL` but downstream execution in `s2_letf_orb_alpaca.py` uses `ALPACA_PAPER`. Confusing for ledger analysis.
+- **Fix:** Use a signal-specific book ID or document the mapping.
+> Comment:
+
+---
+
+### #42 - [MEDIUM] Strategies: `_allocs.py` prints to stdout instead of logging
+- [ ] Done
+- **File:** `strategies/raec_401k_allocs.py:212`
+- **Description:** `print(f"Ignoring non-universe symbol: {symbol}")` intermingles with structured pipeline output.
+- **Fix:** Use `logging.warning()`.
+> Comment:
+
+---
+
+### #43 - [MEDIUM] Strategies: `_allocs.py` state file loaded without `_load_state` helper
+- [ ] Done
+- **File:** `strategies/raec_401k_allocs.py:300-302`
+- **Description:** Manual `json.loads(state_path.read_text())` bypasses any error handling or migration logic in `_load_state`.
+- **Fix:** Use the shared `_load_state` helper.
+> Comment:
+
+---
+
+### #44 - [MEDIUM] Analytics: Redundant Schwab API calls in individual methods
+- [ ] Done
+- **File:** `analytics/schwab_readonly_live_adapter.py:75-114`
+- **Description:** `load_balance_snapshot()` and `load_positions_snapshot()` each call `_get_account_data()` independently. If a caller invokes both, it makes two API calls for the same data, wasting rate budget and risking inconsistency.
+- **Fix:** Cache the last response with a short TTL, or always go through `load_all_snapshots()`.
+> Comment:
+
+---
+
+### #45 - [MEDIUM] Analytics: Population stddev used instead of sample stddev
+- [ ] Done
+- **File:** `analytics/portfolio.py:264-269`
+- **Description:** `_stddev()` divides by `len(values)` (population) instead of `len(values)-1` (sample). For 5-day rolling windows, this underestimates volatility by ~10%.
+- **Fix:** Use `len(values) - 1` (Bessel's correction).
+> Comment:
+
+---
+
+### #46 - [MEDIUM] Analytics: E2 features import private functions from E1
+- [ ] Done
+- **File:** `analytics/regime_e2_features.py:7-17`
+- **Description:** Imports underscore-prefixed "private" functions like `_normalize_columns`, `_filter_as_of`, `_round`, etc. from `regime_e1_features`. Couples e2 deeply to e1 internals.
+- **Fix:** Extract shared functions to a `regime_utils.py` module (rename without underscore).
+> Comment:
+
+---
+
+### #47 - [MEDIUM] Analytics: `schwab_seed_allocations` -- `SUM_TOLERANCE` is dead code
+- [ ] Done
+- **File:** `analytics/schwab_seed_allocations.py:33`
+- **Description:** `SUM_TOLERANCE = 2.0` is defined but never used. No validation that allocations sum to ~100%.
+- **Fix:** Add a validation check using the tolerance, or remove the constant.
+> Comment:
+
+---
+
+### #48 - [MEDIUM] Analytics: `regime_throttle_writer` -- no deduplication of records
+- [ ] Done
+- **File:** `analytics/regime_throttle_writer.py:108-109`
+- **Description:** Always appends without checking for existing identical records. Running the pipeline twice for the same date produces duplicates.
+- **Fix:** Check existing IDs before appending (like `regime_e1_storage.py` does).
+> Comment:
+
+---
+
+### #49 - [MEDIUM] Analytics: Orders query has hardcoded 1-day window
+- [ ] Done
+- **File:** `analytics/schwab_readonly_live_adapter.py:117-118`
+- **Description:** `load_orders_snapshot()` queries `now - 1 day` to `now`. If run on Monday morning, Friday evening orders are missed.
+- **Fix:** Use a 3-day window to cover weekends, or make it configurable.
+> Comment:
+
+---
+
+### #50 - [MEDIUM] Analytics: `_generated_at_for_date` pretends NY date is midnight UTC
+- [ ] Done
+- **File:** `analytics/portfolio_decision.py:68-70`
+- **Description:** Creates a `datetime` from a NY date string and sets timezone to UTC. This is semantically wrong -- a NY date should be midnight ET, not midnight UTC.
+- **Fix:** Use `ZoneInfo("America/New_York")` for the timezone.
+> Comment:
+
+---
+
+### #51 - [MEDIUM] Analytics: `stable_json_dumps` reimplemented in 5 modules
+- [ ] Done
+- **Files:** `analytics/risk_attribution.py:40`, `risk_attribution_rolling.py:21`, `regime_e1_schemas.py:26`, `schwab_readonly_schemas.py:40`, `slippage_model.py:108`
+- **Description:** Identical function copy-pasted across 5 files.
+- **Fix:** Extract to `analytics/util.py` and import from there.
+> Comment:
+
+---
+
+### #52 - [MEDIUM] Execution: `_state_dir()` and `DEFAULT_STATE_DIR` duplicated in 3 files
+- [ ] Done
+- **Files:** `execution_v2/config_check.py:22-29`, `execution_v2/execution_main.py:145-154`, `execution_v2/state_machine.py:15,248-252`
+- **Description:** Three identical copies of `_state_dir()` with hardcoded `/root/avwap_r3k_scanner/state` default (droplet path, doesn't exist on Mac).
+- **Fix:** Extract to a shared module. Update default to derive from repo root.
+> Comment:
+
+---
+
+### #53 - [MEDIUM] Execution: `_resolve_execution_mode` duplicated in 2 files
+- [ ] Done
+- **Files:** `execution_v2/config_check.py:37-50`, `execution_v2/execution_main.py:161-180`
+- **Description:** Same logic duplicated with slight differences. Changes to one won't propagate.
+- **Fix:** Extract to single location.
+> Comment:
+
+---
+
+### #54 - [MEDIUM] Execution: Naive timezone assumption in `classify_session_phase`
+- [ ] Done
+- **File:** `execution_v2/exits.py:94-107`
+- **Description:** When `ts.tzinfo is None`, the code replaces it with `NY_TZ`, assuming the naive datetime is Eastern. If it is actually UTC (from `datetime.utcnow()` -- see #10), session phase classification will be wrong.
+- **Fix:** Require timezone-aware datetimes; raise if naive.
+> Comment:
+
+---
+
+### #55 - [MEDIUM] Execution: Silent exception swallowing in exit stop check
+- [ ] Done
+- **File:** `execution_v2/exits.py:966-968`
+- **Description:** `except Exception: pass` swallows errors when checking if `desired_stop >= avg_entry`. If types are unexpected, the guardrail silently fails.
+- **Fix:** Log the exception; let it through or handle explicitly.
+> Comment:
+
+---
+
+### #56 - [MEDIUM] Execution: Slippage randomization always uses `abs()`, folding distribution
+- [ ] Done
+- **File:** `execution_v2/orders.py:88-94`
+- **Description:** `abs(slippage)` on lines 92/94 means the "randomization" is actually `[0, max_slippage_pct]` not `[-max, +max]`. Buy limits are always above ref_price, sells always below. May be intentional but docstring is misleading.
+- **Fix:** Document intent or adjust distribution.
+> Comment:
+
+---
+
+### #57 - [MEDIUM] Execution: `correlation_penalty` divides by `(1.0 - threshold)` -- no guard
+- [ ] Done
+- **File:** `execution_v2/correlation_sizing.py:49`
+- **Description:** If `threshold = 1.0`, this is a `ZeroDivisionError`.
+- **Fix:** Guard: `if threshold >= 1.0: return 1.0`.
+> Comment:
+
+---
+
+### #58 - [MEDIUM] Execution: `pytz` mixed with `zoneinfo` in `market_data.py`
+- [ ] Done
+- **File:** `execution_v2/market_data.py:162`
+- **Description:** Rest of codebase uses `zoneinfo.ZoneInfo`. Two timezone libraries can produce subtle DST differences.
+- **Fix:** Replace `pytz` with `zoneinfo`.
+> Comment:
+
+---
+
+### #59 - [MEDIUM] Execution: `schwab_manual_adapter` calls private `slack_alerts._post()`
+- [ ] Done
+- **File:** `execution_v2/schwab_manual_adapter.py:127`
+- **Description:** Uses private method `_post()` directly. Will break silently if the internal API changes.
+- **Fix:** Use the public Slack API.
+> Comment:
+
+---
+
+### #60 - [MEDIUM] Execution: `buy_loop` uses `Path(".")` instead of proper repo root
+- [ ] Done
+- **File:** `execution_v2/buy_loop.py:386`
+- **Description:** `repo_root = Path(".")` depends on CWD. If CWD changes, paths resolve incorrectly.
+- **Fix:** Derive from `__file__` or environment variable.
+> Comment:
+
+---
+
+### #61 - [MEDIUM] Execution: `_normalize_constraints` only normalizes top-level structures
+- [ ] Done
+- **File:** `execution_v2/portfolio_decision.py:98-107`
+- **Description:** Nested dicts/lists within constraints are not sorted, leading to non-deterministic hashing.
+- **Fix:** Recurse into nested structures.
+> Comment:
+
+---
+
+### #62 - [MEDIUM] Root: `cache_store.py` downcasts OHLCV to float32
+- [ ] Done
+- **File:** `cache_store.py:50-54`
+- **Description:** float32 has ~7 significant digits. For stocks above ~$10,000 (BRK-A at ~$700K), precision is lost at the dollar level, affecting stop/target calculations.
+- **Fix:** Use float64, or exclude high-priced symbols from the cast.
+> Comment:
+
+---
+
+### #63 - [MEDIUM] Root: `backtest_engine.py` -- 1400-line function
+- [ ] Done
+- **File:** `backtest_engine.py:498-1900`
+- **Description:** `run_backtest()` is ~1400 lines with deeply nested loops, duplicated entry/exit logic for `next_open` vs `same_close` models (lines 789-977 vs 1340-1522).
+- **Fix:** Extract shared entry/exit logic into helper functions.
+> Comment:
+
+---
+
+### #64 - [MEDIUM] Root: `scan_engine.py` global state mutation (`BAD_TICKERS`, `_ACTIVE_CFG`)
+- [ ] Done
+- **File:** `scan_engine.py:34, 44, 669-672`
+- **Description:** Module-level mutable globals are mutated during `run_scan()`. Not thread-safe; state leaks between calls.
+- **Fix:** Pass as function parameters or use a context object.
+> Comment:
+
+---
+
+### #65 - [MEDIUM] Root: Config comment says 1% but value is 3%
+- [ ] Done
+- **File:** `config.py:110`
+- **Description:** `PBT_EMA20_PROX_PCT: float = 3.0  # within 1% of EMA20`. Comment contradicts value.
+- **Fix:** Update comment to say "within 3%".
+> Comment:
+
+---
+
+### #66 - [MEDIUM] Root: `alpaca-py` only in `requirements-dev.txt` but used in production
+- [ ] Done
+- **File:** `requirements.txt` vs `requirements-dev.txt`
+- **Description:** `scan_engine.py`, `execution.py`, and `sentinel.py` import from `alpaca.*` but it is only in dev requirements.
+- **Fix:** Move `alpaca-py` to `requirements.txt`.
+> Comment:
+
+---
+
+### #67 - [MEDIUM] Root: `sentinel.py` hardcoded droplet path for .env
+- [ ] Done
+- **File:** `sentinel.py:280`
+- **Description:** `load_dotenv(dotenv_path="/root/avwap_r3k_scanner/.env")` -- droplet is shut down, processes run locally.
+- **Fix:** Use relative path or environment variable.
+> Comment:
+
+---
+
+### #68 - [MEDIUM] Root: `sentinel.py` imports from deprecated `execution.py`
+- [ ] Done
+- **File:** `sentinel.py:11-18`
+- **Description:** `execution.py` emits a `DeprecationWarning`. Every sentinel start triggers it.
+- **Fix:** Migrate sentinel to use `execution_v2`.
+> Comment:
+
+---
+
+### #69 - [MEDIUM] Ops: No scan-to-post-scan ordering guarantee in launchd
+- [ ] Done
+- **File:** `ops/launchd/com.avwap.post-scan.plist`
+- **Description:** Post-scan fires at 08:35, only 5 minutes after scan at 08:30. No dependency mechanism. If the scan takes >5 minutes, post-scan runs against stale data.
+- **Fix:** Have post-scan check for today's scan output before proceeding, or increase the gap.
+> Comment:
+
+---
+
+### #70 - [MEDIUM] Ops: KeepAlive services have no explicit restart throttle
+- [ ] Done
+- **File:** `ops/launchd/com.avwap.analytics-platform.plist`, `com.avwap.tunnel.plist`
+- **Description:** No `ThrottleInterval` set. If a process crashes immediately on startup, it restarts rapidly (macOS default 10s).
+- **Fix:** Add explicit `ThrottleInterval` (e.g., 30-60s).
+> Comment:
+
+---
+
+### #71 - [MEDIUM] Ops: Log files grow unbounded with no rotation
+- [ ] Done
+- **File:** `ops/launchd/com.avwap.scan.plist`, `com.avwap.post-scan.plist`
+- **Description:** stdout/stderr both go to the same log file with no rotation configured.
+- **Fix:** Add a log rotation mechanism (newsyslog, logrotate, or periodic truncation).
+> Comment:
+
+---
+
+### #72 - [MEDIUM] Ops: `avwap_check.py` calls `_resolve_db_path` but discards the result
+- [ ] Done
+- **File:** `tools/avwap_check.py:218`
+- **Description:** Return value is not stored or used. Dead code from a removed check.
+- **Fix:** Remove the call.
+> Comment:
+
+---
+
+### #73 - [MEDIUM] Ops: `log_fills.py` duplicate detection uses `repr()` for floats
+- [ ] Done
+- **File:** `tools/log_fills.py:75-84`
+- **Description:** `repr(qty)` and `repr(price)` in hash input. `100.0` vs `100` (int vs float) would produce different IDs.
+- **Fix:** Normalize to a consistent format: `f"{qty:.6f}"` and `f"{price:.6f}"`.
+> Comment:
+
+---
+
+### #74 - [MEDIUM] Ops: `install.sh` bootout uses incorrect syntax
+- [ ] Done
+- **File:** `ops/launchd/install.sh:47`
+- **Description:** `launchctl bootout "gui/$UID_VAL/$LAUNCH_AGENTS/${label}.plist"` uses a file path instead of a service label. The `2>/dev/null || true` suppresses errors, so old agents may not be properly unloaded.
+- **Fix:** Use `launchctl bootout "gui/$UID_VAL/com.avwap.${label}"`.
+> Comment:
+
+---
+
+### #75 - [MEDIUM] Frontend: 14+ unused component files in bundle
+- [ ] Done
+- **Files:** `FreshnessBanner.tsx`, `SummaryStrip.tsx`, `BreadcrumbNav.tsx`, `AllocationBar.tsx`, `SignalsPanel.tsx`, `AlertsPanel.tsx`, `BookPnlPanel.tsx`, `ReadinessCheck.tsx`, `AppShell.tsx`, `NavRail.tsx`, `KeyboardShortcutsHelp.tsx`, `useKeyboardShortcuts.ts`, `ExecutionPage.tsx`, `BacktestsPage.tsx`, `S2SignalsPage.tsx`
+- **Description:** These files are not imported in App.tsx routes or used by any active component. Dead code increasing bundle size.
+- **Fix:** Tree-shaking should exclude lazy-unused, but unreferenced files should be removed or moved to a `_deprecated/` folder.
+> Comment:
+
+---
+
+### #76 - [MEDIUM] Frontend: Pervasive `as any` type casts erode type safety
+- [ ] Done
+- **Files:** `StrategyRoster.tsx:31-47`, `StrategyTearsheet.tsx:25-51`, `BlotterPage.tsx:62`, `RiskPage.tsx:27-33`, `Layout.tsx:52-53`
+- **Description:** Every `extract*` function uses `(data as any)` because API methods return `ApiEnvelope<KeyValue>` (untyped record) instead of real response types.
+- **Fix:** Type the API functions with proper response interfaces from `types.ts`.
+> Comment:
+
+---
+
+### #77 - [MEDIUM] Frontend: Slide-out panels lack Escape key and ARIA attributes
+- [ ] Done
+- **Files:** `components/ScanCandidateDetailPanel.tsx:83-86`, `pages/StrategyLab.tsx:121-124`
+- **Description:** Panels close on backdrop click but don't listen for Escape key. Missing `role="dialog"`, `aria-modal`, and focus trapping (WCAG compliance).
+- **Fix:** Add `onKeyDown` handler for Escape, and ARIA attributes.
+> Comment:
+
+---
+
+### #78 - [MEDIUM] Frontend: `todayNY()` computed at render time -- goes stale after midnight
+- [ ] Done
+- **Files:** `pages/CommandCenter.tsx:48`, `pages/TradePage.tsx:30`
+- **Description:** `const date = todayNY()` is computed once. If the dashboard is left open past midnight ET, API calls use yesterday's date.
+- **Fix:** Recompute on an interval or use a custom hook.
+> Comment:
+
+---
+
+### #79 - [MEDIUM] Frontend: 4-column grid with no responsive breakpoints
+- [ ] Done
+- **Files:** `CommandCenter.tsx:162`, `RiskPage.tsx:61`, `ScanPage.tsx:102`, `BlotterPage.tsx:151`
+- **Description:** `grid-cols-4` without responsive variants. On mobile, stat cards become unreadably narrow.
+- **Fix:** Use `grid-cols-2 lg:grid-cols-4` (like TradePage already does).
+> Comment:
+
+---
+
+### #80 - [MEDIUM] Frontend: CommandCenter has ~60 lines of business logic inline
+- [ ] Done
+- **File:** `analytics_platform/frontend/src/pages/CommandCenter.tsx:70-127`
+- **Description:** Rebalance calculation logic (building targets, computing deltas, filtering, aggregating) lives directly in the component. Not testable in isolation.
+- **Fix:** Extract to a custom hook or utility module.
+> Comment:
+
+---
+
+### #81 - [MEDIUM] Backend: Full readmodel rebuild reads all files every 60 seconds
+- [ ] Done
+- **File:** `analytics_platform/backend/readmodels/build_readmodels.py:96-1409`
+- **Description:** Every refresh cycle reads all JSONL, CSV, and parquet files from disk. No incremental/delta mechanism. As data grows, this becomes expensive.
+- **Fix:** Use the `data_version` hash to short-circuit when nothing changed. Read it before doing the work, not after.
+> Comment:
+
+---
+
+### #82 - [MEDIUM] Backend: `_write_table` drops tables during rebuild (no indexes)
+- [ ] Done
+- **File:** `analytics_platform/backend/readmodels/build_readmodels.py:88-93`
+- **Description:** Tables are dropped and recreated with no indexes. Concurrent reads during rebuild see missing tables. No indexes means full table scans.
+- **Fix:** Use `CREATE TABLE new_X` then `ALTER TABLE` rename for atomic swap. Add indexes on frequently filtered columns.
+> Comment:
+
+---
+
+### #83 - [MEDIUM] Backend: `refresh_loop` has no backoff on repeated failures
+- [ ] Done
+- **File:** `analytics_platform/backend/app.py:45-48`
+- **Description:** If `build_readmodels` raises repeatedly (disk full, permissions), the loop hammers every 60s with no backoff.
+- **Fix:** Add exponential backoff on consecutive failures.
+> Comment:
+
+---
+
+### #84 - [MEDIUM] Backend: `update_exit` returns stale/mismatched data
+- [ ] Done
+- **File:** `analytics_platform/backend/trade_log_db.py:153-155`
+- **Description:** The response dict is manually assembled and misses `updated_utc`. The `exit_date` may be `None` in the response but non-None in the DB.
+- **Fix:** Re-read the trade from DB after update and return the actual persisted state.
+> Comment:
+
+---
+
+### #85 - [MEDIUM] Backend: `get_strategy_performance` has N+1 query pattern
+- [ ] Done
+- **File:** `analytics_platform/backend/api/queries.py:350-488`
+- **Description:** For each strategy from `SELECT DISTINCT strategy_id`, two more queries are issued (fills + buy count).
+- **Fix:** Consolidate into a single query with joins/window functions.
+> Comment:
+
+---
+
+### #86 - [MEDIUM] Backend: `reason_code` LIKE filter with unescaped user input
+- [ ] Done
+- **File:** `analytics_platform/backend/api/queries.py:209-211`
+- **Description:** `reason_code` containing `%` or `_` matches unintended rows. Not SQL injection (parameterized), but a logic bug.
+- **Fix:** Use `ESCAPE` clause or `list_contains` on JSON instead of LIKE.
+> Comment:
+
+---
+
+### #87 - [MEDIUM] Backend: TradeLogStore not closed on app shutdown
+- [ ] Done
+- **File:** `analytics_platform/backend/app.py:57-63`
+- **Description:** The DuckDB connection is never explicitly closed on shutdown. Could corrupt WAL file.
+- **Fix:** Add `app.state.trade_log.close()` in the lifespan shutdown.
+> Comment:
+
+---
+
+### #88 - [MEDIUM] Tests: `_linear_series()` copy-pasted across 5 RAEC test files
+- [ ] Done
+- **Files:** `test_raec_401k_v2.py:17`, `test_raec_401k_v3.py:17`, `test_raec_401k_v4.py:17`, `test_raec_401k_v5.py:17`, `test_raec_401k_coordinator.py:18`
+- **Description:** Identical function duplicated 5 times. Same for `_make_series()` (6 files) and `_SendResult`/`_NoOpAdapter` (4 files).
+- **Fix:** Move to `tests/helpers.py` or a shared RAEC test utility module.
+> Comment:
+
+---
+
+### #89 - [MEDIUM] Tests: Non-deterministic timestamps cause potential flakiness
+- [ ] Done
+- **File:** `tests/test_execution_v2_live_gate.py:13, 168, 192, 217`
+- **Description:** `_intent()` uses `datetime.now()` for timestamps. Tests computing `today` via system clock have a midnight-rollover flakiness window.
+- **Fix:** Use fixed timestamps in test fixtures.
+> Comment:
+
+---
+
+### #90 - [MEDIUM] Tests: V4 rebalance/drift tests coupled to private functions
+- [ ] Done
+- **File:** `tests/test_raec_401k_v4.py:322-365`
+- **Description:** Tests call private functions (`_parse_date`, `_compute_anchor_signal`, `_targets_for_regime`) to pre-compute expected state, then verify the strategy agrees with itself.
+- **Fix:** Test against known expected outputs for given inputs rather than using the implementation to compute expectations.
+> Comment:
+
+---
+
+### #91 - [MEDIUM] Tests: Coordinator tests duplicate large private-function setup blocks
+- [ ] Done
+- **File:** `tests/test_raec_401k_coordinator.py:291-413`
+- **Description:** Three tests repeat ~20-line blocks of private function calls for state pre-computation.
+- **Fix:** Extract to a shared fixture or helper.
+> Comment:
+
+---
+
+### #92 - [MEDIUM] Tests: `conftest.py` `requests` module reload at load time
+- [ ] Done
+- **File:** `tests/conftest.py:80-106`
+- **Description:** Module reload (`sys.modules.pop` + `importlib.import_module`) at import time could mask genuine import errors.
+- **Fix:** Now that the schwab-py stray tests issue is documented, consider removing this workaround if the issue is resolved.
+> Comment:
+
+---
+
+## LOW Issues
+
+### #93 - [LOW] Strategies: Backward-compat shims expose private methods as module-level names
+- [ ] Done
+- **Files:** `strategies/raec_401k_v3.py:66-85`, `raec_401k_v4.py`, `raec_401k_v5.py`
+- **Description:** Re-exports like `_save_state`, `_state_path` create tight coupling to base class internals.
+> Comment:
+
+---
+
+### #94 - [LOW] Strategies: `CoordinatorResult.sub_results` typed as `dict[str, object]`
+- [ ] Done
+- **File:** `strategies/raec_401k_coordinator.py:43`
+- **Description:** Should be `dict[str, RunResult]` for IDE support and static analysis.
+> Comment:
+
+---
+
+### #95 - [LOW] Strategies: Registry `get()` raises bare KeyError with no context
+- [ ] Done
+- **File:** `strategies/raec_401k_registry.py:19`
+- **Description:** Should include available strategy names in the error message.
+> Comment:
+
+---
+
+### #96 - [LOW] Strategies: Backtest `--end` date hardcoded to `"2026-02-14"`
+- [ ] Done
+- **File:** `strategies/raec_401k_backtest.py:437`
+- **Description:** Will become stale. Use `date.today().isoformat()` as default.
+> Comment:
+
+---
+
+### #97 - [LOW] Strategies: `DEFAULT_CAPITAL_SPLIT` defined in 3 places
+- [ ] Done
+- **Files:** `raec_401k_coordinator.py:31`, `raec_401k_backtest.py:261`, `raec_401k_coordinator_backtest.py:11`
+- **Description:** Triple definition of `{"v3": 0.40, "v4": 0.30, "v5": 0.30}`. Changes must be synced in 3 places.
+> Comment:
+
+---
+
+### #98 - [LOW] Strategies: `_apply_turnover_cap` scales sells too (not just buys)
+- [ ] Done
+- **File:** `strategies/raec_401k_base.py:718-728`
+- **Description:** Scale is computed from `total_buys` only, but applied to all deltas including sells. May be intentional but naming suggests buys-only.
+> Comment:
+
+---
+
+### #99 - [LOW] Analytics: "STRESSED" regime maps to (0.0, 0.0) with misleading reason "missing_regime"
+- [ ] Done
+- **File:** `analytics/regime_policy.py:13-22`
+- **Description:** Should be an explicit mapping entry or distinct reason code.
+> Comment:
+
+---
+
+### #100 - [LOW] Analytics: `correlation_matrix.py` -- `lookback_days // 2` is a loose threshold
+- [ ] Done
+- **File:** `analytics/correlation_matrix.py:72-73`
+- **Description:** Only 30 data points required for a 60-day window. May produce noisy correlations.
+> Comment:
+
+---
+
+### #101 - [LOW] Analytics: `risk_attribution_rolling.py` sorts "top symbols" ascending
+- [ ] Done
+- **File:** `analytics/risk_attribution_rolling.py:176`
+- **Description:** Sorts ascending by delta_notional, showing smallest impact first. "Top" usually implies largest.
+> Comment:
+
+---
+
+### #102 - [LOW] Analytics: `regime_e2_features.py` uses bare `assert` for non-None check
+- [ ] Done
+- **File:** `analytics/regime_e2_features.py:90`
+- **Description:** `assert e1 is not None` can be stripped with `-O` flag. Use explicit `if` check in production code.
+> Comment:
+
+---
+
+### #103 - [LOW] Analytics: `schwab_auth.py` prints partial credential to stdout
+- [ ] Done
+- **File:** `analytics/schwab_auth.py:30`
+- **Description:** First 8 chars of OAuth client ID printed. Low risk but could end up in logs.
+> Comment:
+
+---
+
+### #104 - [LOW] Execution: Unused import `Iterable` in `pivots.py`
+- [ ] Done
+- **File:** `execution_v2/pivots.py:4`
+> Comment:
+
+---
+
+### #105 - [LOW] Execution: Unused variable `text` in `alerts.py`
+- [ ] Done
+- **File:** `execution_v2/alerts.py:40`
+> Comment:
+
+---
+
+### #106 - [LOW] Execution: Placeholder comments remain in 9+ production files
+- [ ] Done
+- **Files:** `execution_v2/clocks.py:70`, `pivots.py:78`, `regime_global.py:108`, `regime_symbol.py:65`, `orders.py:109`, `sizing.py:74`, `alerts.py:46`, `boh.py:71`, `market_data.py:220`
+- **Description:** Comments like `# Execution V2 placeholder: clocks.py` are scaffolding artifacts.
+> Comment:
+
+---
+
+### #107 - [LOW] Execution: Empty `except Exception` blocks in `state_machine.py`
+- [ ] Done
+- **File:** `execution_v2/state_machine.py:97-99, 218-221`
+- **Description:** Corrupted state files silently overwritten on next save, losing forensic data.
+> Comment:
+
+---
+
+### #108 - [LOW] Execution: `_now_et()` uses system timezone despite the name
+- [ ] Done
+- **File:** `execution_v2/execution_main.py:55`
+- **Description:** `datetime.now().astimezone()` uses system local tz. If machine is not ET, timestamps are wrong.
+> Comment:
+
+---
+
+### #109 - [LOW] Root: `scan_engine.py` `warnings.filterwarnings("ignore")` suppresses all warnings
+- [ ] Done
+- **File:** `scan_engine.py:36`
+- **Description:** Globally suppresses all warnings, hiding pandas FutureWarnings, numpy warnings, etc.
+- **Fix:** Scope to specific categories (e.g., yfinance `FutureWarning`).
+> Comment:
+
+---
+
+### #110 - [LOW] Root: `_atomic_write_json` / `_atomic_write_csv` duplicated in 3 files
+- [ ] Done
+- **Files:** `parity.py:44-56`, `backtest_sweep.py:289-301`, `backtest_engine.py:114-127`
+- **Description:** Identical helper functions copy-pasted.
+> Comment:
+
+---
+
+### #111 - [LOW] Root: `indicators.py` `slope()` uses `raw=False` unnecessarily
+- [ ] Done
+- **File:** `indicators.py:51`
+- **Description:** Using `raw=True` would avoid Series construction overhead per window.
+> Comment:
+
+---
+
+### #112 - [LOW] Root: `export_tv.py` appears superseded by `scan_engine.write_tradingview_watchlist()`
+- [ ] Done
+- **File:** `export_tv.py`
+- **Description:** Dead code if `run_scan.py` already produces the watchlist.
+> Comment:
+
+---
+
+### #113 - [LOW] Root: `scanner.py` is fully deprecated
+- [ ] Done
+- **File:** `scanner.py`
+- **Description:** Emits deprecation warning at import. Duplicates `scan_engine.py` logic.
+> Comment:
+
+---
+
+### #114 - [LOW] Root: Overlapping config fields (`BACKTEST_RISK_PCT` vs `BACKTEST_RISK_PER_TRADE_PCT`)
+- [ ] Done
+- **File:** `config.py:144-149`
+- **Description:** Two fields for the same concept with identical defaults. Confusing.
+> Comment:
+
+---
+
+### #115 - [LOW] Root: `backtest_sweep.py` uses deprecated `datetime.utcnow()`
+- [ ] Done
+- **File:** `backtest_sweep.py:589`
+- **Description:** Deprecated in Python 3.12+. Use `datetime.now(timezone.utc)`.
+> Comment:
+
+---
+
+### #116 - [LOW] Root: `backtest.py` `rolling_swing_avwap()` has O(n^2) complexity
+- [ ] Done
+- **File:** `backtest.py:25-31`
+- **Description:** For each bar, calls `anchored_vwap()` over the full slice. Slow for large universes.
+> Comment:
+
+---
+
+### #117 - [LOW] Ops: `run_with_env.sh` hardcodes user-specific absolute path
+- [ ] Done
+- **File:** `ops/launchd/run_with_env.sh:10`
+- **Description:** `REPO_DIR="/Users/kevinvanhimbergen/avwap_r3k_scanner"` is non-portable.
+> Comment:
+
+---
+
+### #118 - [LOW] Ops: `avwap-check` shell wrapper uses bare `python` instead of venv
+- [ ] Done
+- **File:** `ops/avwap-check:1-4`
+- **Description:** Relies on PATH python. Could invoke system Python without project dependencies.
+> Comment:
+
+---
+
+### #119 - [LOW] Ops: `refresh_iwv_holdings.py` uses naive `datetime.now()`
+- [ ] Done
+- **File:** `tools/refresh_iwv_holdings.py:23`
+- **Description:** Inconsistent with rest of codebase which uses timezone-aware datetimes.
+> Comment:
+
+---
+
+### #120 - [LOW] Ops: `preflight_execution_v2.py` hardcodes complex JSON blob as default
+- [ ] Done
+- **File:** `tools/preflight_execution_v2.py:61`
+- **Description:** `S2_SLEEVES_JSON` default inline. If production value diverges, preflight check is misleading.
+> Comment:
+
+---
+
+### #121 - [LOW] Ops: Repro scripts reference private internal APIs
+- [ ] Done
+- **File:** `tools/repro/ledger_write_failure.py:21`
+- **Description:** `execution_main._submit_market_entry` is a private function. Repro scripts may have bitrotted.
+> Comment:
+
+---
+
+### #122 - [LOW] Frontend: `StrategyLab` is entirely hardcoded with seed data
+- [ ] Done
+- **File:** `analytics_platform/frontend/src/pages/StrategyLab.tsx:49-118`
+- **Description:** Buttons do nothing, "AI chat" returns hardcoded response. Prototype shipping in production with no visual indication.
+> Comment:
+
+---
+
+### #123 - [LOW] Frontend: `RegimeBadge` hex + "15" suffix for opacity only works for 6-digit hex
+- [ ] Done
+- **File:** `analytics_platform/frontend/src/components/Badge.tsx:29`
+- **Description:** `${color}15` for alpha channel breaks for non-hex colors.
+> Comment:
+
+---
+
+### #124 - [LOW] Frontend: `err: any` in catch blocks
+- [ ] Done
+- **File:** `analytics_platform/frontend/src/pages/TradeLogPage.tsx:57`
+- **Description:** Should use `unknown` and type-narrow.
+> Comment:
+
+---
+
+### #125 - [LOW] Frontend: Tables lack accessibility attributes
+- [ ] Done
+- **Files:** All pages with `<table>` elements
+- **Description:** Missing `scope`, `caption`, `aria-sort` on sortable columns. Clickable rows have no keyboard support.
+> Comment:
+
+---
+
+### #126 - [LOW] Frontend: No `document.title` management per page
+- [ ] Done
+- **Description:** Browser tab always shows the same title regardless of current page.
+> Comment:
+
+---
+
+### #127 - [LOW] Backend: `risk_per_share` long/short branches compute identical value
+- [ ] Done
+- **File:** `analytics_platform/backend/trade_log_db.py:66-69`
+- **Description:** `abs(a-b) == abs(b-a)`. The branch is dead code.
+> Comment:
+
+---
+
+### #128 - [LOW] Backend: Four nearly identical date-clause helper functions
+- [ ] Done
+- **File:** `analytics_platform/backend/api/queries.py:22-33, 767-787, 1116-1132, 1229-1242`
+- **Description:** `_date_clause`, `_portfolio_date_clause`, `_slippage_where`, `_raec_where` all build WHERE clauses from dates. Differ only in column name.
+> Comment:
+
+---
+
+### #129 - [LOW] Backend: `uuid.uuid4()[:12]` reduces uniqueness for trade IDs
+- [ ] Done
+- **File:** `analytics_platform/backend/trade_log_db.py:60`
+- **Description:** Truncating UUID to 12 chars reduces entropy from 122 bits to ~44 bits.
+> Comment:
+
+---
+
+### #130 - [LOW] Backend: `main.py` creates app at module level (import-time side effects)
+- [ ] Done
+- **File:** `analytics_platform/backend/main.py:10`
+- **Description:** Importing `main` triggers full app creation. Harder to test.
+> Comment:
+
+---
+
+### #131 - [LOW] Backend: `_rows()` goes through pandas DataFrame unnecessarily
+- [ ] Done
+- **File:** `analytics_platform/backend/api/queries.py:15-19`
+- **Description:** Every query result converted to DataFrame just to get `list[dict]`. DuckDB's `.fetchall()` with column descriptions would be more direct.
+> Comment:
+
+---
+
+### #132 - [LOW] Tests: Redundant `sys.path.append` in 6 test files
+- [ ] Done
+- **Files:** `test_determinism.py:12`, `test_setup_context_contract.py:13`, `test_scan_stop_placement.py:14`, `test_no_lookahead.py:12`, `test_universe.py:11`, `test_scan_engine_schema.py:12`
+- **Description:** conftest.py already handles path setup. These are unnecessary and accumulate duplicates.
+> Comment:
+
+---
+
+## Positive Patterns Worth Highlighting
+
+While this review focuses on issues, the codebase also demonstrates several strong practices:
+
+1. **Architectural guard tests** -- `test_regime_e1_no_execution_imports.py` and similar tests enforce module boundaries automatically
+2. **Atomicity testing** -- `test_atomic_write.py` uses fault-injection via monkeypatched OS functions
+3. **Determinism verification** -- SHA-256 comparison of independent backtest runs
+4. **Consistent use of `tmp_path` and `monkeypatch`** -- No inter-test leakage, no `time.sleep()` calls
+5. **Config-driven strategies** -- V3-V5 via `StrategyConfig` dataclass is clean and extensible
+6. **Event-sourced ledger pattern** -- JSONL ledgers with idempotent readers
+7. **740+ tests passing** -- Strong test coverage for a project of this size

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface PollState<T> {
   data: T | null;
@@ -14,10 +14,14 @@ export function usePolling<T>(loader: () => Promise<T>, intervalMs = 45_000): Po
   const [error, setError] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
   const mounted = useRef(true);
+  const loaderRef = useRef(loader);
 
-  const refresh = async () => {
+  // Keep loaderRef current so the interval always calls the latest loader
+  loaderRef.current = loader;
+
+  const refresh = useCallback(async () => {
     try {
-      const next = await loader();
+      const next = await loaderRef.current();
       if (!mounted.current) {
         return;
       }
@@ -34,7 +38,7 @@ export function usePolling<T>(loader: () => Promise<T>, intervalMs = 45_000): Po
         setLoading(false);
       }
     }
-  };
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -46,7 +50,7 @@ export function usePolling<T>(loader: () => Promise<T>, intervalMs = 45_000): Po
       mounted.current = false;
       window.clearInterval(timer);
     };
-  }, [intervalMs]);
+  }, [intervalMs, refresh]);
 
   return { data, loading, error, lastRefreshed, refresh };
 }
