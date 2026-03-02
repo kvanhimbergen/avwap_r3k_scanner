@@ -13,7 +13,7 @@ from strategies.raec_401k_registry import register
 
 _CONFIG = StrategyConfig(
     strategy_id="RAEC_401K_V3",
-    risk_universe=("TQQQ", "SOXL", "UPRO", "TECL", "FNGU", "XLK", "SMH", "XLY", "XLC", "XLI", "QQQ", "SPY"),
+    risk_universe=("TQQQ", "SOXL", "UPRO", "TECL", "FNGU", "XLK", "SMH", "XLY", "XLC", "XLI", "QQQ", "SPY", "XBI"),
     defensive_universe=("TLT", "GLD", "USMV", "IEF", "BIL"),
     fallback_cash_symbol="BIL",
     min_trade_pct=0.5,
