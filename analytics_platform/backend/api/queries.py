@@ -11,6 +11,51 @@ import pandas as pd
 S2_STRATEGY_ID = "S2_LETF_ORB_AGGRO"
 S1_STRATEGY_ID = "S1_AVWAP_CORE"
 
+# ---------------------------------------------------------------------------
+# Live benchmark price cache (60-second TTL, in-memory)
+# ---------------------------------------------------------------------------
+_BENCH_SYMBOLS = ("SPY", "VTI")
+_BENCH_CACHE: dict[str, float] = {}
+_BENCH_CACHE_TS: float = 0.0
+_BENCH_CACHE_TTL = 60.0  # seconds
+
+
+def _get_live_benchmark_prices() -> dict[str, float]:
+    """Return latest benchmark prices via yfinance with a 60s in-memory cache."""
+    import time
+
+    global _BENCH_CACHE, _BENCH_CACHE_TS  # noqa: PLW0603
+
+    now = time.monotonic()
+    if _BENCH_CACHE and (now - _BENCH_CACHE_TS) < _BENCH_CACHE_TTL:
+        return _BENCH_CACHE
+
+    try:
+        import yfinance as yf
+
+        df = yf.download(" ".join(_BENCH_SYMBOLS), period="1d", progress=False)
+        if df.empty:
+            return _BENCH_CACHE  # stale is better than empty
+        prices: dict[str, float] = {}
+        close = df["Close"]
+        if isinstance(close, pd.DataFrame):
+            for sym in _BENCH_SYMBOLS:
+                if sym in close.columns:
+                    val = close[sym].dropna()
+                    if not val.empty:
+                        prices[sym] = float(val.iloc[-1])
+        else:
+            # Single-ticker download returns a Series
+            val = close.dropna()
+            if not val.empty:
+                prices[_BENCH_SYMBOLS[0]] = float(val.iloc[-1])
+        if prices:
+            _BENCH_CACHE = prices
+            _BENCH_CACHE_TS = now
+        return _BENCH_CACHE
+    except Exception:
+        return _BENCH_CACHE  # return stale cache on any error
+
 
 def _rows(conn, sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]:
     # Uses fetchdf() for automatic NaN→None conversion; fetchall() would need manual handling
@@ -594,6 +639,30 @@ def get_strategy_performance(
         """,
         bench_params,
     )
+
+    # Inject live SPY price for today so benchmark return is current
+    _live = _get_live_benchmark_prices()
+    if "SPY" in _live:
+        from datetime import date as _date, timezone as _tz
+        from zoneinfo import ZoneInfo
+        _today_ny = _date.today()
+        try:
+            from datetime import datetime as _dt
+            _today_ny = _dt.now(ZoneInfo("America/New_York")).date()
+        except Exception:
+            pass
+        _today_str = _today_ny.isoformat()
+        # Check if the end filter excludes today
+        if not end or _today_str <= end:
+            existing = {r["date_ny"] for r in bench_rows}
+            if _today_str not in existing:
+                bench_rows.append({"date_ny": _today_str, "close": _live["SPY"]})
+            else:
+                for r in bench_rows:
+                    if r["date_ny"] == _today_str:
+                        r["close"] = _live["SPY"]
+                        break
+
     portfolio_metrics["benchmark_curve"] = bench_rows
 
     if len(bench_rows) >= 2:
@@ -1718,6 +1787,19 @@ def get_schwab_performance(
     bench_by: dict[tuple[str, str], float] = {}
     for r in bench_rows:
         bench_by[(r["symbol"], r["date_ny"])] = r["close"]
+
+    # Inject live benchmark prices for today
+    _live = _get_live_benchmark_prices()
+    if _live:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+        try:
+            _today_str = _dt.now(ZoneInfo("America/New_York")).date().isoformat()
+        except Exception:
+            from datetime import date as _date
+            _today_str = _date.today().isoformat()
+        for sym, price in _live.items():
+            bench_by[(sym, _today_str)] = price
 
     # Build common date set and forward-fill benchmarks
     all_dates = sorted(portfolio_dates)
