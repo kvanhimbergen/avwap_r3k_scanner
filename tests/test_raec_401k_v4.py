@@ -301,7 +301,8 @@ def test_transition_structure(tmp_path: Path) -> None:
 # rebalance logic and refactoring risks regressions.
 # ---------------------------------------------------------------------------
 
-def test_daily_rebalance_trigger(tmp_path: Path) -> None:
+def test_cooldown_blocks_rebalance(tmp_path: Path) -> None:
+    """New day with allocs at target does NOT trigger rebalance (cooldown)."""
     provider = _risk_on_provider()
     asof_date = "2026-02-06"
     asof = raec_401k_v4._parse_date(asof_date)
@@ -311,28 +312,17 @@ def test_daily_rebalance_trigger(tmp_path: Path) -> None:
     feature_map = raec_401k_v4._load_symbol_features(provider=provider, asof=asof, cash_symbol=cash_symbol)
     targets = raec_401k_v4._targets_for_regime(signal=signal, feature_map=feature_map, cash_symbol=cash_symbol)
 
-    # Same day, same regime, allocs at target -> no rebalance
-    _seed_state(tmp_path, last_regime=signal.regime, allocs=targets,
-                last_eval_date=asof_date)
-    result_same_day = raec_401k_v4.run_strategy(
-        asof_date=asof_date,
-        repo_root=tmp_path,
-        price_provider=provider,
-        dry_run=True,
-        allow_state_write=False,
-    )
-    # New day -> triggers rebalance
+    # New day, same regime, allocs at target -> no rebalance (no drift)
     _seed_state(tmp_path, last_regime=signal.regime, allocs=targets,
                 last_eval_date="2026-02-05")
-    result_new_day = raec_401k_v4.run_strategy(
+    result = raec_401k_v4.run_strategy(
         asof_date=asof_date,
         repo_root=tmp_path,
         price_provider=provider,
         dry_run=True,
         allow_state_write=False,
     )
-    assert result_same_day.should_rebalance is False
-    assert result_new_day.should_rebalance is True
+    assert result.should_rebalance is False
 
 
 # ---------------------------------------------------------------------------

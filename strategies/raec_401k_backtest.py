@@ -9,6 +9,7 @@ from datetime import date
 from pathlib import Path
 from statistics import stdev
 
+from analytics.regime_transition import RegimeTransitionDetector
 from data.prices import PriceProvider, get_default_price_provider
 from strategies.raec_401k_base import BaseRAECStrategy
 from strategies.raec_401k_coordinator import DEFAULT_CAPITAL_SPLIT
@@ -84,11 +85,14 @@ def run_single_backtest(
     equity = initial_capital
     allocations: dict[str, float] = {cash_sym: 100.0}  # start 100% cash
     last_eval_date = ""
+    last_rebalance_date: str | None = None
+    last_confirmed_regime: str | None = None
     peak_equity = equity
     regime_history: list[tuple[date, str]] = []
     equity_curve: list[tuple[date, float, float]] = []
     rebalance_count = 0
     monthly_returns: dict[str, float] = {}
+    smoother = RegimeTransitionDetector(smoothing_days=strategy.REGIME_SMOOTHING_DAYS)
 
     for day in trading_days:
         # 1. Apply daily returns to current allocations
@@ -130,39 +134,93 @@ def run_single_backtest(
         except ValueError:
             continue  # insufficient history
 
+        # Apply regime smoothing
+        smoothed_regime = smoother.update(signal.regime, confidence=1.0, date=asof_str)
+
         cash_symbol = "BIL"
         feature_map = strategy._load_symbol_features(
             provider=provider, asof=day, cash_symbol=cash_symbol
         )
+
+        # Use smoothed regime for target computation
+        from strategies.raec_401k_base import RegimeSignal
+        smoothed_signal = RegimeSignal(
+            regime=smoothed_regime,
+            close=signal.close,
+            sma50=signal.sma50,
+            sma200=signal.sma200,
+            vol_20d=signal.vol_20d,
+            vol_252d=signal.vol_252d,
+            drawdown_63d=signal.drawdown_63d,
+            trend_up=signal.trend_up,
+            vol_high=signal.vol_high,
+            crash_mode=signal.crash_mode,
+            qqq_close=signal.qqq_close,
+            qqq_sma50=signal.qqq_sma50,
+            qqq_sma200=signal.sma200,
+            qqq_drawdown_63d=signal.qqq_drawdown_63d,
+        )
+
         targets = strategy._targets_for_regime(
-            signal=signal, feature_map=feature_map, cash_symbol=cash_symbol
+            signal=smoothed_signal, feature_map=feature_map, cash_symbol=cash_symbol
         )
 
-        # Rebalance: daily eval always triggers
-        deltas = {
-            sym: targets.get(sym, 0.0) - allocations.get(sym, 0.0)
-            for sym in set(targets) | set(allocations)
-        }
-        deltas = {s: d for s, d in deltas.items() if abs(d) >= strategy.MIN_TRADE_PCT}
-        capped = strategy._apply_turnover_cap(
-            deltas, max_weekly_turnover=strategy.MAX_WEEKLY_TURNOVER_PCT
-        )
+        # Rebalance decision with cooldown
+        should_rebalance = False
+        if not last_eval_date:
+            # First-ever run
+            should_rebalance = True
+        elif last_confirmed_regime and last_confirmed_regime != smoothed_regime:
+            # Confirmed regime change overrides cooldown
+            should_rebalance = True
+        else:
+            drift = {
+                sym: targets.get(sym, 0.0) - allocations.get(sym, 0.0)
+                for sym in set(targets) | set(allocations)
+            }
+            if last_rebalance_date:
+                days_since = (day - strategy._parse_date(last_rebalance_date)).days
+                if days_since < strategy.REBALANCE_COOLDOWN_DAYS:
+                    # During cooldown, only extreme drift (2x threshold) triggers
+                    should_rebalance = any(
+                        abs(d) > strategy.DRIFT_THRESHOLD_PCT * 2 for d in drift.values()
+                    )
+                else:
+                    should_rebalance = any(
+                        abs(d) > strategy.DRIFT_THRESHOLD_PCT for d in drift.values()
+                    )
+            else:
+                should_rebalance = any(
+                    abs(d) > strategy.DRIFT_THRESHOLD_PCT for d in drift.values()
+                )
 
-        new_allocs = dict(allocations)
-        for sym, delta in capped.items():
-            if abs(delta) >= strategy.MIN_TRADE_PCT:
-                new_allocs[sym] = new_allocs.get(sym, 0.0) + delta
+        if should_rebalance:
+            deltas = {
+                sym: targets.get(sym, 0.0) - allocations.get(sym, 0.0)
+                for sym in set(targets) | set(allocations)
+            }
+            deltas = {s: d for s, d in deltas.items() if abs(d) >= strategy.MIN_TRADE_PCT}
+            capped = strategy._apply_turnover_cap(
+                deltas, max_weekly_turnover=strategy.MAX_WEEKLY_TURNOVER_PCT
+            )
 
-        # Clean up and renormalize
-        new_allocs = {s: p for s, p in new_allocs.items() if p > 0.1}
-        total = sum(new_allocs.values())
-        if total > 0:
-            new_allocs = {s: p / total * 100 for s, p in new_allocs.items()}
-        allocations = new_allocs
-        rebalance_count += 1
+            new_allocs = dict(allocations)
+            for sym, delta in capped.items():
+                if abs(delta) >= strategy.MIN_TRADE_PCT:
+                    new_allocs[sym] = new_allocs.get(sym, 0.0) + delta
 
-        if not regime_history or regime_history[-1][1] != signal.regime:
-            regime_history.append((day, signal.regime))
+            # Clean up and renormalize
+            new_allocs = {s: p for s, p in new_allocs.items() if p > 0.1}
+            total = sum(new_allocs.values())
+            if total > 0:
+                new_allocs = {s: p / total * 100 for s, p in new_allocs.items()}
+            allocations = new_allocs
+            rebalance_count += 1
+            last_rebalance_date = asof_str
+
+        last_confirmed_regime = smoothed_regime
+        if not regime_history or regime_history[-1][1] != smoothed_regime:
+            regime_history.append((day, smoothed_regime))
 
         last_eval_date = asof_str
 

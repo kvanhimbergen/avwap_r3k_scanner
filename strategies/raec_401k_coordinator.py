@@ -76,6 +76,7 @@ def _write_raec_ledger(
     for key, r in coord_result.sub_results.items():
         sub_strategy_results[key] = {
             "regime": r.regime,
+            "smoothed_regime": r.smoothed_regime,
             "should_rebalance": r.should_rebalance,
             "intent_count": len(r.intents),
             "posted": r.posted,
@@ -223,6 +224,7 @@ def run_coordinator(
             "total_capital": cap,
             "capital_split": split,
             "sub_regimes": {key: r.regime for key, r in sub_results.items()},
+            "sub_smoothed_regimes": {key: r.smoothed_regime for key, r in sub_results.items()},
             "sub_rebalanced": rebalanced,
         })
         _save_state(coord_state_path, coord_state)

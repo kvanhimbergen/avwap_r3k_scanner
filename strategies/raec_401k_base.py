@@ -16,6 +16,7 @@ from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
 
+from analytics.regime_transition import RegimeTransitionDetector
 from data.prices import PriceProvider, get_default_price_provider
 from execution_v2 import book_ids, book_router
 from execution_v2.schwab_manual_adapter import slack_post_enabled
@@ -62,6 +63,7 @@ class SymbolFeature:
 class RunResult:
     asof_date: str
     regime: str
+    smoothed_regime: str
     targets: dict[str, float]
     intents: list[dict]
     should_rebalance: bool
@@ -114,6 +116,10 @@ class StrategyConfig:
     risk_off_top_n_defensive: int = 3
     risk_off_defensive_budget: float = 0.80
     risk_off_min_cash: float = 0.20
+
+    # Guardrails
+    regime_smoothing_days: int = 3
+    rebalance_cooldown_days: int = 5
 
     # Display
     ticket_title: str = "RAEC 401(k) Rebalance Ticket"
@@ -172,6 +178,14 @@ class BaseRAECStrategy:
     @property
     def MAX_SINGLE_ETF_WEIGHT(self) -> float:
         return self.config.max_single_etf_weight
+
+    @property
+    def REGIME_SMOOTHING_DAYS(self) -> int:
+        return self.config.regime_smoothing_days
+
+    @property
+    def REBALANCE_COOLDOWN_DAYS(self) -> int:
+        return self.config.rebalance_cooldown_days
 
     # -- State persistence ----------------------------------------------------
 
@@ -693,11 +707,9 @@ class BaseRAECStrategy:
         symbols = set(current) | set(targets)
         return {symbol: float(targets.get(symbol, 0.0)) - float(current.get(symbol, 0.0)) for symbol in symbols}
 
-    def _first_eval_of_day(self, asof: date, last_eval: str | None) -> bool:
-        if not last_eval:
-            return True
-        prior = self._parse_date(last_eval)
-        return prior != asof
+    def _trading_days_since(self, asof: date, last_date_str: str) -> int:
+        last = self._parse_date(last_date_str)
+        return (asof - last).days
 
     def _should_rebalance(
         self,
@@ -708,13 +720,29 @@ class BaseRAECStrategy:
         targets: dict[str, float],
         current_allocs: dict[str, float] | None,
     ) -> bool:
-        if self._first_eval_of_day(asof, state.get("last_eval_date")):
+        # 1. First-ever run → always rebalance
+        if not state.get("last_eval_date"):
             return True
-        if state.get("last_regime") and state.get("last_regime") != regime:
+
+        # 2. Confirmed regime change → always rebalance (overrides cooldown)
+        last_confirmed = state.get("last_confirmed_regime")
+        if last_confirmed and last_confirmed != regime:
             return True
+
+        # 3. No allocations to compare → can't assess drift
         if current_allocs is None:
             return False
+
         drift = self._compute_drift(current_allocs, targets)
+
+        # 4. Cooldown active → only override on extreme drift (2x threshold)
+        last_rebal = state.get("last_rebalance_date")
+        if last_rebal:
+            days_since = self._trading_days_since(asof, last_rebal)
+            if days_since < self.REBALANCE_COOLDOWN_DAYS:
+                return any(abs(d) > self.DRIFT_THRESHOLD_PCT * 2 for d in drift.values())
+
+        # 5. Normal drift check
         return any(abs(delta) > self.DRIFT_THRESHOLD_PCT for delta in drift.values())
 
     # -- Turnover / intent building -------------------------------------------
@@ -862,12 +890,41 @@ class BaseRAECStrategy:
         universe_set = set(universe)
 
         signal = self.compute_anchor_signal(provider, asof)
-        feature_map = self._load_symbol_features(provider=provider, asof=asof, cash_symbol=cash_symbol)
-        targets = self._targets_for_regime(signal=signal, feature_map=feature_map, cash_symbol=cash_symbol)
-        ranked_snapshot = self._rank_symbols(self.RISK_UNIVERSE, feature_map, require_positive_momentum=False)[:5]
 
+        # Reconstruct regime smoother from persisted state
         state_path = self._state_path(repo_root)
         state = self._load_state(state_path)
+        smoother_data = state.get("regime_smoother")
+        if smoother_data:
+            smoother = RegimeTransitionDetector.from_dict(smoother_data)
+        else:
+            smoother = RegimeTransitionDetector(smoothing_days=self.REGIME_SMOOTHING_DAYS)
+
+        raw_regime = signal.regime
+        smoothed_regime = smoother.update(raw_regime, confidence=1.0, date=asof_date)
+
+        # Use smoothed regime for target computation
+        smoothed_signal = RegimeSignal(
+            regime=smoothed_regime,
+            close=signal.close,
+            sma50=signal.sma50,
+            sma200=signal.sma200,
+            vol_20d=signal.vol_20d,
+            vol_252d=signal.vol_252d,
+            drawdown_63d=signal.drawdown_63d,
+            trend_up=signal.trend_up,
+            vol_high=signal.vol_high,
+            crash_mode=signal.crash_mode,
+            qqq_close=signal.qqq_close,
+            qqq_sma50=signal.qqq_sma50,
+            qqq_sma200=signal.qqq_sma200,
+            qqq_drawdown_63d=signal.qqq_drawdown_63d,
+        )
+
+        feature_map = self._load_symbol_features(provider=provider, asof=asof, cash_symbol=cash_symbol)
+        targets = self._targets_for_regime(signal=smoothed_signal, feature_map=feature_map, cash_symbol=cash_symbol)
+        ranked_snapshot = self._rank_symbols(self.RISK_UNIVERSE, feature_map, require_positive_momentum=False)[:5]
+
         current_allocs = self._load_latest_csv_allocations(repo_root=repo_root, universe=universe_set)
         notice = None
         if current_allocs is None:
@@ -878,7 +935,7 @@ class BaseRAECStrategy:
         should_rebalance = self._should_rebalance(
             asof=asof,
             state=state,
-            regime=signal.regime,
+            regime=smoothed_regime,
             targets=targets,
             current_allocs=None if notice else current_allocs,
         )
@@ -891,7 +948,7 @@ class BaseRAECStrategy:
 
         ticket_message = self._build_ticket_message(
             asof_date=asof_date,
-            regime=signal.regime,
+            regime=smoothed_regime,
             signal=signal,
             top_ranked=ranked_snapshot,
             feature_map=feature_map,
@@ -935,7 +992,8 @@ class BaseRAECStrategy:
 
         run_result = RunResult(
             asof_date=asof_date,
-            regime=signal.regime,
+            regime=raw_regime,
+            smoothed_regime=smoothed_regime,
             targets=targets,
             intents=intents,
             should_rebalance=should_rebalance,
@@ -948,10 +1006,14 @@ class BaseRAECStrategy:
             state.update(
                 {
                     "last_eval_date": asof_date,
-                    "last_regime": signal.regime,
+                    "last_regime": raw_regime,
+                    "last_confirmed_regime": smoothed_regime,
                     "last_targets": targets,
+                    "regime_smoother": smoother.to_dict(),
                 }
             )
+            if should_rebalance:
+                state["last_rebalance_date"] = asof_date
             state.update(self._extra_state_fields(signal))
             if notice is None:
                 state["last_known_allocations"] = current_allocs

@@ -92,6 +92,48 @@ class TestReset:
         assert result == "RISK_OFF"
 
 
+class TestSerialization:
+    def test_round_trip(self) -> None:
+        detector = RegimeTransitionDetector(smoothing_days=3)
+        detector.update("RISK_ON", 0.8, "2025-01-01")
+        detector.update("RISK_OFF", 0.7, "2025-01-02")
+
+        data = detector.to_dict()
+        restored = RegimeTransitionDetector.from_dict(data)
+
+        assert restored.smoothing_days == 3
+        assert restored._confirmed_regime == "RISK_ON"
+        # Restored detector should continue from same state
+        result = restored.update("RISK_OFF", 0.7, "2025-01-03")
+        assert result == "RISK_ON"  # still sticky (2 consecutive, need 3)
+
+    def test_round_trip_after_transition(self) -> None:
+        detector = RegimeTransitionDetector(smoothing_days=3)
+        detector.update("RISK_ON", 0.8, "2025-01-01")
+        for i in range(3):
+            detector.update("RISK_OFF", 0.7, f"2025-01-{i+2:02d}")
+
+        data = detector.to_dict()
+        restored = RegimeTransitionDetector.from_dict(data)
+
+        assert restored._confirmed_regime == "RISK_OFF"
+        result = restored.update("RISK_OFF", 0.7, "2025-01-05")
+        assert result == "RISK_OFF"
+
+    def test_from_dict_defaults(self) -> None:
+        restored = RegimeTransitionDetector.from_dict({})
+        assert restored.smoothing_days == 5  # DEFAULT_SMOOTHING_DAYS
+        assert restored._confirmed_regime is None
+        assert restored._history == []
+
+    def test_history_trimmed_on_serialize(self) -> None:
+        detector = RegimeTransitionDetector(smoothing_days=3)
+        for i in range(20):
+            detector.update("RISK_ON", 0.8, f"2025-01-{i+1:02d}")
+        data = detector.to_dict()
+        assert len(data["history"]) == 3  # only last smoothing_days entries
+
+
 class TestGetTransitionState:
     def test_empty_state(self) -> None:
         detector = RegimeTransitionDetector(smoothing_days=5)

@@ -45,6 +45,22 @@ class RegimeTransitionDetector:
 
         return self._confirmed_regime
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize detector state for JSON persistence."""
+        return {
+            "smoothing_days": self.smoothing_days,
+            "confirmed_regime": self._confirmed_regime,
+            "history": self._history[-self.smoothing_days :],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RegimeTransitionDetector:
+        """Reconstruct detector from persisted state."""
+        obj = cls(smoothing_days=data.get("smoothing_days", DEFAULT_SMOOTHING_DAYS))
+        obj._confirmed_regime = data.get("confirmed_regime")
+        obj._history = data.get("history", [])
+        return obj
+
     def reset(self) -> None:
         """Clear all history and confirmed regime."""
         self._history.clear()
