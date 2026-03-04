@@ -383,6 +383,50 @@ export interface SchwabPerformancePayload {
   data_sufficient: boolean;
 }
 
+export interface TokenHealth {
+  healthy: boolean;
+  days_until_expiry: number;
+  reason: string | null;
+}
+
+export interface RebalanceStrategySlice {
+  id: string;
+  label: string;
+  weight: number;
+  regime: string | null;
+  smoothed_regime: string | null;
+  targets: Record<string, number>;
+  last_rebalance_date: string | null;
+  cooldown_days_remaining: number;
+}
+
+export interface RebalanceTrade {
+  symbol: string;
+  side: "BUY" | "SELL";
+  current_pct: number;
+  target_pct: number;
+  delta_pct: number;
+  dollar_amount: number;
+  actionable: boolean;
+}
+
+export interface RebalancePosition {
+  symbol: string;
+  weight_pct: number;
+  market_value: number;
+}
+
+export interface RebalanceDashboardData {
+  token_health: TokenHealth;
+  portfolio_value: number | null;
+  positions_date: string | null;
+  strategies: RebalanceStrategySlice[];
+  combined_target: Record<string, number>;
+  current_positions: RebalancePosition[];
+  trades: RebalanceTrade[];
+  last_sync_date: string | null;
+}
+
 export interface SchwabReconciliation {
   ny_date: string;
   as_of_utc: string;

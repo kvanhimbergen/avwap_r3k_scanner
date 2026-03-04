@@ -39,6 +39,9 @@ const SchwabAccountPage = lazy(() =>
 const TradeLogPage = lazy(() =>
   import("./pages/TradeLogPage").then((m) => ({ default: m.TradeLogPage })),
 );
+const RebalancePage = lazy(() =>
+  import("./pages/RebalancePage").then((m) => ({ default: m.RebalancePage })),
+);
 const SystemPage = lazy(() =>
   import("./pages/SystemPage").then((m) => ({ default: m.SystemPage })),
 );
@@ -151,6 +154,14 @@ export function App() {
           element={
             <ErrorBoundary><Suspense fallback={<PageFallback />}>
               <SchwabAccountPage />
+            </Suspense></ErrorBoundary>
+          }
+        />
+        <Route
+          path="/ops/rebalance"
+          element={
+            <ErrorBoundary><Suspense fallback={<PageFallback />}>
+              <RebalancePage />
             </Suspense></ErrorBoundary>
           }
         />

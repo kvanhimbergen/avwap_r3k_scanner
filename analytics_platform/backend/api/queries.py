@@ -2212,3 +2212,175 @@ def get_scan_candidates(
         "latest_date": latest_date,
         "rows": rows,
     }
+
+
+# ---------------------------------------------------------------------------
+# Rebalance dashboard
+# ---------------------------------------------------------------------------
+
+_REBALANCE_STRATEGY_IDS = ("RAEC_401K_V3", "RAEC_401K_V4", "RAEC_401K_V5")
+_REBALANCE_COORD_ID = "RAEC_401K_COORD"
+_REBALANCE_STATE_DIR = Path("state") / "strategies" / "SCHWAB_401K_MANUAL"
+_REBALANCE_TRADE_THRESHOLD = 250.0
+_REBALANCE_THRESHOLD_PCT = 0.5
+
+
+def _read_strategy_state(repo_root: Path, filename: str) -> dict[str, Any]:
+    """Read a strategy state JSON file, returning empty dict on failure."""
+    path = repo_root / _REBALANCE_STATE_DIR / filename
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _token_health_safe() -> dict[str, Any]:
+    """Return token health dict, failing gracefully."""
+    try:
+        from analytics.schwab_readonly_oauth import load_schwab_readonly_oauth_config
+        from analytics.schwab_token_health import check_token_health
+
+        cfg = load_schwab_readonly_oauth_config()
+        if not cfg.enabled:
+            return {"healthy": False, "days_until_expiry": 0.0, "reason": "Schwab sync disabled"}
+        status = check_token_health(cfg.token_path)
+        return {
+            "healthy": status.healthy,
+            "days_until_expiry": round(status.days_until_expiry, 1),
+            "reason": status.reason,
+        }
+    except Exception as exc:
+        return {"healthy": False, "days_until_expiry": 0.0, "reason": str(exc)}
+
+
+def get_rebalance_dashboard(conn, repo_root: Path) -> dict[str, Any]:
+    """Combined rebalance dashboard: strategy states + positions + trade recs."""
+
+    # ── Portfolio value & positions from DB ──────────────────────
+    account_rows = _rows(
+        conn,
+        """
+        SELECT total_value, ny_date, as_of_utc
+        FROM schwab_account_snapshots
+        ORDER BY ny_date DESC, as_of_utc DESC
+        LIMIT 1
+        """,
+    )
+    total_value = account_rows[0]["total_value"] if account_rows else None
+    last_sync_date = account_rows[0]["ny_date"] if account_rows else None
+
+    position_rows = _rows(
+        conn,
+        """
+        WITH latest AS (
+            SELECT MAX(ny_date) AS d FROM schwab_positions
+        )
+        SELECT p.symbol, p.qty, p.market_value,
+               p.market_value / NULLIF(SUM(p.market_value) OVER (), 0) * 100 AS weight_pct,
+               p.ny_date
+        FROM schwab_positions p
+        JOIN latest l ON p.ny_date = l.d
+        ORDER BY p.market_value DESC
+        """,
+    )
+    positions_date = position_rows[0]["ny_date"] if position_rows else last_sync_date
+
+    # ── Read strategy state files ────────────────────────────────
+    strategy_file_map = {
+        "RAEC_401K_V3": "RAEC_401K_V3.json",
+        "RAEC_401K_V4": "RAEC_401K_V4.json",
+        "RAEC_401K_V5": "RAEC_401K_V5.json",
+    }
+    coord_state = _read_strategy_state(repo_root, f"{_REBALANCE_COORD_ID}.json")
+    capital_split = coord_state.get("capital_split", {"v3": 0.4, "v4": 0.3, "v5": 0.3})
+
+    weight_key_map = {"RAEC_401K_V3": "v3", "RAEC_401K_V4": "v4", "RAEC_401K_V5": "v5"}
+
+    strategies: list[dict[str, Any]] = []
+    for sid, fname in strategy_file_map.items():
+        state = _read_strategy_state(repo_root, fname)
+        smoother = state.get("regime_smoother", {})
+
+        # Cooldown: days since last rebalance
+        cooldown_days_remaining = 0
+        last_rebalance = state.get("last_rebalance_date")
+        if last_rebalance:
+            from datetime import date as _date
+
+            try:
+                days_since = (_date.today() - _date.fromisoformat(last_rebalance)).days
+                cooldown_days_remaining = max(0, 3 - days_since)  # 3-day default cooldown
+            except Exception:
+                pass
+
+        strategies.append({
+            "id": sid,
+            "label": sid.split("_")[-1],  # V3/V4/V5
+            "weight": capital_split.get(weight_key_map[sid], 0),
+            "regime": state.get("last_regime"),
+            "smoothed_regime": state.get("last_confirmed_regime"),
+            "targets": state.get("last_targets", {}),
+            "last_rebalance_date": last_rebalance,
+            "cooldown_days_remaining": cooldown_days_remaining,
+        })
+
+    # ── Combined target (weighted blend) ─────────────────────────
+    combined_target: dict[str, float] = {}
+    for strat in strategies:
+        w = strat["weight"]
+        for sym, pct in strat["targets"].items():
+            combined_target[sym] = combined_target.get(sym, 0.0) + pct * w
+
+    # Round combined targets
+    combined_target = {s: round(v, 2) for s, v in combined_target.items()}
+
+    # ── Build current position map ───────────────────────────────
+    current_map: dict[str, float] = {}
+    for pos in position_rows:
+        current_map[pos["symbol"]] = pos["weight_pct"]
+
+    # ── Trade recommendations ────────────────────────────────────
+    threshold_dollars = max(
+        _REBALANCE_TRADE_THRESHOLD,
+        (total_value or 0) * _REBALANCE_THRESHOLD_PCT / 100,
+    )
+
+    all_symbols = sorted(set(combined_target.keys()) | set(current_map.keys()))
+    trades: list[dict[str, Any]] = []
+    for sym in all_symbols:
+        target_pct = combined_target.get(sym, 0.0)
+        current_pct = current_map.get(sym, 0.0)
+        delta_pct = round(target_pct - current_pct, 2)
+        if abs(delta_pct) < 0.01:
+            continue
+        dollar_amount = round(abs(delta_pct) / 100 * (total_value or 0), 2)
+        side = "BUY" if delta_pct > 0 else "SELL"
+        trades.append({
+            "symbol": sym,
+            "side": side,
+            "current_pct": round(current_pct, 2),
+            "target_pct": round(target_pct, 2),
+            "delta_pct": delta_pct,
+            "dollar_amount": dollar_amount,
+            "actionable": dollar_amount >= threshold_dollars,
+        })
+
+    # Sort: actionable first, then by abs(dollar_amount) desc
+    trades.sort(key=lambda t: (-t["actionable"], -t["dollar_amount"]))
+
+    # ── Token health ─────────────────────────────────────────────
+    token_health = _token_health_safe()
+
+    return {
+        "token_health": token_health,
+        "portfolio_value": total_value,
+        "positions_date": positions_date,
+        "strategies": strategies,
+        "combined_target": combined_target,
+        "current_positions": [
+            {"symbol": p["symbol"], "weight_pct": p["weight_pct"], "market_value": p["market_value"]}
+            for p in position_rows
+        ],
+        "trades": trades,
+        "last_sync_date": last_sync_date,
+    }

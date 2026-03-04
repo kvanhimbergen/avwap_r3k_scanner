@@ -1,4 +1,4 @@
-import type { ApiEnvelope, FreshnessRow, KeyValue, TimePoint, TradeInstructionsPayload, SchwabPerformancePayload } from "./types";
+import type { ApiEnvelope, FreshnessRow, KeyValue, TimePoint, TradeInstructionsPayload, SchwabPerformancePayload, RebalanceDashboardData } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "";
 const API_KEY = (import.meta.env.VITE_API_KEY as string | undefined) ?? "";
@@ -111,6 +111,9 @@ export const api = {
     get<KeyValue>(`/api/v1/portfolio/history${toQuery(args ?? {})}`),
 
   strategyMatrix: () => get<KeyValue>("/api/v1/strategies/matrix"),
+
+  rebalanceDashboard: () =>
+    get<RebalanceDashboardData>("/api/v1/rebalance/dashboard"),
 
   schwabOverview: (args?: { start?: string; end?: string }) =>
     get<KeyValue>(`/api/v1/schwab/overview${toQuery(args ?? {})}`),

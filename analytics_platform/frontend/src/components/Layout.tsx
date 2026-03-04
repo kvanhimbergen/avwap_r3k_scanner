@@ -10,6 +10,7 @@ import {
   ScanSearch,
   ClipboardList,
   Landmark,
+  Scale,
   Settings,
 } from "lucide-react";
 import { LayoutDataProvider, useLayoutData } from "../context/LayoutDataContext";
@@ -26,8 +27,9 @@ const NAV_ITEMS = [
   { to: "/risk",        icon: ShieldAlert,     label: "Risk" },
   { to: "/scan",        icon: ScanSearch,      label: "Scan" },
   { to: "/trade-log",   icon: ClipboardList,   label: "Trade Log" },
-  { to: "/ops/schwab",  icon: Landmark,        label: "Schwab" },
-  { to: "/ops/system",  icon: Settings,        label: "System" },
+  { to: "/ops/schwab",     icon: Landmark,        label: "Schwab" },
+  { to: "/ops/rebalance", icon: Scale,           label: "Rebalance" },
+  { to: "/ops/system",    icon: Settings,        label: "System" },
 ];
 
 function ConnectionDot({ connected }: { connected: boolean }) {

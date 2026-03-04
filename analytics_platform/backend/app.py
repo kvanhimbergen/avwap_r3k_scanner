@@ -399,6 +399,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload = queries.get_schwab_trade_instructions(conn)
         return _envelope(runtime, payload)
 
+    @app.get("/api/v1/rebalance/dashboard")
+    def rebalance_dashboard() -> dict:
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_rebalance_dashboard(conn, runtime.settings.repo_root)
+        return _envelope(runtime, payload)
+
     @app.get("/api/v1/schwab/performance")
     def schwab_performance(
         start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
