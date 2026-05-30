@@ -490,6 +490,48 @@ class _NoOpAdapter:
 
 
 # ---------------------------------------------------------------------------
+# Test: state allocations take priority over a stale csv_drop CSV
+# ---------------------------------------------------------------------------
+
+def test_state_allocations_override_stale_csv(tmp_path: Path) -> None:
+    """Live-seeded state must beat any stale CSV left in csv_drop/.
+
+    Regression: a months-old Schwab Positions CSV was silently overriding
+    fresh state written by schwab_seed_allocations, producing trade tickets
+    against ghost holdings.
+    """
+    provider = _risk_on_provider()
+    _seed_state(tmp_path, last_regime="RISK_ON", allocs={"SOXL": 100.0})
+
+    csv_dir = tmp_path / "state" / "strategies" / raec_401k_v3.BOOK_ID / "csv_drop"
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    (csv_dir / "stale.csv").write_text(
+        '"Symbol","Description","Qty","Price","Mkt Val","Security Type"\n'
+        '"SPY","STATE STREET SPDR S&P 500 TRUST ETF","100","500","$50,000","ETFs & Closed End Funds"\n'
+        '"Cash & Cash Investments","--","--","--","$50,000","Cash and Money Market"\n'
+    )
+
+    result = raec_401k_v3.run_strategy(
+        asof_date="2026-02-06",
+        repo_root=tmp_path,
+        price_provider=provider,
+        dry_run=False,
+        allow_state_write=True,
+        adapter_override=_NoOpAdapter(),
+    )
+
+    state_path = tmp_path / "state" / "strategies" / raec_401k_v3.BOOK_ID / f"{raec_401k_v3.STRATEGY_ID}.json"
+    state = json.loads(state_path.read_text())
+    # State allocations (SOXL=100) won; CSV (SPY=50, BIL=50) did not pollute current
+    assert "SOXL" in state["last_known_allocations"]
+    # The first sell intent should target SOXL (held) not SPY (only in CSV)
+    sell_intents = [i for i in result.intents if i["side"] == "SELL"]
+    assert sell_intents, "Expected SOXL trim from 100% to ~target"
+    assert all(i["symbol"] != "SPY" for i in sell_intents), \
+        f"CSV-only SPY leaked into sells: {sell_intents}"
+
+
+# ---------------------------------------------------------------------------
 # Test: portfolio vol with leveraged ETFs
 # ---------------------------------------------------------------------------
 

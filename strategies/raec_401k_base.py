@@ -925,10 +925,11 @@ class BaseRAECStrategy:
         targets = self._targets_for_regime(signal=smoothed_signal, feature_map=feature_map, cash_symbol=cash_symbol)
         ranked_snapshot = self._rank_symbols(self.RISK_UNIVERSE, feature_map, require_positive_momentum=False)[:5]
 
-        current_allocs = self._load_latest_csv_allocations(repo_root=repo_root, universe=universe_set)
-        notice = None
+        current_allocs, notice = self._load_current_allocations(state, universe_set)
         if current_allocs is None:
-            current_allocs, notice = self._load_current_allocations(state, universe_set)
+            current_allocs = self._load_latest_csv_allocations(repo_root=repo_root, universe=universe_set)
+            if current_allocs is not None:
+                notice = None
         if current_allocs is None:
             current_allocs = {symbol: targets[symbol] for symbol in targets}
 
