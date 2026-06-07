@@ -183,7 +183,7 @@ def test_coordinator_capital_split(tmp_path: Path) -> None:
         price_provider=provider,
         dry_run=True,
     )
-    assert result.capital_split == {"v3": 0.40, "v4": 0.30, "v5": 0.30}
+    assert result.capital_split == {"v3": 0.25, "v4": 0.50, "v5": 0.25}
 
 
 def test_coordinator_dry_run_no_adapter(tmp_path: Path) -> None:

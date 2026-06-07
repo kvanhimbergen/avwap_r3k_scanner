@@ -22,7 +22,7 @@ _CONFIG = StrategyConfig(
     min_trade_pct=0.5,
     max_weekly_turnover_pct=45.0,
     drift_threshold_pct=1.5,
-    target_portfolio_vol=0.22,
+    target_portfolio_vol=0.32,
     max_single_etf_weight=0.70,
     # Risk-on: top 2, budget 0.40-1.0, base 1.0, crash 0.50, no cash floor
     risk_on_top_n=2,
