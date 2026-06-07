@@ -91,6 +91,11 @@ def _write_raec_ledger(
             "intent_count": len(r.intents),
             "posted": r.posted,
             "notice": r.notice,
+            # Persist the day's target weights so a post-hoc DD report can
+            # reconstruct each sub-strategy's notional equity curve from
+            # ledger history + symbol prices, without needing live equity
+            # attribution from the broker.
+            "targets": dict(r.targets),
         }
     record = {
         "record_type": "RAEC_COORDINATOR_RUN",
