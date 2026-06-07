@@ -30,8 +30,11 @@ from pathlib import Path
 
 from zoneinfo import ZoneInfo
 
+from alerts.slack import slack_alert
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SCAN_OUTPUT = _REPO_ROOT / "daily_candidates.csv"
+_COMPONENT = "PostScan"
 
 STEPS = [
     {
@@ -103,9 +106,21 @@ def _scan_output_fresh(date: str) -> bool:
     return mtime.strftime("%Y-%m-%d") == date
 
 
+def _notify(level: str, title: str, message: str, *, dry_run: bool) -> None:
+    """Send a Slack alert unless we're in dry-run."""
+    if dry_run:
+        return
+    slack_alert(level, title, message, component=_COMPONENT)
+
+
 def run_pipeline(date: str, *, dry_run: bool = False) -> None:
     if not _scan_output_fresh(date):
-        print(f"WARNING: scan output {_SCAN_OUTPUT} not fresh for {date}; proceeding with stale data", flush=True)
+        msg = f"scan output {_SCAN_OUTPUT} not fresh for {date}; proceeding with stale data"
+        print(f"WARNING: {msg}", flush=True)
+        _notify("WARNING", "Post-scan: stale scan output", msg, dry_run=dry_run)
+
+    ok: list[str] = []
+    skipped: list[tuple[str, int]] = []
     for i, step in enumerate(STEPS, 1):
         cmd = step["args"](date)
         if dry_run and step["name"] in {
@@ -120,11 +135,36 @@ def run_pipeline(date: str, *, dry_run: bool = False) -> None:
         if result.returncode != 0:
             if optional:
                 print(f"{label}: SKIPPED (optional, exit {result.returncode})", flush=True)
+                skipped.append((step["name"], result.returncode))
             else:
                 print(f"{label}: FAILED (exit {result.returncode})", flush=True)
+                _notify(
+                    "ERROR",
+                    "Post-scan pipeline FAILED",
+                    f"step={step['name']} ({i}/{len(STEPS)})\n"
+                    f"exit_code={result.returncode}\n"
+                    f"date={date}\n"
+                    f"see launchd log for stderr",
+                    dry_run=dry_run,
+                )
                 sys.exit(result.returncode)
         else:
             print(f"{label}: OK", flush=True)
+            ok.append(step["name"])
+
+    summary_lines = [
+        f"date={date}",
+        f"ok={len(ok)}/{len(STEPS)}",
+    ]
+    if skipped:
+        skipped_str = ", ".join(f"{name}(exit {code})" for name, code in skipped)
+        summary_lines.append(f"skipped={len(skipped)}: {skipped_str}")
+    _notify(
+        "WARNING" if skipped else "INFO",
+        "Post-scan pipeline OK",
+        "\n".join(summary_lines),
+        dry_run=dry_run,
+    )
     print("Pipeline complete.", flush=True)
 
 
@@ -145,7 +185,19 @@ def main() -> None:
     args = parser.parse_args()
     date = args.date or _ny_today()
     print(f"Post-scan pipeline: date={date} dry_run={args.dry_run}", flush=True)
-    run_pipeline(date, dry_run=args.dry_run)
+    try:
+        run_pipeline(date, dry_run=args.dry_run)
+    except SystemExit:
+        # Mandatory step failure — already notified inside run_pipeline.
+        raise
+    except Exception as exc:
+        _notify(
+            "ERROR",
+            "Post-scan pipeline CRASHED",
+            f"date={date}\n{type(exc).__name__}: {exc}",
+            dry_run=args.dry_run,
+        )
+        raise
 
 
 if __name__ == "__main__":
