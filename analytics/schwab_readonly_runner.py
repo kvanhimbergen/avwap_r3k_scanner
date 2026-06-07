@@ -5,10 +5,18 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from alerts.slack import slack_alert
 from analytics.schwab_readonly_adapter import SchwabReadonlyFixtureAdapter
 from analytics.schwab_readonly_oauth import load_schwab_readonly_oauth_config
 from analytics.schwab_readonly_reconciliation import build_reconciliation_report, write_reconciliation_record
 from analytics.schwab_readonly_storage import ny_date_from_as_of, write_snapshot_records
+
+# Token expiry alert thresholds (business days until the 7-day refresh-token
+# limit). Schwab refresh tokens cannot be programmatically renewed — only
+# re-auth via browser (`python -m analytics.schwab_auth`) can extend the
+# window — so the most useful "auto-refresh" we can wire is a loud alert.
+_TOKEN_WARN_DAYS = 2.0
+_TOKEN_ERROR_DAYS = 1.0
 
 
 @dataclass(frozen=True)
@@ -58,11 +66,22 @@ def run_snapshot_and_reconciliation(
         health = check_token_health(config.token_path)
         if not health.healthy:
             raise RuntimeError(f"Schwab token unhealthy: {health.reason}")
-        if health.days_until_expiry < 2:
-            print(
-                f"WARNING: Schwab refresh token expires in {health.days_until_expiry:.1f} days. "
-                "Re-authenticate with: python -m analytics.schwab_auth",
-                flush=True,
+        if health.days_until_expiry < _TOKEN_WARN_DAYS:
+            level = "ERROR" if health.days_until_expiry < _TOKEN_ERROR_DAYS else "WARNING"
+            msg = (
+                f"Schwab refresh token expires in {health.days_until_expiry:.1f} days. "
+                "Re-authenticate via: python -m analytics.schwab_auth"
+            )
+            print(f"{level}: {msg}", flush=True)
+            slack_alert(
+                level,
+                "Schwab token expiring",
+                msg,
+                component="SchwabReadonly",
+                # Throttle to one alert per day per token to avoid duplicates
+                # if the runner is invoked multiple times.
+                throttle_key=f"schwab_token_expiry:{config.token_path}",
+                throttle_seconds=86_400,
             )
 
         adapter = SchwabReadonlyLiveAdapter.from_config(
