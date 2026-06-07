@@ -59,8 +59,14 @@ ledger/
 # Analytics platform frontend/build artifacts
 analytics_platform/frontend/node_modules/
 analytics_platform/frontend/dist/
+analytics_platform/frontend/tsconfig.app.tsbuildinfo
+analytics_platform/frontend/tsconfig.node.tsbuildinfo
+analytics_platform/frontend/*.tsbuildinfo
 analytics_platform/data/
 backtests/
+
+# Generated analytics artifacts
+analytics/artifacts/
 
 # local patch backups
 *.bak.*
