@@ -21,6 +21,7 @@ from data.prices import PriceProvider, get_default_price_provider
 from execution_v2 import book_ids, book_router
 from execution_v2.schwab_manual_adapter import slack_post_enabled
 from utils.atomic_write import atomic_write_text
+from utils.state_schema import stamp_schema_version, validate_schema_version
 
 
 # ---------------------------------------------------------------------------
@@ -204,10 +205,13 @@ class BaseRAECStrategy:
     def _load_state(path: Path) -> dict:
         if not path.exists():
             return {}
-        return json.loads(path.read_text())
+        state = json.loads(path.read_text())
+        validate_schema_version(state, label=f"strategy_state:{path}")
+        return state
 
     @staticmethod
     def _save_state(path: Path, state: dict) -> None:
+        stamp_schema_version(state)
         payload = json.dumps(state, sort_keys=True, indent=2)
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, payload)

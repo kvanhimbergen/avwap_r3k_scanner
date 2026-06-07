@@ -17,6 +17,7 @@ from strategies import raec_401k_v3, raec_401k_v4, raec_401k_v5  # noqa: F401 â€
 from strategies.raec_401k_base import BaseRAECStrategy, RunResult
 from strategies.raec_401k_registry import get as _get_strategy
 from utils.atomic_write import atomic_write_text
+from utils.state_schema import stamp_schema_version, validate_schema_version
 
 
 BOOK_ID = book_ids.SCHWAB_401K_MANUAL
@@ -59,10 +60,13 @@ def _state_path(repo_root: Path) -> Path:
 def _load_state(path: Path) -> dict:
     if not path.exists():
         return {}
-    return json.loads(path.read_text())
+    state = json.loads(path.read_text())
+    validate_schema_version(state, label=f"coordinator_state:{path}")
+    return state
 
 
 def _save_state(path: Path, state: dict) -> None:
+    stamp_schema_version(state)
     payload = json.dumps(state, sort_keys=True, indent=2)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, payload)
