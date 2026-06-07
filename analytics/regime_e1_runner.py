@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -12,9 +13,22 @@ from analytics.regime_e1_features import compute_regime_features
 from analytics.regime_e1_schemas import RECORD_TYPE_SIGNAL, RECORD_TYPE_SKIPPED
 from analytics.regime_e1_storage import build_record, write_record
 
+# Max business-day gap between requested and resolved NY date before we refuse
+# to emit a signal. Weekends and short holiday weeks fall within this window;
+# anything beyond indicates a stalled price-data feed.
+MAX_REGIME_STALENESS_BDAYS = 5
+
 
 def _default_as_of_utc(ny_date: str) -> str:
     return f"{ny_date}T16:00:00+00:00"
+
+
+def _staleness_bdays(resolved_ny_date: str, requested_ny_date: str) -> int:
+    if resolved_ny_date >= requested_ny_date:
+        return 0
+    # bdate_range includes both endpoints; the gap is the count of business
+    # days strictly after resolved up to and including requested.
+    return max(0, len(pd.bdate_range(resolved_ny_date, requested_ny_date)) - 1)
 
 
 def _load_history(path: Path) -> pd.DataFrame:
@@ -51,6 +65,34 @@ def run_regime_e1(*, repo_root: Path, ny_date: str, as_of_utc: str, history_path
         }
 
     resolved_ny_date, resolution_reasons, _ = resolve_regime_ny_date(history, ny_date)
+
+    stale_bdays = _staleness_bdays(resolved_ny_date, ny_date)
+    if stale_bdays > MAX_REGIME_STALENESS_BDAYS:
+        payload = {
+            "reason_codes": resolution_reasons + ["excessive_price_staleness"],
+            "inputs_snapshot": {
+                "ny_date": ny_date,
+                "resolved_ny_date": resolved_ny_date,
+                "staleness_bdays": stale_bdays,
+                "max_staleness_bdays": MAX_REGIME_STALENESS_BDAYS,
+            },
+            "requested_ny_date": ny_date,
+            "resolved_ny_date": resolved_ny_date,
+            "provenance": {"module": "analytics.regime_e1_runner"},
+        }
+        record = build_record(
+            record_type=RECORD_TYPE_SKIPPED,
+            ny_date=ny_date,
+            as_of_utc=as_of_utc,
+            payload=payload,
+        )
+        result = write_record(repo_root=repo_root, ny_date=ny_date, record=record)
+        return {
+            "status": "skipped",
+            "record": record,
+            "result": asdict(result),
+        }
+
     feature_result = compute_regime_features(history, resolved_ny_date)
     if not feature_result.ok or feature_result.feature_set is None:
         reason_codes = resolution_reasons + feature_result.reason_codes
@@ -133,6 +175,14 @@ def main() -> None:
     print(f"ledger_path={ledger_path}")
     print(f"regime_label={regime_label}")
     print(f"regime_id={regime_id}")
+
+    if "excessive_price_staleness" in (record.get("reason_codes") or []):
+        print(
+            f"ERROR: price data stale by {record['inputs_snapshot'].get('staleness_bdays')} "
+            f"business days (max={MAX_REGIME_STALENESS_BDAYS}); refresh OHLCV history cache",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":
