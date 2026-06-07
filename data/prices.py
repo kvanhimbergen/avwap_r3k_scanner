@@ -84,7 +84,12 @@ class _YFinancePriceProvider:
 
 
 
-def get_default_price_provider(repo_root: str) -> PriceProvider:
-    """Return the default price provider for strategy runners."""
+def get_default_price_provider(repo_root: str, *, period: str = "5y") -> PriceProvider:
+    """Return the default price provider for strategy runners.
+
+    ``period`` controls how much history yfinance is asked for. 5y is
+    enough for live strategy runs (lookbacks max out at 252 days).
+    Backtests covering multi-cycle windows should pass "10y" or "max".
+    """
     _ = repo_root
-    return _YFinancePriceProvider()
+    return _YFinancePriceProvider(period=period)

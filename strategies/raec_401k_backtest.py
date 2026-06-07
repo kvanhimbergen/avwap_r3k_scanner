@@ -63,7 +63,7 @@ def run_single_backtest(
     """Run a historical backtest for a single BaseRAECStrategy instance."""
     repo_root = Path(__file__).resolve().parents[1]
     if provider is None:
-        provider = get_default_price_provider(str(repo_root))
+        provider = get_default_price_provider(str(repo_root), period="10y")
 
     start = strategy._parse_date(start_date)
     end = strategy._parse_date(end_date)
@@ -236,6 +236,80 @@ def run_single_backtest(
 # Results printing
 # ---------------------------------------------------------------------------
 
+def _compute_benchmark_metrics(
+    provider: PriceProvider,
+    symbol: str,
+    equity_curve: list[tuple[date, float, float]],
+    initial_capital: float,
+) -> dict | None:
+    """Pull the benchmark series, align to the strategy's trading days, and
+    compute CAGR, vol, Sharpe, max DD, tracking error, and information ratio
+    vs the strategy. Returns None if benchmark data is unavailable."""
+    if not equity_curve:
+        return None
+    series = dict(provider.get_daily_close_series(symbol))
+    if not series:
+        return None
+    days_with_curve = [(d, eq) for d, eq, _ in equity_curve]
+    # Align benchmark to strategy days (skip days missing from benchmark series).
+    aligned: list[tuple[date, float, float]] = []  # (date, strategy_eq, bench_close)
+    for d, strat_eq in days_with_curve:
+        if d in series:
+            aligned.append((d, strat_eq, series[d]))
+    if len(aligned) < 2:
+        return None
+
+    # Build benchmark equity curve scaled to the same starting capital.
+    bench_initial = aligned[0][2]
+    bench_curve = [(d, initial_capital * close / bench_initial) for d, _, close in aligned]
+    bench_returns = [
+        bench_curve[i][1] / bench_curve[i - 1][1] - 1.0
+        for i in range(1, len(bench_curve))
+    ]
+    strat_aligned_returns = [
+        aligned[i][1] / aligned[i - 1][1] - 1.0
+        for i in range(1, len(aligned))
+    ]
+
+    n_years = len(bench_curve) / 252
+    bench_final = bench_curve[-1][1]
+    bench_cagr = (bench_final / initial_capital) ** (1 / max(n_years, 0.01)) - 1.0
+    bench_vol = stdev(bench_returns) * math.sqrt(252) if len(bench_returns) > 1 else 0.0
+    bench_sharpe = bench_cagr / bench_vol if bench_vol > 0 else 0.0
+    # Max benchmark drawdown
+    peak = bench_curve[0][1]
+    bench_max_dd = 0.0
+    for _, eq in bench_curve:
+        peak = max(peak, eq)
+        dd = eq / peak - 1.0
+        bench_max_dd = min(bench_max_dd, dd)
+
+    # Strategy CAGR over the aligned window (may differ from main strategy CAGR
+    # if benchmark misses days; usually close).
+    strat_final = aligned[-1][1]
+    strat_initial = aligned[0][1]
+    strat_cagr = (strat_final / strat_initial) ** (1 / max(n_years, 0.01)) - 1.0
+    excess_return = strat_cagr - bench_cagr
+
+    # Tracking error: annualized stdev of (strategy_return - benchmark_return).
+    diffs = [s - b for s, b in zip(strat_aligned_returns, bench_returns)]
+    tracking_error = stdev(diffs) * math.sqrt(252) if len(diffs) > 1 else 0.0
+    info_ratio = excess_return / tracking_error if tracking_error > 0 else 0.0
+
+    return {
+        "symbol": symbol,
+        "final_equity": bench_final,
+        "cagr": bench_cagr,
+        "vol": bench_vol,
+        "sharpe": bench_sharpe,
+        "max_dd": bench_max_dd,
+        "excess_return": excess_return,
+        "tracking_error": tracking_error,
+        "info_ratio": info_ratio,
+        "aligned_days": len(aligned),
+    }
+
+
 def print_backtest_results(
     result: BacktestResult,
     *,
@@ -244,8 +318,9 @@ def print_backtest_results(
     end_date: str,
     initial_capital: float,
     width: int = 65,
+    benchmark: dict | None = None,
 ) -> None:
-    """Print formatted backtest results."""
+    """Print formatted backtest results, optionally including benchmark comparison."""
     equity_curve = result.equity_curve
     if not equity_curve:
         print("No equity curve data.")
@@ -310,6 +385,17 @@ def print_backtest_results(
             break
     if not shown:
         print("    None > 5%")
+    if benchmark is not None:
+        print("-" * width)
+        print(f"  Benchmark:         {benchmark['symbol']} ({benchmark['aligned_days']} aligned days)")
+        print(f"    CAGR:            {benchmark['cagr'] * 100:+.1f}%")
+        print(f"    Annualized vol:  {benchmark['vol'] * 100:.1f}%")
+        print(f"    Sharpe:          {benchmark['sharpe']:.2f}")
+        print(f"    Max drawdown:    {benchmark['max_dd'] * 100:.1f}%")
+        print(f"  Strategy vs benchmark:")
+        print(f"    Excess return:   {benchmark['excess_return'] * 100:+.1f}% per year")
+        print(f"    Tracking error:  {benchmark['tracking_error'] * 100:.1f}%")
+        print(f"    Information ratio: {benchmark['info_ratio']:.2f}")
     print("=" * width)
 
 
@@ -332,7 +418,7 @@ def run_coordinator_backtest(
 
     repo_root = Path(__file__).resolve().parents[1]
     if provider is None:
-        provider = get_default_price_provider(str(repo_root))
+        provider = get_default_price_provider(str(repo_root), period="10y")
     split = capital_split or dict(DEFAULT_CAPITAL_SPLIT)
 
     strategies = {
