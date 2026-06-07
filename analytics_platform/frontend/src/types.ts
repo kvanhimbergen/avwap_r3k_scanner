@@ -34,6 +34,19 @@ export interface FreshnessRow {
   last_error: string | null;
 }
 
+/** Narrative summary of the current system state for the Command Center.
+ *  Backed by GET /api/v1/regime-narrative. */
+export interface RegimeNarrative {
+  regime: string | null;
+  days_in_regime: number;
+  reason: string | null;
+  hedge_state: "active" | "dormant" | "unknown";
+  hedge_pct_of_book: number;
+  leveraged_used_pct: number;
+  leveraged_cap_pct: number;
+  as_of_date: string | null;
+}
+
 export interface RaecRebalanceEvent {
   ny_date: string;
   ts_utc: string | null;

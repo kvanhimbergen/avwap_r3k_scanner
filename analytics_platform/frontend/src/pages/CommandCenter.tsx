@@ -8,6 +8,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceL
 
 import { api } from "../api";
 import { StatCard } from "../components/StatCard";
+import { TodayStateCard } from "../components/TodayStateCard";
 import { StatusBadge, RegimeBadge } from "../components/Badge";
 import { SkeletonCard } from "../components/Skeleton";
 import { ErrorState } from "../components/ErrorState";
@@ -54,6 +55,7 @@ export function CommandCenter() {
   const perfPoll = usePolling(() => api.schwabPerformance(range), 60_000);
   const trades = usePolling(() => api.todaysTrades({ date: todayNY() }), 30_000);
   const tradeLog = usePolling(() => api.tradeLogSummary(), 60_000);
+  const regimeNarrative = usePolling(() => api.regimeNarrative(), 60_000);
 
   // Extract data
   const schwabData = schwab.data?.data as Record<string, unknown> | undefined;
@@ -134,8 +136,6 @@ export function CommandCenter() {
 
   const logSummary = tradeLog.data?.data as TradeLogSummary | undefined;
 
-  // Latest regime from today's events
-  const latestRegime = events.length > 0 ? (events[events.length - 1].regime as string | null) : null;
   // Has the coordinator run today?
   const coordinatorRan = tradeData.coordinator != null || events.length > 0;
 
@@ -177,16 +177,7 @@ export function CommandCenter() {
           value={perfData?.metrics.excess_vs_spy != null ? formatPercent(perfData.metrics.excess_vs_spy) : "\u2014"}
           numericValue={perfData?.metrics.excess_vs_spy}
         />
-        <div className="bg-vantage-card border border-vantage-border rounded-lg p-4 min-w-0">
-          <p className="text-[11px] text-vantage-muted uppercase tracking-wide mb-1">Regime</p>
-          <div className="mt-1">
-            {latestRegime ? (
-              <RegimeBadge regime={latestRegime} />
-            ) : (
-              <span className="font-mono text-2xl font-bold text-vantage-text">{"\u2014"}</span>
-            )}
-          </div>
-        </div>
+        <TodayStateCard data={regimeNarrative.data?.data} />
       </div>
 
       {/* Row 2: Performance Chart + Today's Activity */}

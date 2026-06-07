@@ -185,6 +185,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload = {"rows": queries.get_freshness(conn)}
         return _envelope(runtime, payload)
 
+    @app.get("/api/v1/regime-narrative")
+    def regime_narrative() -> dict:
+        """Today's regime + hedge state + leveraged cap utilization + 1-line why."""
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_regime_narrative(conn)
+        return _envelope(runtime, payload)
+
     @app.get("/api/v1/overview")
     def overview(
         start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),

@@ -2234,6 +2234,120 @@ def _read_strategy_state(repo_root: Path, filename: str) -> dict[str, Any]:
         return {}
 
 
+_HEDGE_SYMBOLS = {"PSQ", "SH", "SDS", "SQQQ"}
+_LEVERAGED_SYMBOLS = {"TQQQ", "SOXL", "UPRO", "TECL", "FNGU", "NVDL"}
+_LEVERAGED_CAP_PCT = 15.0  # mirrors strategies/raec_401k_v3.py max_leveraged_pct
+
+
+def get_regime_narrative(conn) -> dict[str, Any]:
+    """Return a narrative summary of the current regime + system state.
+
+    The 'essence' surface for the Command Center: regime label, days held,
+    hedge state, leveraged cap utilization, and a one-sentence why.
+    Powers the TodayStateCard component.
+    """
+    # Latest regime — single row.
+    latest_rows = _rows(
+        conn,
+        """
+        SELECT ny_date, as_of_utc, regime_label, regime_id, reason_codes_json
+        FROM regime_daily
+        ORDER BY ny_date DESC, as_of_utc DESC
+        LIMIT 1
+        """,
+    )
+    if not latest_rows:
+        return {
+            "regime": None, "days_in_regime": 0, "reason": None,
+            "hedge_state": "unknown", "hedge_pct_of_book": 0.0,
+            "leveraged_used_pct": 0.0, "leveraged_cap_pct": _LEVERAGED_CAP_PCT,
+            "as_of_date": None,
+        }
+    latest = latest_rows[0]
+    label = latest.get("regime_label")
+
+    # Walk back to find the run-length of the current label.
+    history = _rows(
+        conn,
+        """
+        SELECT DISTINCT ny_date, regime_label
+        FROM regime_daily
+        ORDER BY ny_date DESC
+        LIMIT 365
+        """,
+    )
+    days_in_regime = 0
+    for row in history:
+        if row.get("regime_label") == label:
+            days_in_regime += 1
+        else:
+            break
+
+    # Read latest coordinator targets to derive hedge/leveraged state.
+    coord_rows = _rows(
+        conn,
+        """
+        SELECT sub_results_json, capital_split_json
+        FROM raec_coordinator_runs
+        ORDER BY ny_date DESC, ts_utc DESC
+        LIMIT 1
+        """,
+    )
+    hedge_pct = 0.0
+    leveraged_pct = 0.0
+    if coord_rows:
+        try:
+            sub_results = json.loads(coord_rows[0].get("sub_results_json") or "{}")
+            split = json.loads(coord_rows[0].get("capital_split_json") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            sub_results = {}
+            split = {}
+        for key, sub in sub_results.items():
+            weight = split.get(key, 0.0)
+            if not isinstance(sub, dict):
+                continue
+            targets = sub.get("targets") or {}
+            for symbol, pct in targets.items():
+                contribution = (float(pct) * float(weight))
+                if symbol in _HEDGE_SYMBOLS:
+                    hedge_pct += contribution
+                if symbol in _LEVERAGED_SYMBOLS:
+                    leveraged_pct += contribution
+
+    hedge_state = "active" if hedge_pct > 0.5 else "dormant"
+
+    # Reason: prefer the latest E1 reason codes; fall back to regime label.
+    try:
+        reasons = json.loads(latest.get("reason_codes_json") or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        reasons = []
+    if label == "RISK_ON":
+        reason = "Trend up; drawdown shallow; volatility contained."
+    elif label == "TRANSITION":
+        reason = "Mixed signals: trend intact but volatility elevated or drawdown widening."
+    elif label == "RISK_OFF":
+        reason = "Trend break or drawdown beyond risk-off threshold."
+    elif label == "STRESSED":
+        reason = "Stressed regime — multiple risk signals firing."
+    else:
+        reason = "Regime classification unavailable."
+    if "excessive_price_staleness" in reasons:
+        reason = "Price-data feed stale; regime classifier declined to emit a fresh signal."
+    elif "low_confidence_haircut" in reasons:
+        reason += " Confidence low — risk multipliers haircut."
+
+    return {
+        "regime": label,
+        "days_in_regime": days_in_regime,
+        "reason": reason,
+        "hedge_state": hedge_state,
+        "hedge_pct_of_book": round(hedge_pct, 2),
+        "leveraged_used_pct": round(leveraged_pct, 2),
+        "leveraged_cap_pct": _LEVERAGED_CAP_PCT,
+        "as_of_date": latest.get("ny_date"),
+    }
+
+
 def _token_health_safe() -> dict[str, Any]:
     """Return token health dict, failing gracefully."""
     try:
