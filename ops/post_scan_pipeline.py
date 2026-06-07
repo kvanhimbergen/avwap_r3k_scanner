@@ -31,6 +31,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from alerts.slack import slack_alert
+from utils.freshness import file_mtime_ny_date, staleness_bdays
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SCAN_OUTPUT = _REPO_ROOT / "daily_candidates.csv"
@@ -99,11 +100,10 @@ def _ny_today() -> str:
 
 
 def _scan_output_fresh(date: str) -> bool:
-    """Check if today's scan output exists and was modified today."""
+    """Return True iff today's scan output exists and has no business-day staleness."""
     if not _SCAN_OUTPUT.exists():
         return False
-    mtime = datetime.fromtimestamp(_SCAN_OUTPUT.stat().st_mtime, tz=ZoneInfo("America/New_York"))
-    return mtime.strftime("%Y-%m-%d") == date
+    return staleness_bdays(file_mtime_ny_date(_SCAN_OUTPUT), date) == 0
 
 
 def _notify(level: str, title: str, message: str, *, dry_run: bool) -> None:
