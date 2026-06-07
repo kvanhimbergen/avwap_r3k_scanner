@@ -727,7 +727,8 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
         print("History cache missing/empty. Backfilling ~2 years...")
         hist_start = long_start
         backfill_tickers: list[str] = []
-        benchmark_backfill = benchmark_tickers
+        benchmark_backfill = list(benchmark_tickers)
+        benchmark_refresh: list[str] = []
     else:
         hist_start = short_start
         # Identify tickers missing from cache or with insufficient bars
@@ -737,14 +738,24 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
         ]
         if backfill_tickers:
             print(f"Backfilling {len(backfill_tickers)} tickers with <80 bars...")
+        # Benchmarks: backfill if missing bars OR stale beyond short-refresh window;
+        # otherwise join short refresh so they update daily.
+        last_dates = history.groupby("Ticker")["Date"].max().to_dict()
+        short_start_ts = pd.Timestamp(short_start)
         benchmark_backfill = []
-        if benchmark_tickers:
-            for ticker in benchmark_tickers:
-                if cached_counts.get(ticker, 0) < BENCHMARK_MIN_BARS:
-                    benchmark_backfill.append(ticker)
+        benchmark_refresh = []
+        for ticker in benchmark_tickers:
+            count = cached_counts.get(ticker, 0)
+            last = last_dates.get(ticker)
+            is_stale = last is None or pd.Timestamp(last) < short_start_ts
+            if count < BENCHMARK_MIN_BARS or is_stale:
+                benchmark_backfill.append(ticker)
+            else:
+                benchmark_refresh.append(ticker)
 
     # Refresh tickers that already have sufficient history (short window)
     refresh_tickers = [t for t in filtered if t not in set(backfill_tickers)]
+    refresh_tickers.extend(benchmark_refresh)
     for i in tqdm(range(0, len(refresh_tickers), batch_size), desc="History Refresh"):
         batch = refresh_tickers[i : i + batch_size]
         try:

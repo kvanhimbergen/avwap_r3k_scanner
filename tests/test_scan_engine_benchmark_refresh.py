@@ -131,14 +131,22 @@ def test_run_scan_backfills_missing_benchmark_history(monkeypatch: pytest.Monkey
     assert any(benchmark_set.issubset(set(call[0])) and call[1] == expected_start for call in fake_client.calls)
 
 
-def test_run_scan_skips_sufficient_benchmark_history(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_scan_short_refreshes_fresh_benchmarks(monkeypatch: pytest.MonkeyPatch) -> None:
     benchmark_set = {"SPY", "IWM", "IWV", "QQQ"}
     filtered = ["AAA"]
-    dates = pd.date_range("2023-01-02", periods=scan_engine.BENCHMARK_MIN_BARS + 5, freq="B")
+    fixed_now = pd.Timestamp("2024-04-01")
+    # Benchmarks fresh: last date within the 15-day short_start window
+    dates = pd.date_range(end=fixed_now - pd.Timedelta(days=1), periods=scan_engine.BENCHMARK_MIN_BARS + 5, freq="B")
     history = _make_history(filtered + sorted(benchmark_set), dates)
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now
 
     fake_client = _FakeAlpacaClient()
 
+    monkeypatch.setattr(scan_engine, "datetime", _FixedDatetime)
     monkeypatch.setattr(scan_engine, "StockHistoricalDataClient", lambda *args, **kwargs: fake_client)
     monkeypatch.setattr(scan_engine, "get_market_regime", lambda *_: True)
     monkeypatch.setattr(scan_engine, "load_setup_rules", lambda: {})
@@ -156,4 +164,63 @@ def test_run_scan_skips_sufficient_benchmark_history(monkeypatch: pytest.MonkeyP
 
     scan_engine.run_scan(scan_engine.default_cfg, as_of_dt=dates[-1])
 
-    assert not any(benchmark_set.issubset(set(call[0])) for call in fake_client.calls)
+    expected_short_start = fixed_now - scan_engine.timedelta(days=15)
+    # Benchmarks joined the short refresh batch (start == short_start), not the long backfill.
+    assert any(
+        benchmark_set.issubset(set(call[0])) and call[1] == expected_short_start
+        for call in fake_client.calls
+    )
+    expected_long_start = fixed_now - scan_engine.timedelta(days=scan_engine.BENCHMARK_BACKFILL_DAYS)
+    assert not any(
+        benchmark_set.issubset(set(call[0])) and call[1] == expected_long_start
+        for call in fake_client.calls
+    )
+
+
+def test_run_scan_backfills_stale_benchmarks(monkeypatch: pytest.MonkeyPatch) -> None:
+    benchmark_set = {"SPY", "IWM", "IWV", "QQQ"}
+    filtered = ["AAA"]
+    fixed_now = pd.Timestamp("2024-04-01")
+    # Benchmarks have sufficient bar count but last date is >15 days before fixed_now —
+    # short refresh cannot close the gap, so they must trigger the long backfill.
+    bench_end = fixed_now - pd.Timedelta(days=60)
+    bench_dates = pd.date_range(end=bench_end, periods=scan_engine.BENCHMARK_MIN_BARS + 5, freq="B")
+    fresh_dates = pd.date_range(end=fixed_now - pd.Timedelta(days=1), periods=90, freq="B")
+    history = pd.concat(
+        [
+            _make_history(filtered, fresh_dates),
+            _make_history(sorted(benchmark_set), bench_dates),
+        ],
+        ignore_index=True,
+    )
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now
+
+    fake_client = _FakeAlpacaClient()
+
+    monkeypatch.setattr(scan_engine, "datetime", _FixedDatetime)
+    monkeypatch.setattr(scan_engine, "StockHistoricalDataClient", lambda *args, **kwargs: fake_client)
+    monkeypatch.setattr(scan_engine, "get_market_regime", lambda *_: True)
+    monkeypatch.setattr(scan_engine, "load_setup_rules", lambda: {})
+    monkeypatch.setattr(
+        scan_engine,
+        "build_liquidity_snapshot",
+        lambda universe, client, **kw: pd.DataFrame([{"Ticker": "AAA", "Sector": "Tech"}]),
+    )
+    monkeypatch.setattr(scan_engine, "load_universe", lambda: ["AAA"])
+    monkeypatch.setattr(scan_engine, "is_near_earnings_cached", lambda *_: False)
+    monkeypatch.setattr(scan_engine, "build_candidate_row", lambda *_args, **_kwargs: {"Symbol": "AAA"})
+    monkeypatch.setattr(scan_engine, "compute_sector_relative_strength", lambda *a, **kw: {})
+    monkeypatch.setattr(scan_engine.cs, "read_parquet", lambda *_: history.copy())
+    monkeypatch.setattr(scan_engine.cs, "write_parquet", lambda *_: None)
+
+    scan_engine.run_scan(scan_engine.default_cfg, as_of_dt=fresh_dates[-1])
+
+    expected_long_start = fixed_now - scan_engine.timedelta(days=scan_engine.BENCHMARK_BACKFILL_DAYS)
+    assert any(
+        benchmark_set.issubset(set(call[0])) and call[1] == expected_long_start
+        for call in fake_client.calls
+    )
