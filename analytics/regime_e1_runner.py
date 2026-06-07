@@ -12,6 +12,7 @@ from analytics.regime_date_resolution import resolve_regime_ny_date
 from analytics.regime_e1_features import compute_regime_features
 from analytics.regime_e1_schemas import RECORD_TYPE_SIGNAL, RECORD_TYPE_SKIPPED
 from analytics.regime_e1_storage import build_record, write_record
+from utils.freshness import StaleDataError, assert_fresh
 
 # Max business-day gap between requested and resolved NY date before we refuse
 # to emit a signal. Weekends and short holiday weeks fall within this window;
@@ -21,14 +22,6 @@ MAX_REGIME_STALENESS_BDAYS = 5
 
 def _default_as_of_utc(ny_date: str) -> str:
     return f"{ny_date}T16:00:00+00:00"
-
-
-def _staleness_bdays(resolved_ny_date: str, requested_ny_date: str) -> int:
-    if resolved_ny_date >= requested_ny_date:
-        return 0
-    # bdate_range includes both endpoints; the gap is the count of business
-    # days strictly after resolved up to and including requested.
-    return max(0, len(pd.bdate_range(resolved_ny_date, requested_ny_date)) - 1)
 
 
 def _load_history(path: Path) -> pd.DataFrame:
@@ -66,15 +59,21 @@ def run_regime_e1(*, repo_root: Path, ny_date: str, as_of_utc: str, history_path
 
     resolved_ny_date, resolution_reasons, _ = resolve_regime_ny_date(history, ny_date)
 
-    stale_bdays = _staleness_bdays(resolved_ny_date, ny_date)
-    if stale_bdays > MAX_REGIME_STALENESS_BDAYS:
+    try:
+        assert_fresh(
+            last=resolved_ny_date,
+            requested=ny_date,
+            max_stale_bdays=MAX_REGIME_STALENESS_BDAYS,
+            label="regime_e1.spy_history",
+        )
+    except StaleDataError as stale:
         payload = {
             "reason_codes": resolution_reasons + ["excessive_price_staleness"],
             "inputs_snapshot": {
                 "ny_date": ny_date,
                 "resolved_ny_date": resolved_ny_date,
-                "staleness_bdays": stale_bdays,
-                "max_staleness_bdays": MAX_REGIME_STALENESS_BDAYS,
+                "staleness_bdays": stale.staleness_bdays,
+                "max_staleness_bdays": stale.max_stale_bdays,
             },
             "requested_ny_date": ny_date,
             "resolved_ny_date": resolved_ny_date,
