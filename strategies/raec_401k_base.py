@@ -122,6 +122,18 @@ class StrategyConfig:
     hedge_universe: tuple[str, ...] = ()
     hedge_budget: float = 0.0
 
+    # Leveraged-ETF group cap. ``leveraged_universe`` identifies symbols that
+    # carry daily-reset leverage decay risk (TQQQ, SOXL, UPRO, etc.).
+    # ``max_leveraged_pct`` is the maximum *combined* weight those symbols can
+    # hold inside the strategy's allocation. ``leveraged_top_n_max`` is the
+    # maximum count of leveraged symbols allowed among the top-N picks; when
+    # the ranker would select more leveraged than this, additional non-
+    # leveraged candidates are taken from the next-best ranked tickers so the
+    # strategy doesn't fall back to a cash deficit. Defaults are no-op.
+    leveraged_universe: tuple[str, ...] = ()
+    max_leveraged_pct: float = 1.0
+    leveraged_top_n_max: int = 999
+
     # Guardrails
     regime_smoothing_days: int = 3
     rebalance_cooldown_days: int = 5
@@ -578,6 +590,59 @@ class BaseRAECStrategy:
 
     # -- Regime target computation (config-driven) ----------------------------
 
+    def _select_with_leveraged_count_cap(
+        self, ranked: list[str], top_n: int
+    ) -> list[str]:
+        """Pick up to ``top_n`` symbols from ``ranked``, honoring
+        ``leveraged_top_n_max`` so the basket isn't concentrated in
+        leveraged ETFs by accident of momentum ranking."""
+        cfg = self.config
+        if not cfg.leveraged_universe or cfg.leveraged_top_n_max >= top_n:
+            return ranked[:top_n]
+        lev_set = set(cfg.leveraged_universe)
+        picked: list[str] = []
+        lev_count = 0
+        for sym in ranked:
+            if len(picked) >= top_n:
+                break
+            if sym in lev_set:
+                if lev_count >= cfg.leveraged_top_n_max:
+                    continue
+                lev_count += 1
+            picked.append(sym)
+        return picked
+
+    def _apply_leveraged_cap(self, weights: dict[str, float]) -> dict[str, float]:
+        """Cap the combined weight of leveraged-ETF symbols to ``max_leveraged_pct``.
+
+        Overflow is redistributed to non-leveraged holdings proportionally
+        (their inverse-vol weights are preserved). If a redistribution would
+        push a non-leveraged symbol above ``max_single_etf_weight``, the excess
+        is dropped rather than concentrated — downstream cash logic catches it.
+        If every holding is leveraged, weights sum below 1.0 and cash absorbs
+        the remainder.
+        """
+        cfg = self.config
+        if not cfg.leveraged_universe or cfg.max_leveraged_pct >= 1.0:
+            return weights
+        lev_set = set(cfg.leveraged_universe)
+        lev_total = sum(w for s, w in weights.items() if s in lev_set)
+        if lev_total <= cfg.max_leveraged_pct + 1e-9:
+            return weights
+        nonlev_total = sum(w for s, w in weights.items() if s not in lev_set)
+        scale_lev = cfg.max_leveraged_pct / lev_total
+        new_nonlev_total = 1.0 - cfg.max_leveraged_pct
+        scale_nonlev = (new_nonlev_total / nonlev_total) if nonlev_total > 0 else 0.0
+        single_cap = cfg.max_single_etf_weight
+        return {
+            s: (
+                w * scale_lev
+                if s in lev_set
+                else min(w * scale_nonlev, single_cap)
+            )
+            for s, w in weights.items()
+        }
+
     def _risk_on_targets(
         self,
         *,
@@ -587,10 +652,11 @@ class BaseRAECStrategy:
     ) -> dict[str, float]:
         cfg = self.config
         ranked = self._rank_symbols(self.RISK_UNIVERSE, feature_map, require_positive_momentum=True)
-        selected = ranked[:cfg.risk_on_top_n]
+        selected = self._select_with_leveraged_count_cap(ranked, cfg.risk_on_top_n)
         if not selected:
             return {cash_symbol: 100.0}
         weights = self._inverse_vol_weights(selected, feature_map)
+        weights = self._apply_leveraged_cap(weights)
         basket_vol = self._estimate_portfolio_vol(weights, feature_map)
         vol_scale = min(1.0, cfg.target_portfolio_vol / max(basket_vol, 1e-6))
         crash_scale = cfg.risk_on_crash_scale if signal.crash_mode else 1.0
@@ -610,10 +676,11 @@ class BaseRAECStrategy:
     ) -> dict[str, float]:
         cfg = self.config
         ranked_risk = self._rank_symbols(self.RISK_UNIVERSE, feature_map, require_positive_momentum=True)
-        selected_risk = ranked_risk[:cfg.transition_top_n_risk]
+        selected_risk = self._select_with_leveraged_count_cap(ranked_risk, cfg.transition_top_n_risk)
         scaled: dict[str, float] = {}
         if selected_risk:
             risk_weights = self._inverse_vol_weights(selected_risk, feature_map)
+            risk_weights = self._apply_leveraged_cap(risk_weights)
             basket_vol = self._estimate_portfolio_vol(risk_weights, feature_map)
             vol_scale = min(1.0, cfg.target_portfolio_vol / max(basket_vol, 1e-6))
             crash_scale = cfg.transition_crash_scale if signal.crash_mode else 1.0

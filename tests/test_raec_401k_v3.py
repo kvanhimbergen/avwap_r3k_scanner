@@ -201,8 +201,33 @@ def test_risk_on_targets_sum_and_top2(tmp_path: Path) -> None:
     assert set(risk_symbols).issubset(set(raec_401k_v3.RISK_UNIVERSE))
 
 
-def test_risk_on_zero_cash_possible(tmp_path: Path) -> None:
-    """BIL can be 0% or absent in RISK_ON (cash floor is 0%)."""
+def test_leveraged_cap_caps_combined_weight(tmp_path: Path) -> None:
+    """When the momentum ranker concentrates into leveraged ETFs, the
+    combined leveraged weight must not exceed max_leveraged_pct (15% for V3)."""
+    provider = _risk_on_provider()  # Risk-on provider has leveraged ETFs ranking top by momentum
+    _seed_state(tmp_path, last_regime="RISK_OFF", allocs={"BIL": 100.0})
+    result = raec_401k_v3.run_strategy(
+        asof_date="2026-02-06",
+        repo_root=tmp_path,
+        price_provider=provider,
+        dry_run=True,
+    )
+    assert result.regime == "RISK_ON"
+    leveraged = set(raec_401k_v3._strategy.config.leveraged_universe)
+    lev_total_pct = sum(pct for sym, pct in result.targets.items() if sym in leveraged)
+    cap_pct = raec_401k_v3._strategy.config.max_leveraged_pct * 100.0
+    # Allow 1 pct slop for rounding in _weights_to_target_pct.
+    assert lev_total_pct <= cap_pct + 1.0, (
+        f"leveraged total {lev_total_pct:.1f}% exceeds cap {cap_pct:.1f}%; "
+        f"targets={result.targets}"
+    )
+
+
+def test_risk_on_cash_under_30pct(tmp_path: Path) -> None:
+    """RISK_ON cash should stay modest. With the age-51 leveraged cap (15%
+    leveraged + 60% non-leveraged single-cap = 75% invested max), expect
+    cash around 25%; before the cap it was near 0%. The looser bound here
+    just prevents accidental cash hoarding when momentum is strong."""
     provider = _risk_on_provider()
     _seed_state(tmp_path, last_regime="RISK_OFF", allocs={"BIL": 100.0})
     result = raec_401k_v3.run_strategy(
@@ -212,9 +237,8 @@ def test_risk_on_zero_cash_possible(tmp_path: Path) -> None:
         dry_run=True,
     )
     assert result.regime == "RISK_ON"
-    # Cash can be 0% (absent from targets) or very low
     cash_pct = result.targets.get("BIL", 0.0)
-    assert cash_pct < 10.0  # Much lower floor than V2's 5%
+    assert cash_pct < 30.0
 
 
 def test_risk_off_defensive_hedge_cash_split(tmp_path: Path) -> None:
@@ -228,16 +252,16 @@ def test_risk_off_defensive_hedge_cash_split(tmp_path: Path) -> None:
     )
     assert result.regime == "RISK_OFF"
     assert round(sum(result.targets.values()), 1) == 100.0
-    # Defensive ~65%, PSQ hedge ~15%, cash ~20%
+    # Defensive ~50%, PSQ hedge ~30%, cash ~20%
     cash_pct = result.targets.get("BIL", 0.0)
     assert 19.5 <= cash_pct <= 25.0
     hedge_pct = result.targets.get("PSQ", 0.0)
-    assert 14.5 <= hedge_pct <= 15.5
+    assert 29.5 <= hedge_pct <= 30.5
     defensive_pct = sum(
         pct for sym, pct in result.targets.items()
         if sym in raec_401k_v3.DEFENSIVE_UNIVERSE and sym != "BIL"
     )
-    assert 62.0 <= defensive_pct <= 67.0
+    assert 47.0 <= defensive_pct <= 52.0
     # No risk ETFs present
     risk_in_targets = set(result.targets.keys()) & set(raec_401k_v3.RISK_UNIVERSE)
     assert len(risk_in_targets) == 0

@@ -246,8 +246,11 @@ def test_risk_on_top_2(tmp_path: Path) -> None:
     assert set(risk_symbols).issubset(set(raec_401k_v5.RISK_UNIVERSE))
 
 
-def test_risk_on_zero_cash(tmp_path: Path) -> None:
-    """BIL can be 0% or absent in RISK_ON (cash floor is 0%)."""
+def test_risk_on_cash_under_20pct(tmp_path: Path) -> None:
+    """RISK_ON cash is naturally raised by the leveraged cap. V5 single-cap
+    is 70%, leveraged cap is 15% → 85% invested max, so cash sits near 15%
+    rather than 0% under the age-51 risk regime. Test that we don't drift
+    into accidental cash hoarding (>20%)."""
     provider = _both_up_provider()
     _seed_state(tmp_path, last_regime="RISK_OFF", allocs={"BIL": 100.0})
     result = raec_401k_v5.run_strategy(
@@ -258,7 +261,7 @@ def test_risk_on_zero_cash(tmp_path: Path) -> None:
     )
     assert result.regime == "RISK_ON"
     cash_pct = result.targets.get("BIL", 0.0)
-    assert cash_pct < 10.0
+    assert cash_pct < 20.0
 
 
 def test_risk_on_max_weight_70(tmp_path: Path) -> None:

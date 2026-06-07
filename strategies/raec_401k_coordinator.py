@@ -30,7 +30,7 @@ DEFAULT_UNIVERSE = tuple(dict.fromkeys([
 ]))
 FALLBACK_CASH_SYMBOL = "BIL"
 
-DEFAULT_CAPITAL_SPLIT: dict[str, float] = {"v3": 0.25, "v4": 0.50, "v5": 0.25}
+DEFAULT_CAPITAL_SPLIT: dict[str, float] = {"v3": 0.20, "v4": 0.55, "v5": 0.25}
 
 SUB_STRATEGIES: dict[str, BaseRAECStrategy] = {
     "v3": _get_strategy("RAEC_401K_V3"),

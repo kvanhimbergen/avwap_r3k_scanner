@@ -16,7 +16,21 @@ from strategies.raec_401k_registry import register
 
 _CONFIG = StrategyConfig(
     strategy_id="RAEC_401K_V5",
-    risk_universe=("SOXL", "TECL", "FNGU", "NVDL", "SMH", "IGV", "BOTZ", "WCLD", "HACK", "QQQ", "ARKK", "NVDA", "AMD", "AVGO", "MSFT", "GOOGL"),
+    # AI / space theme sleeve. V3 already covers broad tech (XLK, SMH, QQQ,
+    # SPY, plus the leveraged TQQQ/SOXL/UPRO/TECL/FNGU when momentum is hot),
+    # so V5 deliberately AVOIDS the broad-tech indices and individual mega-cap
+    # tech names — that's the V3+V5 redundancy that defeated diversification.
+    # V5 now lives in thematic ETFs (AI, robotics, cybersecurity, cloud,
+    # software, space exploration) so a tech drawdown doesn't double-hit the
+    # book through both sleeves.
+    risk_universe=(
+        # AI / robotics / autonomous
+        "AIQ", "BOTZ", "ROBO", "ARKQ", "CHAT",
+        # Software / cloud / cyber (thematic, not large-cap indices)
+        "IGV", "WCLD", "HACK", "SKYY",
+        # Space exploration / disruptive
+        "ARKX", "UFO", "ARKK",
+    ),
     defensive_universe=("TLT", "GLD", "USMV", "IEF", "BIL"),
     fallback_cash_symbol="BIL",
     min_trade_pct=0.5,
@@ -40,10 +54,20 @@ _CONFIG = StrategyConfig(
     transition_top_n_defensive=2,
     transition_defensive_budget=0.25,
     transition_min_cash=0.05,
-    # Risk-off: top 3 defensive, 80% budget, 20% cash
+    # Risk-off: top 3 defensive 55%, PSQ hedge 25%, 20% cash.
+    # V5 is concentrated tech/AI; adding a hedge sleeve here is critical for
+    # an investor 14 years from retirement — V5's drawdowns in 2018 Q4 and
+    # 2022 would otherwise be uncapped relative to age-appropriate risk.
     risk_off_top_n_defensive=3,
-    risk_off_defensive_budget=0.80,
+    risk_off_defensive_budget=0.55,
     risk_off_min_cash=0.20,
+    hedge_universe=("PSQ",),
+    hedge_budget=0.25,
+    # V5's redesigned theme universe has no leveraged ETFs (the leverage was
+    # the broad-tech overlap with V3 — TQQQ/SOXL/TECL/FNGU/NVDL — which we
+    # explicitly removed). The cap remains configured at no-op defaults so a
+    # future addition of e.g. NVDL would still trip the guard if not also
+    # capped.
     ticket_title="RAEC 401(k) AI/Future Tech Rebalance Ticket",
 )
 

@@ -37,12 +37,23 @@ _CONFIG = StrategyConfig(
     transition_top_n_defensive=2,
     transition_defensive_budget=0.25,
     transition_min_cash=0.05,
-    # Risk-off: top 3 defensive 65%, PSQ hedge 15%, 20% cash
+    # Risk-off: top 3 defensive 50%, PSQ hedge 30%, 20% cash.
+    # Sized for the user's 14-year horizon: a 30% PSQ sleeve = 7.5% of total
+    # book at the V3 capital share, materially offsetting drawdown rather
+    # than a token gesture.
     risk_off_top_n_defensive=3,
-    risk_off_defensive_budget=0.65,
+    risk_off_defensive_budget=0.50,
     risk_off_min_cash=0.20,
     hedge_universe=("PSQ",),
-    hedge_budget=0.15,
+    hedge_budget=0.30,
+    # Daily-reset leverage decay is brutal in chop (TQQQ -79% in 2022,
+    # SOXL -86%). Capping the leveraged subset to 15% of V3's allocation
+    # means at most ~3.75% of the total book is in 3x products — meaningful
+    # exposure without bet-the-account risk for an investor 14 years from
+    # retirement.
+    leveraged_universe=("TQQQ", "SOXL", "UPRO", "TECL", "FNGU"),
+    max_leveraged_pct=0.15,
+    leveraged_top_n_max=1,
     ticket_title="RAEC 401(k) Aggressive Rebalance Ticket",
 )
 
