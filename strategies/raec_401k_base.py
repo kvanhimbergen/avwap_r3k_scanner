@@ -117,6 +117,10 @@ class StrategyConfig:
     risk_off_defensive_budget: float = 0.80
     risk_off_min_cash: float = 0.20
 
+    # Hedge sleeve (RISK_OFF only; opt-in per strategy)
+    hedge_universe: tuple[str, ...] = ()
+    hedge_budget: float = 0.0
+
     # Guardrails
     regime_smoothing_days: int = 3
     rebalance_cooldown_days: int = 5
@@ -153,7 +157,11 @@ class BaseRAECStrategy:
 
     @property
     def DEFAULT_UNIVERSE(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys([*self.config.risk_universe, *self.config.defensive_universe]))
+        return tuple(dict.fromkeys([
+            *self.config.risk_universe,
+            *self.config.defensive_universe,
+            *self.config.hedge_universe,
+        ]))
 
     @property
     def FALLBACK_CASH_SYMBOL(self) -> str:
@@ -406,7 +414,7 @@ class BaseRAECStrategy:
         else:
             vol_252d = BaseRAECStrategy._compute_volatility(returns)
         drawdown_63d = (close / max(closes[-63:])) - 1.0 if len(closes) >= 63 else (close / max(closes)) - 1.0
-        score = ((mom_6m * 0.65) + (mom_12m * 0.35)) / max(vol_20d, 0.06)
+        score = (mom_6m * 0.65) + (mom_12m * 0.35)
         returns_window = tuple(float(value) for value in returns[-63:])
         return SymbolFeature(
             symbol=symbol,
@@ -642,6 +650,10 @@ class BaseRAECStrategy:
 
         weights = self._inverse_vol_weights(selected, feature_map)
         scaled = {symbol: weight * cfg.risk_off_defensive_budget for symbol, weight in weights.items()}
+        if cfg.hedge_budget > 0 and cfg.hedge_universe:
+            per_hedge = cfg.hedge_budget / len(cfg.hedge_universe)
+            for symbol in cfg.hedge_universe:
+                scaled[symbol] = scaled.get(symbol, 0.0) + per_hedge
         scaled[cash_symbol] = max(cfg.risk_off_min_cash, 1.0 - sum(scaled.values()))
         return self._weights_to_target_pct(scaled, cash_symbol=cash_symbol)
 

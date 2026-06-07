@@ -41,6 +41,22 @@ def _risk_on_provider() -> FixturePriceProvider:
     return FixturePriceProvider(series)
 
 
+def _provider_with_psq(base_provider: FixturePriceProvider, slope: float) -> FixturePriceProvider:
+    """Return a new provider matching base_provider's series plus a PSQ price track."""
+    start = date(2024, 1, 1)
+    extended = dict(base_provider._series)
+    extended["PSQ"] = _linear_series(start=start, base=10, slope=slope, wiggle=0.05)
+    return FixturePriceProvider(extended)
+
+
+def _risk_on_provider_with_hedge() -> FixturePriceProvider:
+    return _provider_with_psq(_risk_on_provider(), slope=-0.05)
+
+
+def _risk_off_provider_with_hedge() -> FixturePriceProvider:
+    return _provider_with_psq(_risk_off_provider(), slope=0.05)
+
+
 def _risk_off_provider() -> FixturePriceProvider:
     """Build provider where VTI trends down -> RISK_OFF regime."""
     start = date(2024, 1, 1)
@@ -201,8 +217,8 @@ def test_risk_on_zero_cash_possible(tmp_path: Path) -> None:
     assert cash_pct < 10.0  # Much lower floor than V2's 5%
 
 
-def test_risk_off_80_defensive_20_cash(tmp_path: Path) -> None:
-    provider = _risk_off_provider()
+def test_risk_off_defensive_hedge_cash_split(tmp_path: Path) -> None:
+    provider = _risk_off_provider_with_hedge()
     _seed_state(tmp_path, last_regime="RISK_ON", allocs={"TQQQ": 50.0, "SOXL": 50.0})
     result = raec_401k_v3.run_strategy(
         asof_date="2026-02-06",
@@ -212,13 +228,33 @@ def test_risk_off_80_defensive_20_cash(tmp_path: Path) -> None:
     )
     assert result.regime == "RISK_OFF"
     assert round(sum(result.targets.values()), 1) == 100.0
-    # Cash should be ~20%
+    # Defensive ~65%, PSQ hedge ~15%, cash ~20%
     cash_pct = result.targets.get("BIL", 0.0)
-    assert cash_pct >= 19.5
-    assert cash_pct <= 25.0
+    assert 19.5 <= cash_pct <= 25.0
+    hedge_pct = result.targets.get("PSQ", 0.0)
+    assert 14.5 <= hedge_pct <= 15.5
+    defensive_pct = sum(
+        pct for sym, pct in result.targets.items()
+        if sym in raec_401k_v3.DEFENSIVE_UNIVERSE and sym != "BIL"
+    )
+    assert 62.0 <= defensive_pct <= 67.0
     # No risk ETFs present
     risk_in_targets = set(result.targets.keys()) & set(raec_401k_v3.RISK_UNIVERSE)
     assert len(risk_in_targets) == 0
+
+
+def test_hedge_sleeve_inactive_in_risk_on(tmp_path: Path) -> None:
+    """PSQ must not be allocated when regime != RISK_OFF."""
+    provider = _risk_on_provider_with_hedge()
+    _seed_state(tmp_path, last_regime="RISK_ON", allocs={"TQQQ": 50.0, "SOXL": 50.0})
+    result = raec_401k_v3.run_strategy(
+        asof_date="2026-02-06",
+        repo_root=tmp_path,
+        price_provider=provider,
+        dry_run=True,
+    )
+    assert result.regime == "RISK_ON"
+    assert result.targets.get("PSQ", 0.0) == 0.0
 
 
 def test_transition_structure(tmp_path: Path) -> None:

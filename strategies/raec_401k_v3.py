@@ -19,7 +19,7 @@ _CONFIG = StrategyConfig(
     min_trade_pct=0.5,
     max_weekly_turnover_pct=40.0,
     drift_threshold_pct=1.5,
-    target_portfolio_vol=0.18,
+    target_portfolio_vol=0.30,
     max_single_etf_weight=0.60,
     # Risk-on: top 2, budget 0.40-1.0, base 1.0, crash 0.60, no cash floor
     risk_on_top_n=2,
@@ -37,10 +37,12 @@ _CONFIG = StrategyConfig(
     transition_top_n_defensive=2,
     transition_defensive_budget=0.25,
     transition_min_cash=0.05,
-    # Risk-off: top 3 defensive, 80% budget, 20% cash
+    # Risk-off: top 3 defensive 65%, PSQ hedge 15%, 20% cash
     risk_off_top_n_defensive=3,
-    risk_off_defensive_budget=0.80,
+    risk_off_defensive_budget=0.65,
     risk_off_min_cash=0.20,
+    hedge_universe=("PSQ",),
+    hedge_budget=0.15,
     ticket_title="RAEC 401(k) Aggressive Rebalance Ticket",
 )
 
