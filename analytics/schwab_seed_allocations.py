@@ -28,6 +28,7 @@ from analytics.schwab_readonly_storage import (
     ledger_path,
     load_snapshot_records,
 )
+from utils.atomic_write import atomic_write_text
 
 DEFAULT_BOOK_ID = "SCHWAB_401K_MANUAL"
 DEFAULT_STRATEGY_IDS = ["RAEC_401K_V3", "RAEC_401K_V4", "RAEC_401K_V5"]
@@ -123,7 +124,7 @@ def seed_strategy_states(
             state = {"book_id": book_id, "strategy_id": sid}
 
         state["last_known_allocations"] = allocations
-        state_path.write_text(json.dumps(state, indent=2) + "\n")
+        atomic_write_text(state_path, json.dumps(state, indent=2) + "\n")
         updated.append(sid)
 
     return updated
