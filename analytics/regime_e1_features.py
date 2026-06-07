@@ -176,7 +176,7 @@ def _breadth_fraction(
     breadth_symbols: list[str] = []
     above_count = 0
     df_sorted = df.sort_values(["symbol", "date"])
-    for symbol, history in df_sorted.groupby("symbol", sort=True):
+    for symbol, history in df_sorted.groupby("symbol", sort=True, observed=True):
         if len(history) < lookback:
             continue
         closes = history["close"]

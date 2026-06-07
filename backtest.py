@@ -159,7 +159,7 @@ def summarize(trades: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
 
     return (
-        trades.groupby(["Direction", "Regime"])
+        trades.groupby(["Direction", "Regime"], observed=True)
         .agg(
             trades=("R", "count"),
             win_rate=("R", lambda x: float((x > 0).mean())),

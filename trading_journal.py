@@ -133,7 +133,7 @@ def period_summary(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
 
     summaries = {}
     for label, column in [("day", "Trade_Date"), ("month", "Trade_Month"), ("year", "Trade_Year")]:
-        grouped = closed.groupby(column)["PnL"].agg([
+        grouped = closed.groupby(column, observed=True)["PnL"].agg([
             ("trades", "count"),
             ("net_pnl", "sum"),
             ("avg_pnl", "mean"),

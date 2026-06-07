@@ -92,6 +92,13 @@ BENCHMARK_TICKERS = (
     "LQD",
     "GLD",
     "UUP",
+    # Hedge instruments referenced by RAEC strategy hedge_universe configs.
+    # Listed here so the daily benchmark refresh path keeps them current,
+    # without needing a separate strategy-symbol refresh pipeline.
+    "PSQ",
+    "SH",
+    "SDS",
+    "SQQQ",
 )
 BENCHMARK_BACKFILL_DAYS = 730
 BENCHMARK_MIN_BARS = 200
@@ -391,7 +398,7 @@ def build_liquidity_snapshot(
             cfg.SNAPSHOT_MAX_TICKERS
         )
     sector_rank = (
-        snap.groupby("Sector")["TrendScore"]
+        snap.groupby("Sector", observed=True)["TrendScore"]
         .mean()
         .sort_values(ascending=False)
         .head(cfg.TOP_SECTORS_TO_SCAN)
@@ -732,7 +739,7 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
     else:
         hist_start = short_start
         # Identify tickers missing from cache or with insufficient bars
-        cached_counts = history.groupby("Ticker")["Date"].nunique().to_dict()
+        cached_counts = history.groupby("Ticker", observed=True)["Date"].nunique().to_dict()
         backfill_tickers = [
             t for t in filtered if cached_counts.get(t, 0) < 80
         ]
@@ -740,7 +747,7 @@ def run_scan(scan_cfg, as_of_dt: datetime | None = None) -> pd.DataFrame:
             print(f"Backfilling {len(backfill_tickers)} tickers with <80 bars...")
         # Benchmarks: backfill if missing bars OR stale beyond short-refresh window;
         # otherwise join short refresh so they update daily.
-        last_dates = history.groupby("Ticker")["Date"].max().to_dict()
+        last_dates = history.groupby("Ticker", observed=True)["Date"].max().to_dict()
         short_start_ts = pd.Timestamp(short_start)
         benchmark_backfill = []
         benchmark_refresh = []
