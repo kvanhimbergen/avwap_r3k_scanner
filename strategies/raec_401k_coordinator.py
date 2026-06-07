@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from alerts.slack import slack_alert
 from data.prices import PriceProvider, get_default_price_provider
 from execution_v2 import book_ids, book_router
 from execution_v2.schwab_manual_adapter import slack_post_enabled
@@ -28,7 +29,7 @@ DEFAULT_UNIVERSE = tuple(dict.fromkeys([
 ]))
 FALLBACK_CASH_SYMBOL = "BIL"
 
-DEFAULT_CAPITAL_SPLIT: dict[str, float] = {"v3": 0.40, "v4": 0.30, "v5": 0.30}
+DEFAULT_CAPITAL_SPLIT: dict[str, float] = {"v3": 0.25, "v4": 0.50, "v5": 0.25}
 
 SUB_STRATEGIES: dict[str, BaseRAECStrategy] = {
     "v3": _get_strategy("RAEC_401K_V3"),
@@ -44,6 +45,11 @@ class CoordinatorResult:
     capital_split: dict[str, float]
     rebalanced: list[str]
     posted: list[str]
+    failed: dict[str, str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.failed is None:
+            object.__setattr__(self, "failed", {})
 
 
 def _state_path(repo_root: Path) -> Path:
@@ -90,6 +96,7 @@ def _write_raec_ledger(
         "strategy_id": STRATEGY_ID,
         "capital_split": coord_result.capital_split,
         "sub_strategy_results": sub_strategy_results,
+        "sub_strategy_failures": coord_result.failed,
         "rebalanced": coord_result.rebalanced,
         "posted": coord_result.posted,
         "build_git_sha": build_git_sha,
@@ -120,20 +127,35 @@ def run_coordinator(
             print("WARN: total_capital not set — pass --capital or set 'total_capital' in coordinator state")
             cap = 0.0
 
-    # Run each sub-strategy with dry_run=True, allow_state_write=True
+    # Run each sub-strategy with dry_run=True, allow_state_write=True.
+    # Failures in one strategy must not block the others.
     sub_results: dict[str, RunResult] = {}
+    failed: dict[str, str] = {}
     for key, strategy in SUB_STRATEGIES.items():
         pct = split.get(key, 0.0) * 100.0
         sub_cap = cap * split.get(key, 0.0)
         print(f"[COORD] Running {key.upper()} ({pct:.1f}% of portfolio = ${sub_cap:,.0f})...")
-        result = strategy.run_strategy(
-            asof_date=asof_date,
-            repo_root=repo_root,
-            price_provider=provider,
-            dry_run=True,
-            allow_state_write=True,
+        try:
+            result = strategy.run_strategy(
+                asof_date=asof_date,
+                repo_root=repo_root,
+                price_provider=provider,
+                dry_run=True,
+                allow_state_write=True,
+            )
+            sub_results[key] = result
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            failed[key] = err
+            print(f"[COORD] {key.upper()} FAILED: {err}", flush=True)
+
+    if failed and not dry_run:
+        slack_alert(
+            "ERROR",
+            "Coordinator sub-strategy failures",
+            "\n".join(f"{k.upper()}: {v}" for k, v in failed.items()),
+            component="Coordinator",
         )
-        sub_results[key] = result
 
     # Post each sub-strategy's ticket independently
     posting_enabled = slack_post_enabled() if post_enabled is None else post_enabled
@@ -213,19 +235,27 @@ def run_coordinator(
         capital_split=split,
         rebalanced=rebalanced,
         posted=posted,
+        failed=failed,
     )
 
     # Save coordinator state (skip in dry_run mode)
     if not dry_run:
         coord_state_path = _state_path(repo_root)
         coord_state = _load_state(coord_state_path)
+        # Merge into existing sub_regimes/sub_smoothed_regimes so that a
+        # transient failure for one strategy doesn't wipe its prior values.
+        existing_regimes = dict(coord_state.get("sub_regimes") or {})
+        existing_smoothed = dict(coord_state.get("sub_smoothed_regimes") or {})
+        existing_regimes.update({key: r.regime for key, r in sub_results.items()})
+        existing_smoothed.update({key: r.smoothed_regime for key, r in sub_results.items()})
         coord_state.update({
             "last_eval_date": asof_date,
             "total_capital": cap,
             "capital_split": split,
-            "sub_regimes": {key: r.regime for key, r in sub_results.items()},
-            "sub_smoothed_regimes": {key: r.smoothed_regime for key, r in sub_results.items()},
+            "sub_regimes": existing_regimes,
+            "sub_smoothed_regimes": existing_smoothed,
             "sub_rebalanced": rebalanced,
+            "sub_failed": failed,
         })
         _save_state(coord_state_path, coord_state)
         _write_raec_ledger(coord_result, repo_root=repo_root)
