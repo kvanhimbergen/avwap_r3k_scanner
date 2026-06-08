@@ -1,0 +1,164 @@
+# Asset-class taxonomy for RAEC v6.
+#
+# Maps every symbol the v6 universe touches to a stable asset class. This
+# is the single source of truth — strategies declare which asset classes
+# they're allowed to hold via their manifest, and the allocator uses the
+# taxonomy for the cross-asset trend and correlation derate logic.
+#
+# Asset classes (16):
+#   equity_us_broad   — broad-market US (SPY, VTI, QQQ, IWM, MDY)
+#   equity_us_lev     — leveraged broad-market US (TQQQ, UPRO, SSO)
+#   equity_intl       — international equity (EEM, EFA, INDA, FXI, EWZ)
+#   sector            — US sector ETFs (XLE, XLK, XLF, XLV, XLI, XLY, XLP, XLU, XLB, XLRE, XLC)
+#   sector_lev        — leveraged sector ETFs (SOXL, TECL, FNGU, ERX, NVDL, FAS)
+#   theme             — thematic ETFs (AIQ, BOTZ, ROBO, ARKK, ARKQ, ARKX, CHAT, UFO, IGV, WCLD, HACK, SKYY)
+#   bond_short        — short-duration treasuries (SHY, BIL, SGOV)
+#   bond_mid          — intermediate treasuries (IEF, GOVT)
+#   bond_long         — long-duration treasuries (TLT, EDV)
+#   bond_inverse      — inverse treasuries (TBT, TBF)
+#   credit            — credit ETFs (HYG, JNK, LQD)
+#   commodity_broad   — broad commodity baskets (PDBC, DBC, DBA)
+#   metal             — metals (GLD, SLV, IAU)
+#   energy            — energy commodities (USO, UNG)
+#   crypto            — crypto ETFs (IBIT, FBTC, ETHA, BITX, ETHU)
+#   crypto_inverse    — inverse crypto (BITI)
+#   vol_long          — long-vol (VIXY, UVXY)
+#   vol_short         — short-vol (SVXY)
+#   currency_dollar   — long-dollar (UUP)
+#   currency_inverse  — short-dollar (UDN)
+#   inverse_equity    — inverse equity (PSQ, SQQQ, SH, SDS, DOG, RWM)
+#   cash              — cash-equivalent (use bond_short symbols in practice; cash is the residual)
+
+equity_us_broad:
+  - SPY
+  - VTI
+  - QQQ
+  - IWM
+  - MDY
+  - VOO
+
+equity_us_lev:
+  - TQQQ
+  - UPRO
+  - SSO
+
+equity_intl:
+  - EEM
+  - EFA
+  - INDA
+  - FXI
+  - EWZ
+  - EWJ
+  - VWO
+
+sector:
+  - XLE
+  - XLK
+  - XLF
+  - XLV
+  - XLI
+  - XLY
+  - XLP
+  - XLU
+  - XLB
+  - XLRE
+  - XLC
+  - SMH
+  - XBI
+  - XME
+
+sector_lev:
+  - SOXL
+  - TECL
+  - FNGU
+  - ERX
+  - NVDL
+  - FAS
+  - LABU
+
+theme:
+  - AIQ
+  - BOTZ
+  - ROBO
+  - ARKK
+  - ARKQ
+  - ARKX
+  - ARKG
+  - ARKW
+  - CHAT
+  - UFO
+  - IGV
+  - WCLD
+  - HACK
+  - SKYY
+
+bond_short:
+  - SHY
+  - BIL
+  - SGOV
+
+bond_mid:
+  - IEF
+  - GOVT
+
+bond_long:
+  - TLT
+  - EDV
+  - ZROZ
+
+bond_inverse:
+  - TBT
+  - TBF
+
+credit:
+  - HYG
+  - JNK
+  - LQD
+  - TIP
+
+commodity_broad:
+  - PDBC
+  - DBC
+  - DBA
+
+metal:
+  - GLD
+  - SLV
+  - IAU
+
+energy:
+  - USO
+  - UNG
+  - USL
+
+crypto:
+  - IBIT
+  - FBTC
+  - ETHA
+  - BITX
+  - ETHU
+  - BITO
+
+crypto_inverse:
+  - BITI
+
+vol_long:
+  - VIXY
+  - UVXY
+
+vol_short:
+  - SVXY
+
+currency_dollar:
+  - UUP
+
+currency_inverse:
+  - UDN
+
+inverse_equity:
+  - PSQ
+  - SQQQ
+  - SH
+  - SDS
+  - DOG
+  - RWM
