@@ -28,6 +28,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterable
 
+from analytics.cpcv import generate_cpcv_splits
 from analytics.deflated_sharpe import deflated_sharpe_ratio
 from data.prices import FixturePriceProvider, get_default_price_provider
 from strategies.raec_v6 import asset_classes as ac
@@ -35,12 +36,19 @@ from strategies.raec_v6.allocator import allocate
 from strategies.raec_v6.overlay import apply_overlay
 from strategies.raec_v6.shadow_book import ShadowBook
 from strategies.raec_v6.signal_state import SignalState
+from strategies.raec_v6.signals.credit_spread import compute_credit_spread_signal
 from strategies.raec_v6.signals.cross_asset_trend import (
     REPRESENTATIVES,
     compute_cross_asset_trend,
 )
+from strategies.raec_v6.signals.regime_label import classify_from_spy_closes
+from strategies.raec_v6.signals.vix_implied import compute_vix_implied
 from strategies.raec_v6.signals.vol_percentile import compute_vol_percentile
+from strategies.raec_v6.signals.yield_curve import compute_yield_curve_signal
+from strategies.raec_v6.strategies.bond_carry import BondCarry
+from strategies.raec_v6.strategies.crisis_alpha import CrisisAlpha
 from strategies.raec_v6.strategies.cross_asset_trend import CrossAssetTrend
+from strategies.raec_v6.strategies.crypto_trend import CryptoTrend
 from strategies.raec_v6.strategies.equity_leveraged_momentum import (
     EquityLeveragedMomentum,
     _RISK_UNIVERSE as EQUITY_LEV_UNIVERSE,
@@ -56,6 +64,10 @@ from strategies.raec_v6.strategies.thematic_conviction import ThematicConviction
 # - equity-leveraged universe (broad + leveraged + sector + leveraged sector)
 # - all sectors (for SectorRelativeStrength)
 # - all themes (for ThematicConviction)
+# - bond universe (for BondCarry)
+# - crypto + crypto_inverse (for CryptoTrend)
+# - inverse_equity + metal (for CrisisAlpha)
+# - ^VIX for vix_implied signal
 # - SPY benchmark + cash equivalent BIL
 _BT_SYMBOLS: tuple[str, ...] = tuple(
     sorted(
@@ -63,7 +75,16 @@ _BT_SYMBOLS: tuple[str, ...] = tuple(
         | set(EQUITY_LEV_UNIVERSE)
         | set(ac.get_symbols_in_class("sector"))
         | set(ac.get_symbols_in_class("theme"))
-        | {"SPY", "BIL"}
+        | set(ac.get_symbols_in_class("bond_short"))
+        | set(ac.get_symbols_in_class("bond_mid"))
+        | set(ac.get_symbols_in_class("bond_long"))
+        | set(ac.get_symbols_in_class("bond_inverse"))
+        | set(ac.get_symbols_in_class("credit"))
+        | set(ac.get_symbols_in_class("crypto"))
+        | set(ac.get_symbols_in_class("crypto_inverse"))
+        | set(ac.get_symbols_in_class("inverse_equity"))
+        | set(ac.get_symbols_in_class("metal"))
+        | {"SPY", "BIL", "^VIX"}
     )
 )
 
@@ -153,6 +174,9 @@ def run_backtest(
         EquityLeveragedMomentum(top_k=5),
         SectorRelativeStrength(top_k=4),
         ThematicConviction(top_k=3),
+        BondCarry(),
+        CryptoTrend(),
+        CrisisAlpha(),
     ]
     strategy_ids = [s.manifest.strategy_id for s in strategies]
 
@@ -206,16 +230,26 @@ def run_backtest(
         # Build signals.
         trend = compute_cross_asset_trend(provider, asof)
         spy_vol = _spy_realized_vol_60d(provider, asof)
-        # Vol percentile for SPY (used by EquityLeveragedMomentum's leverage gate).
+        # Vol percentile for SPY (used by EquityLeveragedMomentum + CrisisAlpha gates).
         vol_pct = compute_vol_percentile(provider, ["SPY"], asof)
+        # Cross-asset structural signals.
+        yc_signal = compute_yield_curve_signal(provider, asof)
+        cs_signal = compute_credit_spread_signal(provider, asof)
+        vix_v = compute_vix_implied(provider, asof) or 0.0
+        # Regime label (lightweight, matches E1 classifier thresholds).
+        spy_series = provider.get_daily_close_series("SPY")
+        spy_closes_at = [c for d, c in spy_series if d <= asof]
+        regime_label, regime_conf = classify_from_spy_closes(spy_closes_at)
         state = SignalState(
             asof_date=asof,
-            regime_label="UNKNOWN",  # E1 not wired into backtest yet
-            regime_confidence=0.0,
+            regime_label=regime_label,
+            regime_confidence=regime_conf,
             cross_asset_trend=trend,
             vol_percentile_252d=vol_pct,
             spy_realized_vol_60d=spy_vol,
-            vix_implied=0.0,  # backtest skips VIX
+            vix_implied=vix_v,
+            yield_curve_signal=yc_signal,
+            credit_spread_signal=cs_signal,
         )
 
         # Call strategies.
@@ -263,7 +297,7 @@ def run_backtest(
         overlay = apply_overlay(
             book_targets=alloc.book_targets,
             spy_realized_vol_60d=spy_vol,
-            vix_implied=0.0,  # Phase A: skipped
+            vix_implied=vix_v,
             portfolio_daily_returns=book.daily_returns[-60:],
             per_symbol_daily_returns=per_symbol_returns,
             equity_curve=book.equity_curve,
@@ -357,6 +391,52 @@ def run_backtest(
         except Exception as exc:
             summary["deflated_sharpe_p_value"] = None
             summary["deflated_sharpe_error"] = str(exc)
+
+    # CPCV walk-forward validation. Per plan §exit criterion for Phase C:
+    # "CPCV out-of-sample test is the headline metric, not in-sample Sharpe."
+    # For deterministic strategies (no per-fold model retraining), CPCV
+    # collapses to "compute Sharpe on each fold's test_dates and aggregate."
+    # This catches Sharpes that are driven by a single regime — if the OOS
+    # Sharpe is uniformly positive across folds, the system is genuinely
+    # robust; if it's driven by 1-2 outlier folds, that's overfit.
+    if book.asof_history and len(book.asof_history) >= 100:
+        try:
+            cpcv_splits = generate_cpcv_splits(
+                trading_days=book.asof_history,
+                n_groups=6,
+                k_test_groups=2,
+                purge_days=5,
+                embargo_days=3,
+            )
+            asof_to_ret = {
+                d: r for d, r in zip(book.asof_history, book.daily_returns)
+            }
+            oos_sharpes: list[float] = []
+            for split in cpcv_splits:
+                test = split["test_dates"]
+                rs = [asof_to_ret[d] for d in test if d in asof_to_ret]
+                if len(rs) < 10:
+                    continue
+                m = sum(rs) / len(rs)
+                v = sum((r - m) ** 2 for r in rs) / (len(rs) - 1)
+                sd = math.sqrt(v) if v > 0 else 0.0
+                if sd > 0:
+                    oos_sharpes.append(m / sd * math.sqrt(252))
+            if oos_sharpes:
+                mean_oos = sum(oos_sharpes) / len(oos_sharpes)
+                var_oos = sum((s - mean_oos) ** 2 for s in oos_sharpes) / max(
+                    1, len(oos_sharpes) - 1
+                )
+                summary["cpcv_n_splits"] = len(oos_sharpes)
+                summary["cpcv_mean_oos_sharpe"] = mean_oos
+                summary["cpcv_std_oos_sharpe"] = math.sqrt(var_oos) if var_oos > 0 else 0.0
+                summary["cpcv_min_oos_sharpe"] = min(oos_sharpes)
+                summary["cpcv_max_oos_sharpe"] = max(oos_sharpes)
+                summary["cpcv_positive_fraction"] = (
+                    sum(1 for s in oos_sharpes if s > 0) / len(oos_sharpes)
+                )
+        except Exception as exc:
+            summary["cpcv_error"] = str(exc)
 
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)

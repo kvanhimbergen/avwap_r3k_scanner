@@ -43,3 +43,13 @@ class SignalState:
     # VIX-implied vol (decimal, e.g. 0.20 = VIX of 20).
     # Used by the overlay as the leading-indicator component of the vol forecast.
     vix_implied: float = 0.0
+
+    # Yield-curve / duration signal. Positive = duration favorable
+    # (TLT/EDV); negative = inverse-treasury (TBT) or short-end (SHY).
+    # Scale roughly [-3, +3]. None if no data.
+    yield_curve_signal: float | None = None
+
+    # Credit-spread direction. Positive = HYG outperforming IEF =
+    # spreads tightening / credit favorable. Negative = spreads widening
+    # / credit stress. Scale roughly [-3, +3]. None if no data.
+    credit_spread_signal: float | None = None
