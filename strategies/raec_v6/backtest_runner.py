@@ -28,7 +28,9 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterable
 
+from analytics.deflated_sharpe import deflated_sharpe_ratio
 from data.prices import FixturePriceProvider, get_default_price_provider
+from strategies.raec_v6 import asset_classes as ac
 from strategies.raec_v6.allocator import allocate
 from strategies.raec_v6.overlay import apply_overlay
 from strategies.raec_v6.shadow_book import ShadowBook
@@ -39,11 +41,31 @@ from strategies.raec_v6.signals.cross_asset_trend import (
 )
 from strategies.raec_v6.signals.vol_percentile import compute_vol_percentile
 from strategies.raec_v6.strategies.cross_asset_trend import CrossAssetTrend
+from strategies.raec_v6.strategies.equity_leveraged_momentum import (
+    EquityLeveragedMomentum,
+    _RISK_UNIVERSE as EQUITY_LEV_UNIVERSE,
+)
+from strategies.raec_v6.strategies.sector_relative_strength import (
+    SectorRelativeStrength,
+)
+from strategies.raec_v6.strategies.thematic_conviction import ThematicConviction
 
 
-# Symbols the Phase A backtest needs prices for: representative ETFs of
-# each tracked asset class + SPY benchmark + cash equivalent BIL.
-PHASE_A_SYMBOLS: tuple[str, ...] = tuple(REPRESENTATIVES.values()) + ("SPY", "BIL")
+# Symbols the backtest needs prices for:
+# - representative ETFs of each tracked asset class (cross-asset trend)
+# - equity-leveraged universe (broad + leveraged + sector + leveraged sector)
+# - all sectors (for SectorRelativeStrength)
+# - all themes (for ThematicConviction)
+# - SPY benchmark + cash equivalent BIL
+_BT_SYMBOLS: tuple[str, ...] = tuple(
+    sorted(
+        set(REPRESENTATIVES.values())
+        | set(EQUITY_LEV_UNIVERSE)
+        | set(ac.get_symbols_in_class("sector"))
+        | set(ac.get_symbols_in_class("theme"))
+        | {"SPY", "BIL"}
+    )
+)
 
 
 def _prefetch_prices(
@@ -121,15 +143,26 @@ def run_backtest(
     out_dir: Path | None = None,
 ) -> dict:
     """Run the v6 backtest. Returns a summary dict; writes CSV/JSON if out_dir given."""
-    provider = _prefetch_prices(PHASE_A_SYMBOLS)
+    provider = _prefetch_prices(_BT_SYMBOLS)
     book = ShadowBook(starting_cash=starting_cash, slippage_bps=5.0)
     spy_curve: list[float] = []  # SPY equity curve for benchmark
     spy_shares: float | None = None
 
-    strategies = [CrossAssetTrend(top_k=4)]
+    strategies = [
+        CrossAssetTrend(top_k=4),
+        EquityLeveragedMomentum(top_k=5),
+        SectorRelativeStrength(top_k=4),
+        ThematicConviction(top_k=3),
+    ]
     strategy_ids = [s.manifest.strategy_id for s in strategies]
 
     prior_strategy_shares: dict[str, float] = {sid: 0.0 for sid in strategy_ids}
+    # Per-strategy daily returns (for correlation derate). Updated each step
+    # from the prior day's strategy_shares × per-symbol returns.
+    strategy_returns: dict[str, list[float]] = {sid: [] for sid in strategy_ids}
+    # Per-strategy yesterday's contribution (symbol -> notional weight). Used
+    # to compute today's strategy return as Σ_sym weight × symbol_daily_return.
+    prior_contributions: dict[str, dict[str, float]] = {sid: {} for sid in strategy_ids}
     dd_breaker_active = False
     freeze_days_remaining = 0
 
@@ -152,17 +185,37 @@ def run_backtest(
             spy_shares = starting_cash / spy_px
         spy_curve.append(spy_shares * spy_px)
 
+        # Per-symbol daily return: today vs prior trading day.
+        # Used both to update strategy_returns (from prior_contributions) and
+        # by the overlay's per-symbol vol estimate.
+        # We compute a single daily return for each symbol the strategies
+        # might care about, then use it.
+        symbol_daily_returns: dict[str, float] = {}
+        for sym in set().union(*(prior_contributions[sid].keys() for sid in strategy_ids)):
+            ret_window = _daily_returns_window(provider, sym, asof, 2)
+            if ret_window:
+                symbol_daily_returns[sym] = ret_window[-1]
+
+        # Update per-strategy daily return: Σ_sym weight × symbol_return.
+        for sid in strategy_ids:
+            r = 0.0
+            for sym, w in prior_contributions[sid].items():
+                r += w * symbol_daily_returns.get(sym, 0.0)
+            strategy_returns[sid].append(r)
+
         # Build signals.
         trend = compute_cross_asset_trend(provider, asof)
         spy_vol = _spy_realized_vol_60d(provider, asof)
+        # Vol percentile for SPY (used by EquityLeveragedMomentum's leverage gate).
+        vol_pct = compute_vol_percentile(provider, ["SPY"], asof)
         state = SignalState(
             asof_date=asof,
-            regime_label="UNKNOWN",  # E1 not used in Phase A
+            regime_label="UNKNOWN",  # E1 not wired into backtest yet
             regime_confidence=0.0,
             cross_asset_trend=trend,
-            vol_percentile_252d={},  # not used in Phase A allocator
+            vol_percentile_252d=vol_pct,
             spy_realized_vol_60d=spy_vol,
-            vix_implied=0.0,  # not used in Phase A
+            vix_implied=0.0,  # backtest skips VIX
         )
 
         # Call strategies.
@@ -175,14 +228,33 @@ def run_backtest(
             except Exception:
                 outputs[strat.manifest.strategy_id] = None
 
-        # Allocate.
+        # Allocate (correlation derate only kicks in once strategies have ≥30d).
+        has_history = {
+            sid: len(strategy_returns[sid]) >= 20 for sid in strategy_ids
+        }
+        # Build recent Sharpe per strategy (60d rolling).
+        recent_sharpes = {}
+        for sid in strategy_ids:
+            rets = strategy_returns[sid][-60:]
+            if len(rets) >= 20:
+                m = sum(rets) / len(rets)
+                v = sum((r - m) ** 2 for r in rets) / (len(rets) - 1)
+                import math as _m
+                sd = _m.sqrt(v) if v > 0 else 0.0
+                if sd > 0:
+                    recent_sharpes[sid] = m / sd * _m.sqrt(252)
+
         alloc = allocate(
             outputs=outputs,
-            recent_sharpes={},  # no live history yet during backtest day-1
-            has_live_history={sid: False for sid in strategy_ids},
+            recent_sharpes=recent_sharpes,
+            has_live_history=has_history,
             prior_shares=prior_strategy_shares,
+            strategy_returns=strategy_returns,
         )
         prior_strategy_shares = dict(alloc.strategy_shares)
+        prior_contributions = {
+            sid: dict(alloc.contributions.get(sid, {})) for sid in strategy_ids
+        }
 
         # Overlay (vol scale + DD breaker + shock detector).
         per_symbol_returns: dict[str, list[float]] = {}
@@ -253,6 +325,38 @@ def run_backtest(
         spy_total = 0.0
     summary["spy_total_return"] = spy_total
     summary["alpha_vs_spy"] = summary.get("total_return", 0.0) - spy_total
+
+    # Deflated Sharpe (Bailey & Lopez de Prado).
+    # n_trials = number of strategies tested in the ensemble; each strategy
+    # we shipped was effectively one configuration trial. As we add tuning
+    # variants during Phase B/C, this number should grow — the user is
+    # responsible for tracking that off-band; the default reflects the
+    # ensemble size as a lower bound.
+    sharpe = summary.get("sharpe", 0.0)
+    n_trading_days = summary.get("n_trading_days", 0)
+    if book.daily_returns and n_trading_days > 30:
+        rs = book.daily_returns
+        mean = sum(rs) / len(rs)
+        var = sum((r - mean) ** 2 for r in rs) / (len(rs) - 1)
+        # Variance of Sharpe ratio across trials (use the var of returns
+        # as a proxy when there's no panel of trials; DSR docs note this
+        # is a conservative approximation when the panel isn't available).
+        # We pass var of the strategy's own daily returns × 252 as a
+        # rough estimate of cross-trial Sharpe variance.
+        variance_sharpe = max(var * 252, 1e-6)
+        n_trials = max(1, len(strategy_ids))
+        try:
+            p = deflated_sharpe_ratio(
+                observed_sharpe=sharpe,
+                n_trials=n_trials,
+                variance_sharpe=variance_sharpe,
+                T=n_trading_days,
+            )
+            summary["deflated_sharpe_p_value"] = p
+            summary["deflated_sharpe_n_trials"] = n_trials
+        except Exception as exc:
+            summary["deflated_sharpe_p_value"] = None
+            summary["deflated_sharpe_error"] = str(exc)
 
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)

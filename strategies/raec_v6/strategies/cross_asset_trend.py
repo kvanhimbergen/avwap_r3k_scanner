@@ -148,9 +148,9 @@ class CrossAssetTrend(BaseStrategyV6):
         # If 4 classes have similar scores, dispersion is low → conviction
         # modest but positive (we still want to be invested, just less
         # confident in any single one).
-        scores = [s for _, s in picked]
-        score_top = max(scores)
-        score_mid = sorted(scores)[len(scores) // 2]
+        scores = sorted([s for _, s in picked])
+        score_top = scores[-1]
+        score_mid = scores[(len(scores) - 1) // 2]
         dispersion = score_top - score_mid
         # Squash to [0, 1] via sigmoid centered around dispersion=2.
         conviction = 1.0 / (1.0 + math.exp(-(dispersion - 2.0)))

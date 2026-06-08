@@ -53,6 +53,75 @@ def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
 
 
+def _pairwise_correlation(a: list[float], b: list[float]) -> float | None:
+    """Pearson correlation; None if either series has 0 variance or <5 points."""
+    n = min(len(a), len(b))
+    if n < 5:
+        return None
+    aa, bb = a[-n:], b[-n:]
+    ma = sum(aa) / n
+    mb = sum(bb) / n
+    da = [x - ma for x in aa]
+    db = [x - mb for x in bb]
+    cov = sum(x * y for x, y in zip(da, db))
+    va = sum(x * x for x in da)
+    vb = sum(x * x for x in db)
+    if va <= 0 or vb <= 0:
+        return None
+    return cov / math.sqrt(va * vb)
+
+
+def _correlation_derate(
+    raw_inv: Mapping[str, float],
+    strategy_returns: Mapping[str, list[float]] | None,
+    *,
+    lookback: int = 60,
+    threshold: float = 0.7,
+    floor: float = 0.5,
+) -> dict[str, float]:
+    """Down-scale highly-correlated strategies' risk-parity base share.
+
+    For each strategy, compute its average pairwise correlation with the
+    others (over the most recent `lookback` days). If avg corr > threshold,
+    scale raw_inv[s] by `max(floor, 1 - (avg_corr - threshold))`.
+
+    Strategies with <30 days of history don't participate (they neither
+    derate nor get derated by others — too noisy to estimate correlation).
+    """
+    out = dict(raw_inv)
+    if not strategy_returns or len(strategy_returns) < 2:
+        return out
+    eligible = {
+        sid: rets[-lookback:]
+        for sid, rets in strategy_returns.items()
+        if sid in raw_inv and len(rets) >= 30
+    }
+    if len(eligible) < 2:
+        return out
+
+    # Compute pairwise correlation matrix.
+    corr: dict[str, dict[str, float]] = {sid: {} for sid in eligible}
+    sids = list(eligible)
+    for i, a_sid in enumerate(sids):
+        for b_sid in sids[i + 1 :]:
+            c = _pairwise_correlation(eligible[a_sid], eligible[b_sid])
+            if c is None:
+                continue
+            corr[a_sid][b_sid] = c
+            corr[b_sid][a_sid] = c
+
+    # Per-strategy: avg correlation with eligible others; haircut if > threshold.
+    for sid in eligible:
+        peers = [c for c in corr[sid].values()]
+        if not peers:
+            continue
+        avg = sum(peers) / len(peers)
+        if avg > threshold:
+            haircut = max(floor, 1.0 - (avg - threshold))
+            out[sid] = out[sid] * haircut
+    return out
+
+
 def _skill_tilt(
     *,
     recent_sharpe: float | None,
@@ -80,8 +149,11 @@ def allocate(
     recent_sharpes: Mapping[str, float] | None = None,
     has_live_history: Mapping[str, bool] | None = None,
     prior_shares: Mapping[str, float] | None = None,
+    strategy_returns: Mapping[str, list[float]] | None = None,
     turnover_damper_per_day: float = 0.05,
     per_symbol_cap: float = 0.25,
+    correlation_threshold: float = 0.7,
+    correlation_lookback: int = 60,
 ) -> AllocatorResult:
     """Combine strategy outputs into a single book target.
 
@@ -119,18 +191,42 @@ def allocate(
 
     # Risk parity base: 1/vol normalized. Strategies with vol<=0 are treated
     # as 0-share (allocator can't size them; they go to cash residual).
-    raw_inv: dict[str, float] = {}
+    raw_inv_base: dict[str, float] = {}
     for sid, out in valid.items():
         if out.realized_vol_60d > 0:
-            raw_inv[sid] = 1.0 / out.realized_vol_60d
+            raw_inv_base[sid] = 1.0 / out.realized_vol_60d
         else:
-            raw_inv[sid] = 0.0
+            raw_inv_base[sid] = 0.0
+
+    # Correlation derate: down-scale strategies that are highly correlated
+    # with others over the trailing window. Two correlated strategies
+    # double-count their exposure; the haircut prevents the allocator from
+    # treating them as independent diversifiers. The derate is applied AFTER
+    # the baseline is computed so that the total allocator commitment
+    # genuinely shrinks (not just rebalances) when strategies are correlated.
+    raw_inv = _correlation_derate(
+        raw_inv_base,
+        strategy_returns,
+        lookback=correlation_lookback,
+        threshold=correlation_threshold,
+    )
 
     # Apply gate, conviction tilt, skill tilt.
+    # We compute two parallel sums:
+    #   - baseline_weighted uses raw_inv_base (no derate). Total of this is
+    #     what the allocator WOULD have committed if strategies were
+    #     uncorrelated.
+    #   - weighted uses raw_inv (with derate). Total of this is what the
+    #     allocator commits given observed correlations.
+    # Normalizing by baseline_total (not by total_weighted) preserves the
+    # derate: correlated strategies see their shares drop in absolute terms
+    # and the difference flows to the cash residual.
     weighted: dict[str, float] = {}
+    baseline_weighted: dict[str, float] = {}
     for sid, out in valid.items():
         if raw_inv[sid] <= 0:
             weighted[sid] = 0.0
+            baseline_weighted[sid] = 0.0
             continue
         gate = out.regime_gate
         conv_tilt = 0.5 + 0.5 * out.conviction
@@ -140,9 +236,10 @@ def allocate(
             has_live_history=has_live_history.get(sid, False),
         )
         weighted[sid] = raw_inv[sid] * gate * conv_tilt * skill
+        baseline_weighted[sid] = raw_inv_base[sid] * gate * conv_tilt * skill
 
-    total_weighted = sum(weighted.values())
-    if total_weighted <= 0:
+    baseline_total = sum(baseline_weighted.values())
+    if baseline_total <= 0:
         # Every strategy is either off or zero-vol. Route everything to cash.
         return AllocatorResult(
             book_targets={},
@@ -150,8 +247,9 @@ def allocate(
             failed_strategies=tuple(failed),
         )
 
-    # Pre-cap shares.
-    pre_cap = {sid: w / total_weighted for sid, w in weighted.items()}
+    # Pre-cap shares: normalize by baseline_total so the derate genuinely
+    # reduces total commitment (the missing fraction goes to cash residual).
+    pre_cap = {sid: w / baseline_total for sid, w in weighted.items()}
 
     # Apply per-strategy max_share_cap from manifest, then renormalize.
     # Strategies that get capped contribute their cap; un-capped strategies
