@@ -14,15 +14,9 @@ vi.mock("../api", () => ({
   },
 }));
 
-import { ExecutionPage } from "../pages/ExecutionPage";
 import { BlotterPage } from "../pages/BlotterPage";
 
 describe("Phase 4 pages render without crashing", () => {
-  it("ExecutionPage", async () => {
-    render(<MemoryRouter><ExecutionPage /></MemoryRouter>);
-    expect(screen.getByText("Execution")).toBeInTheDocument();
-  });
-
   it("BlotterPage", async () => {
     render(<MemoryRouter><BlotterPage /></MemoryRouter>);
     expect(screen.getByText("Blotter")).toBeInTheDocument();

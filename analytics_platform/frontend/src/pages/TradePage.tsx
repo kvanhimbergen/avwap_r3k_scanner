@@ -27,7 +27,8 @@ function todayNY(): string {
 }
 
 export function TradePage() {
-  const trades = usePolling(() => api.todaysTrades({ date: todayNY() }), 30_000);
+  const date = todayNY();
+  const trades = usePolling(() => api.todaysTrades({ date }), 30_000);
 
   const data = (trades.data?.data ?? {}) as Record<string, unknown>;
   const coordinator = data.coordinator as Record<string, unknown> | null;

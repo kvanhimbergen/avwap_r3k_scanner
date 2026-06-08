@@ -14,5 +14,6 @@
     "strict": true,
     "types": ["vite/client", "vitest/globals"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/_deprecated"]
 }

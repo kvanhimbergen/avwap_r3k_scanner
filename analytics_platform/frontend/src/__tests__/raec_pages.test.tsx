@@ -15,20 +15,34 @@ vi.mock("../api", () => ({
     portfolioOverview: vi.fn().mockResolvedValue({ data: {} }),
     freshness: vi.fn().mockResolvedValue({ data: { rows: [] } }),
     health: vi.fn().mockResolvedValue({ data: {} }),
+    raecDashboard: vi.fn().mockResolvedValue({ data: {} }),
   },
 }));
 
 import { RiskPage } from "../pages/RiskPage";
 import { SystemPage } from "../pages/SystemPage";
+import { LayoutDataProvider } from "../context/LayoutDataContext";
 
 describe("Phase 4 consolidated pages render without crashing", () => {
   it("RiskPage (expanded risk monitor)", async () => {
-    render(<MemoryRouter><RiskPage /></MemoryRouter>);
+    render(
+      <MemoryRouter>
+        <LayoutDataProvider>
+          <RiskPage />
+        </LayoutDataProvider>
+      </MemoryRouter>,
+    );
     expect(screen.getByText(/risk monitor/i)).toBeInTheDocument();
   });
 
   it("SystemPage (ops/system)", async () => {
-    render(<MemoryRouter><SystemPage /></MemoryRouter>);
+    render(
+      <MemoryRouter>
+        <LayoutDataProvider>
+          <SystemPage />
+        </LayoutDataProvider>
+      </MemoryRouter>,
+    );
     expect(screen.getByText("System & Operations")).toBeInTheDocument();
   });
 });
