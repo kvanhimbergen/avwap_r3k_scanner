@@ -34,6 +34,29 @@ export interface FreshnessRow {
   last_error: string | null;
 }
 
+/** Drawdown point used by both HorizonProjection and the upcoming
+ *  DrawdownChart. peak-to-current %, always <= 0. */
+export interface DrawdownPoint {
+  date: string;
+  dd_pct: number;
+}
+
+/** Where am I vs the destination at retirement? Backed by
+ *  GET /api/v1/horizon-projection. */
+export interface HorizonProjection {
+  current_age: number;
+  retirement_age: number;
+  years_to_retirement: number;
+  current_balance: number;
+  trailing_cagr: number | null;
+  projected_at_retirement: number | null;
+  goal_balance: number;
+  goal_pct: number | null;
+  verdict: "ON TRACK" | "BEHIND" | "AHEAD" | null;
+  dd_series: DrawdownPoint[];
+  as_of_date: string | null;
+}
+
 /** Narrative summary of the current system state for the Command Center.
  *  Backed by GET /api/v1/regime-narrative. */
 export interface RegimeNarrative {

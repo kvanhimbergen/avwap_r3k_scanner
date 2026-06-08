@@ -193,6 +193,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload = queries.get_regime_narrative(conn)
         return _envelope(runtime, payload)
 
+    @app.get("/api/v1/horizon-projection")
+    def horizon_projection() -> dict:
+        """Where am I vs the destination at 65? Powers the HorizonCard."""
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_horizon_projection(conn)
+        return _envelope(runtime, payload)
+
     @app.get("/api/v1/overview")
     def overview(
         start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),

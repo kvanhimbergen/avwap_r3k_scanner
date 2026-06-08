@@ -7,7 +7,7 @@ import { Link } from "react-router-dom";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, PieChart, Pie, Cell } from "recharts";
 
 import { api } from "../api";
-import { StatCard } from "../components/StatCard";
+import { HorizonCard } from "../components/HorizonCard";
 import { TodayStateCard } from "../components/TodayStateCard";
 import { StatusBadge, RegimeBadge } from "../components/Badge";
 import { SkeletonCard } from "../components/Skeleton";
@@ -15,7 +15,7 @@ import { ErrorState } from "../components/ErrorState";
 import { useLayoutData } from "../context/LayoutDataContext";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { usePolling } from "../hooks/usePolling";
-import { formatCurrency, formatPercent, pnlColor } from "../lib/format";
+import { formatCurrency, pnlColor } from "../lib/format";
 import { getMeta, regimeColor } from "../lib/strategies";
 import type {
   KeyValue,
@@ -56,6 +56,7 @@ export function CommandCenter() {
   const trades = usePolling(() => api.todaysTrades({ date: todayNY() }), 30_000);
   const tradeLog = usePolling(() => api.tradeLogSummary(), 60_000);
   const regimeNarrative = usePolling(() => api.regimeNarrative(), 60_000);
+  const horizon = usePolling(() => api.horizonProjection(), 60_000);
 
   // Extract data
   const schwabData = schwab.data?.data as Record<string, unknown> | undefined;
@@ -159,24 +160,9 @@ export function CommandCenter() {
 
   return (
     <div className="space-y-4 h-full">
-      {/* Row 1: Hero Strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          label="Account Value"
-          value={latestAccount?.total_value != null ? formatCurrency(latestAccount.total_value, 0) : "\u2014"}
-          subtitle={latestAccount?.ny_date ? `as of ${latestAccount.ny_date}` : undefined}
-        />
-        <StatCard
-          label="Return"
-          value={perfData?.metrics.portfolio_return != null ? formatPercent(perfData.metrics.portfolio_return) : "\u2014"}
-          numericValue={perfData?.metrics.portfolio_return}
-          subtitle={perfData?.metrics.start_date ? `since ${perfData.metrics.start_date}` : undefined}
-        />
-        <StatCard
-          label="vs SPY"
-          value={perfData?.metrics.excess_vs_spy != null ? formatPercent(perfData.metrics.excess_vs_spy) : "\u2014"}
-          numericValue={perfData?.metrics.excess_vs_spy}
-        />
+      {/* Row 1: Horizon (2/3) + Today's State (1/3) \u2014 answers "am I on track" + "what is the system doing" */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <HorizonCard data={horizon.data?.data} className="lg:col-span-2" />
         <TodayStateCard data={regimeNarrative.data?.data} />
       </div>
 

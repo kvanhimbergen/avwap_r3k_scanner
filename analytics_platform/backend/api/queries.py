@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -2237,6 +2238,117 @@ def _read_strategy_state(repo_root: Path, filename: str) -> dict[str, Any]:
 _HEDGE_SYMBOLS = {"PSQ", "SH", "SDS", "SQQQ"}
 _LEVERAGED_SYMBOLS = {"TQQQ", "SOXL", "UPRO", "TECL", "FNGU", "NVDL"}
 _LEVERAGED_CAP_PCT = 15.0  # mirrors strategies/raec_401k_v3.py max_leveraged_pct
+
+# Investor horizon — edit these constants for now; promote to env vars or a
+# user-settings table when more than one operator is on the system.
+_INVESTOR_CURRENT_AGE = 51
+_INVESTOR_RETIREMENT_AGE = 65
+_INVESTOR_GOAL_BALANCE_USD = 1_500_000.0
+
+
+def _balance_history(conn) -> list[dict[str, Any]]:
+    return _rows(
+        conn,
+        """
+        SELECT ny_date, total_value
+        FROM schwab_account_snapshots
+        ORDER BY ny_date ASC
+        """,
+    )
+
+
+def _annualized_return(history: list[dict[str, Any]]) -> float | None:
+    """Annualized return computed from first vs last snapshot.
+
+    Returns None when there's not enough history or the math degenerates.
+    """
+    if len(history) < 2:
+        return None
+    first = history[0]
+    last = history[-1]
+    try:
+        start_val = float(first.get("total_value") or 0.0)
+        end_val = float(last.get("total_value") or 0.0)
+        if start_val <= 0 or end_val <= 0:
+            return None
+        start_date = first.get("ny_date")
+        end_date = last.get("ny_date")
+        if not start_date or not end_date:
+            return None
+        days = (
+            datetime.strptime(end_date, "%Y-%m-%d").date()
+            - datetime.strptime(start_date, "%Y-%m-%d").date()
+        ).days
+        if days < 30:
+            return None
+        years = days / 365.25
+        return (end_val / start_val) ** (1.0 / years) - 1.0
+    except (ValueError, TypeError, ZeroDivisionError):
+        return None
+
+
+def _drawdown_series(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return [{date, dd_pct}] — peak-to-current drawdown in percent."""
+    peak = 0.0
+    out: list[dict[str, Any]] = []
+    for row in history:
+        val = float(row.get("total_value") or 0.0)
+        if val <= 0:
+            continue
+        peak = max(peak, val)
+        dd = (val / peak - 1.0) if peak > 0 else 0.0
+        out.append({"date": row.get("ny_date"), "dd_pct": round(dd * 100, 3)})
+    return out
+
+
+def get_horizon_projection(conn) -> dict[str, Any]:
+    """Anchor the dashboard in destination terms: years to retirement,
+    current balance, projected balance, goal, and an on-track verdict.
+
+    Backing data: schwab_account_snapshots history. Returns a stable shape
+    even when history is sparse — the caller renders "unavailable" cells
+    rather than crashing.
+    """
+    history = _balance_history(conn)
+    current_balance = (
+        float(history[-1].get("total_value") or 0.0) if history else 0.0
+    )
+    cagr = _annualized_return(history)
+    years_to_retirement = max(0, _INVESTOR_RETIREMENT_AGE - _INVESTOR_CURRENT_AGE)
+
+    projected_at_retirement: float | None = None
+    if cagr is not None and current_balance > 0:
+        projected_at_retirement = current_balance * ((1.0 + cagr) ** years_to_retirement)
+
+    goal_balance = _INVESTOR_GOAL_BALANCE_USD
+    goal_pct: float | None = None
+    verdict: str | None = None
+    if projected_at_retirement is not None and goal_balance > 0:
+        goal_pct = projected_at_retirement / goal_balance
+        if goal_pct >= 1.05:
+            verdict = "AHEAD"
+        elif goal_pct >= 0.95:
+            verdict = "ON TRACK"
+        else:
+            verdict = "BEHIND"
+
+    return {
+        "current_age": _INVESTOR_CURRENT_AGE,
+        "retirement_age": _INVESTOR_RETIREMENT_AGE,
+        "years_to_retirement": years_to_retirement,
+        "current_balance": round(current_balance, 2),
+        "trailing_cagr": round(cagr, 4) if cagr is not None else None,
+        "projected_at_retirement": (
+            round(projected_at_retirement, 2)
+            if projected_at_retirement is not None
+            else None
+        ),
+        "goal_balance": goal_balance,
+        "goal_pct": round(goal_pct, 3) if goal_pct is not None else None,
+        "verdict": verdict,
+        "dd_series": _drawdown_series(history),
+        "as_of_date": history[-1].get("ny_date") if history else None,
+    }
 
 
 def get_regime_narrative(conn) -> dict[str, Any]:
