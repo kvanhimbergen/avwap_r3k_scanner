@@ -41,6 +41,25 @@ export interface DrawdownPoint {
   dd_pct: number;
 }
 
+/** One row of the SleeveHealthTable. Backed by /api/v1/sub-strategy-dd. */
+export interface SleeveDDRow {
+  key: string;
+  allocation_pct: number;
+  days: number;
+  final_equity: number;
+  peak_equity: number;
+  current_dd: number;
+  max_dd: number;
+  max_dd_date: string | null;
+  contribution_to_book_max_dd: number;
+}
+
+export interface SubStrategyDD {
+  sleeves: SleeveDDRow[];
+  book_max_dd_contribution_sum: number;
+  error: string | null;
+}
+
 /** Where am I vs the destination at retirement? Backed by
  *  GET /api/v1/horizon-projection. */
 export interface HorizonProjection {

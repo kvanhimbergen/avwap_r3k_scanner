@@ -8,6 +8,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceL
 
 import { api } from "../api";
 import { HorizonCard } from "../components/HorizonCard";
+import { SleeveHealthTable } from "../components/SleeveHealthTable";
 import { TodayStateCard } from "../components/TodayStateCard";
 import { StatusBadge, RegimeBadge } from "../components/Badge";
 import { SkeletonCard } from "../components/Skeleton";
@@ -57,6 +58,7 @@ export function CommandCenter() {
   const tradeLog = usePolling(() => api.tradeLogSummary(), 60_000);
   const regimeNarrative = usePolling(() => api.regimeNarrative(), 60_000);
   const horizon = usePolling(() => api.horizonProjection(), 60_000);
+  const sleeveDD = usePolling(() => api.subStrategyDD(), 60_000);
 
   // Extract data
   const schwabData = schwab.data?.data as Record<string, unknown> | undefined;
@@ -314,7 +316,10 @@ export function CommandCenter() {
         </div>
       </div>
 
-      {/* Row 3: Rebalance Snapshot + Alpaca Paper */}
+      {/* Row 3: Per-sleeve health — surfaces analytics/strategy_dd_report.py */}
+      <SleeveHealthTable data={sleeveDD.data?.data} />
+
+      {/* Row 4: Rebalance Snapshot + Alpaca Paper */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         {/* Rebalance Snapshot (60%) */}
         <div className="lg:col-span-3 bg-vantage-card border border-vantage-border rounded-lg p-4">

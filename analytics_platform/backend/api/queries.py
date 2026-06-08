@@ -2460,6 +2460,70 @@ def get_regime_narrative(conn) -> dict[str, Any]:
     }
 
 
+def get_sub_strategy_dd(conn, repo_root: Path) -> dict[str, Any]:
+    """Return per-sub-strategy drawdown report for the SleeveHealthTable.
+
+    Wraps ``analytics.strategy_dd_report.generate_report`` so the report's
+    sleeve-level peak/current/max DD computation lives in exactly one
+    place — the same module that backs the CLI ``python -m
+    analytics.strategy_dd_report``. The capital split comes from the
+    latest coordinator run so the table can show each sleeve's
+    contribution to book-level drawdown.
+    """
+    _ = conn  # unused — the report reads ledger JSONL directly
+    try:
+        from analytics.strategy_dd_report import generate_report
+    except Exception as exc:
+        return {"sleeves": [], "book_max_dd": None, "error": str(exc)}
+
+    try:
+        reports = generate_report(repo_root=repo_root)
+    except Exception as exc:
+        return {"sleeves": [], "book_max_dd": None, "error": str(exc)}
+
+    # Pull the most recent capital split + book max DD so we can compute
+    # each sleeve's contribution to book drawdown (capital_share × sleeve_dd).
+    split: dict[str, float] = {}
+    try:
+        coord_rows = _rows(
+            conn,
+            """
+            SELECT capital_split_json
+            FROM raec_coordinator_runs
+            ORDER BY ny_date DESC, ts_utc DESC
+            LIMIT 1
+            """,
+        )
+        if coord_rows:
+            split = json.loads(coord_rows[0].get("capital_split_json") or "{}")
+    except Exception:
+        split = {}
+
+    sleeves = []
+    book_dd_contrib = 0.0
+    for r in reports:
+        share = float(split.get(r.key, 0.0))
+        contribution = share * r.max_dd
+        book_dd_contrib += contribution
+        sleeves.append({
+            "key": r.key,
+            "allocation_pct": round(share * 100, 1),
+            "days": r.days,
+            "final_equity": round(r.final_equity, 4),
+            "peak_equity": round(r.peak_equity, 4),
+            "current_dd": round(r.current_dd, 4),
+            "max_dd": round(r.max_dd, 4),
+            "max_dd_date": r.max_dd_date.isoformat() if r.max_dd_date else None,
+            "contribution_to_book_max_dd": round(contribution, 4),
+        })
+
+    return {
+        "sleeves": sleeves,
+        "book_max_dd_contribution_sum": round(book_dd_contrib, 4),
+        "error": None,
+    }
+
+
 def _token_health_safe() -> dict[str, Any]:
     """Return token health dict, failing gracefully."""
     try:
