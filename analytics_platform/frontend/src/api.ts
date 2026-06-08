@@ -1,4 +1,4 @@
-import type { ApiEnvelope, FreshnessRow, HorizonProjection, KeyValue, RegimeNarrative, SubStrategyDD, TimePoint, TradeInstructionsPayload, SchwabPerformancePayload, RebalanceDashboardData } from "./types";
+import type { ApiEnvelope, DataFreshness, FreshnessRow, HorizonProjection, KeyValue, RegimeNarrative, SubStrategyDD, TimePoint, TradeInstructionsPayload, SchwabPerformancePayload, RebalanceDashboardData } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "";
 const API_KEY = (import.meta.env.VITE_API_KEY as string | undefined) ?? "";
@@ -57,6 +57,7 @@ export const api = {
   regimeNarrative: () => get<RegimeNarrative>("/api/v1/regime-narrative"),
   horizonProjection: () => get<HorizonProjection>("/api/v1/horizon-projection"),
   subStrategyDD: () => get<SubStrategyDD>("/api/v1/sub-strategy-dd"),
+  dataFreshness: () => get<DataFreshness>("/api/v1/data-freshness"),
   overview: (start?: string, end?: string) =>
     get<KeyValue>(`/api/v1/overview${toQuery({ start, end })}`),
   strategiesCompare: (start?: string, end?: string) =>

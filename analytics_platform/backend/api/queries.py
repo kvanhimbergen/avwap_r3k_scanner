@@ -2460,6 +2460,44 @@ def get_regime_narrative(conn) -> dict[str, Any]:
     }
 
 
+def get_data_freshness(conn, repo_root: Path) -> dict[str, Any]:
+    """Compact freshness panel for the ConfidenceFooter.
+
+    Pulls the latest dates from the source tables and the Schwab token's
+    days-until-expiry so the user can see if any feed is stalling before
+    the next pipeline run breaks.
+    """
+    def _latest(table: str) -> str | None:
+        try:
+            row = _rows(conn, f"SELECT MAX(ny_date) AS d FROM {table}")
+            return row[0].get("d") if row else None
+        except Exception:
+            return None
+
+    regime_e1 = _latest("regime_daily")
+    schwab_snapshot = _latest("schwab_account_snapshots")
+    coordinator = _latest("raec_coordinator_runs")
+
+    # Scan output freshness — mtime of cache/daily_candidates.csv as NY date.
+    scan_output: str | None = None
+    try:
+        from utils.freshness import file_mtime_ny_date
+
+        candidate_path = repo_root / "daily_candidates.csv"
+        if candidate_path.exists():
+            scan_output = file_mtime_ny_date(candidate_path)
+    except Exception:
+        scan_output = None
+
+    return {
+        "regime_e1": regime_e1,
+        "schwab_snapshot": schwab_snapshot,
+        "coordinator": coordinator,
+        "scan_output": scan_output,
+        "token_health": _token_health_safe(),
+    }
+
+
 def get_sub_strategy_dd(conn, repo_root: Path) -> dict[str, Any]:
     """Return per-sub-strategy drawdown report for the SleeveHealthTable.
 

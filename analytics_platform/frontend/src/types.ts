@@ -60,6 +60,22 @@ export interface SubStrategyDD {
   error: string | null;
 }
 
+export interface TokenHealth {
+  healthy: boolean;
+  days_until_expiry: number;
+  reason: string | null;
+}
+
+/** Latest dates per critical feed + Schwab token TTL.
+ *  Backed by GET /api/v1/data-freshness. Powers the ConfidenceFooter. */
+export interface DataFreshness {
+  regime_e1: string | null;
+  schwab_snapshot: string | null;
+  coordinator: string | null;
+  scan_output: string | null;
+  token_health: TokenHealth;
+}
+
 /** Where am I vs the destination at retirement? Backed by
  *  GET /api/v1/horizon-projection. */
 export interface HorizonProjection {

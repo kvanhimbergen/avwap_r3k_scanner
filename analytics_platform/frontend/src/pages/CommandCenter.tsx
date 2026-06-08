@@ -7,6 +7,8 @@ import { Link } from "react-router-dom";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, PieChart, Pie, Cell } from "recharts";
 
 import { api } from "../api";
+import { ConfidenceFooter } from "../components/ConfidenceFooter";
+import { DrawdownChart } from "../components/DrawdownChart";
 import { HorizonCard } from "../components/HorizonCard";
 import { SleeveHealthTable } from "../components/SleeveHealthTable";
 import { TodayStateCard } from "../components/TodayStateCard";
@@ -59,6 +61,7 @@ export function CommandCenter() {
   const regimeNarrative = usePolling(() => api.regimeNarrative(), 60_000);
   const horizon = usePolling(() => api.horizonProjection(), 60_000);
   const sleeveDD = usePolling(() => api.subStrategyDD(), 60_000);
+  const freshness = usePolling(() => api.dataFreshness(), 60_000);
 
   // Extract data
   const schwabData = schwab.data?.data as Record<string, unknown> | undefined;
@@ -316,10 +319,13 @@ export function CommandCenter() {
         </div>
       </div>
 
-      {/* Row 3: Per-sleeve health — surfaces analytics/strategy_dd_report.py */}
+      {/* Row 3: Drawdown chart — peak-to-current %, the metric that matters at age 51 */}
+      <DrawdownChart series={horizon.data?.data?.dd_series} />
+
+      {/* Row 4: Per-sleeve health — surfaces analytics/strategy_dd_report.py */}
       <SleeveHealthTable data={sleeveDD.data?.data} />
 
-      {/* Row 4: Rebalance Snapshot + Alpaca Paper */}
+      {/* Row 5: Rebalance Snapshot + Alpaca Paper */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         {/* Rebalance Snapshot (60%) */}
         <div className="lg:col-span-3 bg-vantage-card border border-vantage-border rounded-lg p-4">
@@ -502,6 +508,9 @@ export function CommandCenter() {
           </div>
         </div>
       </div>
+
+      {/* Row 6: Confidence & freshness — honest about what we don't yet know */}
+      <ConfidenceFooter freshness={freshness.data?.data} />
     </div>
   );
 }

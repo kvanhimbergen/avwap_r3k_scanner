@@ -209,6 +209,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload = queries.get_sub_strategy_dd(conn, runtime.settings.repo_root)
         return _envelope(runtime, payload)
 
+    @app.get("/api/v1/data-freshness")
+    def data_freshness() -> dict:
+        """Latest dates per feed + token TTL — powers the ConfidenceFooter."""
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_data_freshness(conn, runtime.settings.repo_root)
+        return _envelope(runtime, payload)
+
     @app.get("/api/v1/overview")
     def overview(
         start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
