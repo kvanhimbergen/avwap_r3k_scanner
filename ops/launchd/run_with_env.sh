@@ -15,4 +15,10 @@ set -a
 source "$REPO_DIR/.env"
 set +a
 
+# Ensure repo root is on sys.path so scripts invoked as `python ops/foo.py`
+# (rather than `python -m ops.foo`) can still import top-level packages
+# like `alerts`, `utils`, `analytics`. Without this, sys.path[0] is the
+# script's directory and root-level imports fail.
+export PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}"
+
 exec "$@"
