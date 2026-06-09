@@ -438,6 +438,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload = queries.get_rebalance_dashboard(conn, runtime.settings.repo_root)
         return _envelope(runtime, payload)
 
+    @app.get("/api/v1/v6/shadow-book")
+    def v6_shadow_book() -> dict:
+        """v6 dry-run shadow book: equity curve, holdings, summary."""
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_v6_shadow_book(conn, runtime.settings.repo_root)
+        return _envelope(runtime, payload)
+
+    @app.get("/api/v1/v6/allocator-state")
+    def v6_allocator_state() -> dict:
+        """Per-strategy share, conviction, and gate from the latest v6 run."""
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_v6_allocator_state(conn, runtime.settings.repo_root)
+        return _envelope(runtime, payload)
+
+    @app.get("/api/v1/v6/divergence")
+    def v6_divergence() -> dict:
+        """L1 distance between v6 and live V3/V4/V5 combined book targets."""
+        runtime: AnalyticsRuntime = app.state.runtime
+        with connect_ro(runtime.settings.db_path) as conn:
+            payload = queries.get_v6_divergence(conn, runtime.settings.repo_root)
+        return _envelope(runtime, payload)
+
     @app.get("/api/v1/schwab/performance")
     def schwab_performance(
         start: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),

@@ -92,6 +92,18 @@ STEPS = [
             "--asof", date,
         ],
     },
+    {
+        # v6 dry-run coordinator. Parallel to live V3/V4/V5; writes to its own
+        # ledger (ledger/RAEC_V6/) and shadow book (state/strategies/
+        # RAEC_V6_DRY_RUN/). Posts to Slack with a [V6 DRY] prefix.
+        # Marked optional=True so a v6 failure can never break the live pipeline.
+        "name": "raec_v6_coordinator",
+        "optional": True,
+        "args": lambda date: [
+            sys.executable, "-m", "strategies.raec_v6.coordinator",
+            "--asof-date", date,
+        ],
+    },
 ]
 
 

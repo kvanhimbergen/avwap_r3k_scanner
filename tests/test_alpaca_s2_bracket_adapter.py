@@ -473,6 +473,7 @@ class TestPipelineStepOrder:
             "s2_letf_orb_aggro",
             "s2_letf_orb_alpaca",
             "raec_401k_coordinator",
+            "raec_v6_coordinator",
         ]
 
     def test_s2_aggro_uses_leveraged_only(self) -> None:

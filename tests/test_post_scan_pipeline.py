@@ -95,7 +95,12 @@ def test_pipeline_optional_failure_continues_and_reports_in_summary(
     monkeypatch: pytest.MonkeyPatch, slack: _SlackCapture, fresh_scan: None
 ) -> None:
     # All steps succeed except step 3 (schwab_readonly_sync, optional).
-    returncodes = [0, 0, 5, 0, 0, 0, 0]
+    # Build dynamically — the pipeline grows over time as new steps are added.
+    schwab_idx = next(
+        i for i, s in enumerate(pipeline.STEPS) if s["name"] == "schwab_readonly_sync"
+    )
+    returncodes = [0] * len(pipeline.STEPS)
+    returncodes[schwab_idx] = 5
     assert len(returncodes) == len(pipeline.STEPS)
     _patch_subprocess(monkeypatch, returncodes)
 

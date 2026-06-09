@@ -2712,3 +2712,198 @@ def get_rebalance_dashboard(conn, repo_root: Path) -> dict[str, Any]:
         "trades": trades,
         "last_sync_date": last_sync_date,
     }
+
+
+# ============================================================================
+# RAEC v6 dashboard endpoints (dry-run shadow book)
+# ============================================================================
+
+_V6_BOOK_ID = "RAEC_V6_DRY_RUN"
+_V6_STATE_DIR = Path("state") / "strategies" / _V6_BOOK_ID
+_V6_LEDGER_DIR = Path("ledger") / "RAEC_V6"
+
+
+def _v6_load_state(repo_root: Path) -> dict[str, Any]:
+    """Read v6 coordinator state JSON, returning empty dict on missing/error."""
+    path = repo_root / _V6_STATE_DIR / "coordinator.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _v6_latest_ledger_record(repo_root: Path) -> dict[str, Any] | None:
+    """Return the most-recent v6 ledger record, or None."""
+    ledger_dir = repo_root / _V6_LEDGER_DIR
+    if not ledger_dir.exists():
+        return None
+    files = sorted([f for f in ledger_dir.iterdir() if f.suffix == ".jsonl"])
+    if not files:
+        return None
+    # Files are date-named, latest is at the end.
+    try:
+        last_lines = files[-1].read_text(encoding="utf-8").splitlines()
+        if not last_lines:
+            return None
+        return json.loads(last_lines[-1])
+    except Exception:
+        return None
+
+
+def get_v6_shadow_book(conn, repo_root: Path) -> dict[str, Any]:
+    """v6 shadow book: equity curve, holdings, summary stats.
+
+    Reads from state/strategies/RAEC_V6_DRY_RUN/coordinator.json.
+    Returns an empty result with `dry_run_active=False` if v6 hasn't run yet.
+    """
+    state = _v6_load_state(repo_root)
+    sb = state.get("shadow_book") if state else None
+    if not sb:
+        return {"dry_run_active": False, "rows": []}
+
+    starting_cash = float(sb.get("starting_cash", 0))
+    equity_curve = [float(x) for x in sb.get("equity_curve", [])]
+    asof_history = sb.get("asof_history", [])
+
+    series = [
+        {"asof": d, "equity": e}
+        for d, e in zip(asof_history, equity_curve)
+    ]
+
+    positions_dict = sb.get("positions", {})
+    current_equity = equity_curve[-1] if equity_curve else starting_cash
+    cash_curve = sb.get("cash_curve", [])
+    current_cash = float(cash_curve[-1]) if cash_curve else starting_cash
+    positions = [
+        {
+            "symbol": sym,
+            "notional": float(nt),
+            "weight_pct": (float(nt) / current_equity * 100.0) if current_equity > 0 else 0.0,
+        }
+        for sym, nt in positions_dict.items()
+    ]
+    positions.sort(key=lambda p: -p["notional"])
+
+    # Summary metrics
+    total_return = (
+        (equity_curve[-1] / starting_cash - 1.0) if starting_cash > 0 and equity_curve else 0.0
+    )
+    summary = {
+        "started_at": state.get("started_at"),
+        "last_eval_date": state.get("last_eval_date"),
+        "starting_cash": starting_cash,
+        "current_equity": current_equity,
+        "current_cash": current_cash,
+        "total_return_pct": total_return * 100.0,
+        "n_trading_days": len(equity_curve),
+        "dd_breaker_active": bool(state.get("dd_breaker_currently_active", False)),
+        "freeze_days_remaining": int(state.get("freeze_days_remaining", 0)),
+    }
+
+    return {
+        "dry_run_active": True,
+        "summary": summary,
+        "series": series,
+        "positions": positions,
+    }
+
+
+def get_v6_allocator_state(conn, repo_root: Path) -> dict[str, Any]:
+    """Per-strategy share, conviction, and gate from the most recent v6 run."""
+    record = _v6_latest_ledger_record(repo_root)
+    if not record:
+        return {"dry_run_active": False, "strategies": []}
+
+    outputs = record.get("strategy_outputs", {})
+    allocator = record.get("allocator", {})
+    shares = allocator.get("strategy_shares", {})
+
+    rows = []
+    for sid, output in outputs.items():
+        if output is None:
+            rows.append({
+                "strategy_id": sid,
+                "share": float(shares.get(sid, 0.0)),
+                "conviction": None,
+                "regime_gate": None,
+                "realized_vol_60d": None,
+                "failed": True,
+            })
+            continue
+        rows.append({
+            "strategy_id": sid,
+            "share": float(shares.get(sid, 0.0)),
+            "conviction": float(output.get("conviction", 0.0)),
+            "regime_gate": float(output.get("regime_gate", 0.0)),
+            "realized_vol_60d": float(output.get("realized_vol_60d", 0.0)),
+            "weight_count": len(output.get("weights", {})),
+            "failed": False,
+        })
+    rows.sort(key=lambda r: -r["share"])
+
+    overlay = record.get("overlay", {})
+    return {
+        "dry_run_active": True,
+        "asof": record.get("ny_date"),
+        "strategies": rows,
+        "failed_strategies": allocator.get("failed_strategies", []),
+        "overlay": {
+            "exposure_scale": float(overlay.get("exposure_scale", 0.0)),
+            "target_vol": float(overlay.get("target_vol", 0.0)),
+            "forecast_vol": float(overlay.get("forecast_vol", 0.0)),
+            "dd_breaker_active": bool(overlay.get("dd_breaker_active", False)),
+            "shock_day_detected": bool(overlay.get("shock_day_detected", False)),
+        },
+        "regime": record.get("signal_state", {}).get("regime_label"),
+    }
+
+
+def get_v6_divergence(conn, repo_root: Path) -> dict[str, Any]:
+    """L1 distance between v6 final_weights and the LIVE V3/V4/V5 combined book.
+
+    Computes overlap symbol-by-symbol; flags positions that exist in one
+    book but not the other so we can see which strategies are diverging.
+    """
+    record = _v6_latest_ledger_record(repo_root)
+    if not record:
+        return {"dry_run_active": False, "rows": [], "l1_distance_pct": None}
+
+    v6_weights = {k: float(v) for k, v in record.get("final_weights", {}).items()}
+
+    # Live book = V3/V4/V5 combined via the existing coordinator state.
+    live_state = _read_strategy_state(repo_root, f"{_REBALANCE_COORD_ID}.json")
+    # Best-effort fallback: aggregate from the per-strategy states. Most
+    # coord state files don't track combined targets, so compute manually.
+    live_weights: dict[str, float] = {}
+    capital_split = {"V3": 0.20, "V4": 0.55, "V5": 0.25}  # plan default; ignore drift
+    for sid in _REBALANCE_STRATEGY_IDS:
+        st = _read_strategy_state(repo_root, f"{sid}.json")
+        sub_targets = st.get("last_targets") or {}
+        version = sid.split("_")[-1]  # "V3" / "V4" / "V5"
+        capital_pct = capital_split.get(version, 0.0)
+        for sym, w in sub_targets.items():
+            # last_targets are in percent (e.g. 60.0); convert to fraction.
+            live_weights[sym] = live_weights.get(sym, 0.0) + (float(w) / 100.0) * capital_pct
+
+    all_syms = sorted(set(v6_weights) | set(live_weights))
+    rows = []
+    l1 = 0.0
+    for sym in all_syms:
+        v6 = v6_weights.get(sym, 0.0)
+        live = live_weights.get(sym, 0.0)
+        delta = v6 - live
+        l1 += abs(delta)
+        rows.append({
+            "symbol": sym,
+            "v6_pct": v6 * 100.0,
+            "live_pct": live * 100.0,
+            "delta_pct": delta * 100.0,
+        })
+    rows.sort(key=lambda r: -abs(r["delta_pct"]))
+
+    return {
+        "dry_run_active": True,
+        "asof": record.get("ny_date"),
+        "l1_distance_pct": l1 * 100.0,
+        "rows": rows,
+    }

@@ -14,9 +14,11 @@ are passed in by the caller for each step.
 
 from __future__ import annotations
 
+import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date
+from pathlib import Path
 from typing import Mapping
 
 
@@ -201,3 +203,76 @@ class ShadowBook:
             "n_trading_days": days,
             "n_trades": len(self.trade_log),
         }
+
+    # ── Persistence ─────────────────────────────────────────────────────
+
+    SCHEMA_VERSION: int = 1
+
+    def to_dict(self) -> dict:
+        """Serialize to a JSON-safe dict for state persistence."""
+        return {
+            "schema_version": self.SCHEMA_VERSION,
+            "starting_cash": self.starting_cash,
+            "slippage_bps": self.slippage_bps,
+            "positions": dict(self.positions),
+            "equity_curve": list(self.equity_curve),
+            "cash_curve": list(self.cash_curve),
+            "daily_returns": list(self.daily_returns),
+            "asof_history": [d.isoformat() for d in self.asof_history],
+            "trade_log": [
+                {
+                    "asof": t.asof.isoformat(),
+                    "symbol": t.symbol,
+                    "side": t.side,
+                    "notional": t.notional,
+                    "pre_weight": t.pre_weight,
+                    "target_weight": t.target_weight,
+                }
+                for t in self.trade_log
+            ],
+            "last_close": dict(getattr(self, "_last_close", {})),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict) -> "ShadowBook":
+        """Deserialize from a previously-saved dict."""
+        ver = payload.get("schema_version", 1)
+        if ver != cls.SCHEMA_VERSION:
+            raise ValueError(
+                f"ShadowBook state schema version {ver} != {cls.SCHEMA_VERSION}; "
+                f"manual migration required"
+            )
+        book = cls(
+            starting_cash=float(payload["starting_cash"]),
+            slippage_bps=float(payload.get("slippage_bps", 5.0)),
+        )
+        book.positions = {k: float(v) for k, v in payload.get("positions", {}).items()}
+        book.equity_curve = [float(x) for x in payload.get("equity_curve", [])]
+        book.cash_curve = [float(x) for x in payload.get("cash_curve", [])]
+        book.daily_returns = [float(x) for x in payload.get("daily_returns", [])]
+        book.asof_history = [date.fromisoformat(s) for s in payload.get("asof_history", [])]
+        book.trade_log = [
+            TradeRecord(
+                asof=date.fromisoformat(t["asof"]),
+                symbol=t["symbol"],
+                side=t["side"],
+                notional=float(t["notional"]),
+                pre_weight=float(t["pre_weight"]),
+                target_weight=float(t["target_weight"]),
+            )
+            for t in payload.get("trade_log", [])
+        ]
+        book._last_close = {
+            k: float(v) for k, v in payload.get("last_close", {}).items()
+        }
+        return book
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(self.to_dict(), indent=2))
+        tmp.replace(path)
+
+    @classmethod
+    def load(cls, path: Path) -> "ShadowBook":
+        return cls.from_dict(json.loads(path.read_text()))
