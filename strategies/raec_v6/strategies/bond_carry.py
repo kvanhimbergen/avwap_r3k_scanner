@@ -32,7 +32,14 @@ _MANIFEST = StrategyManifest(
     strategy_id="V6_BOND_CARRY",
     asset_classes=("bond_short", "bond_mid", "bond_long", "bond_inverse", "credit"),
     history_quality="robust",
-    max_share_cap=0.30,
+    # Cap lowered from 0.30 to 0.10 after Phase C calibration:
+    # BondCarry's low basket vol (~3.5%) inflates its risk-parity share,
+    # but its absolute return is low and its "diversification" failed
+    # exactly when needed (2022 — bonds and equities both got crushed
+    # by Fed hikes). At cap 0.10 the strategy is a tactical participant
+    # in real bond regimes (curve breakouts, credit shifts) rather than
+    # a structural ballast that drags returns in equity bull markets.
+    max_share_cap=0.10,
     backtest_oos_sharpe=0.4,
     description="Yield-curve + credit-spread directional bonds, with short-end carry base.",
     tags=("bonds", "carry", "duration", "credit"),
