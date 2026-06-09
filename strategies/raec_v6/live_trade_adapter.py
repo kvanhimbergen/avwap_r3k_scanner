@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Mapping
 
-from alerts.slack import slack_alert
+from alerts.slack import slack_alert_sync
 from strategies.raec_v6.dry_run_adapter import V6DryRunSafetyError
 
 
@@ -192,7 +192,7 @@ class LiveTradeAdapter:
         )
         # Title: empty so the slack_alert prefix line carries the date.
         # Level TRADE on rebalance days; INFO on no-trade days.
-        slack_alert(
+        slack_alert_sync(
             level="TRADE" if rebalance else "INFO",
             title=f"v6 Rebalance {asof.isoformat()}",
             message=text,
@@ -201,7 +201,7 @@ class LiveTradeAdapter:
         return text
 
     def post_error(self, *, asof: date, error: str) -> None:
-        slack_alert(
+        slack_alert_sync(
             level="ERROR",
             title=f"v6 ERROR {asof.isoformat()}",
             message=error,

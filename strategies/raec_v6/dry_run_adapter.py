@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Mapping
 
-from alerts.slack import slack_alert
+from alerts.slack import slack_alert_sync
 
 
 # Hard-coded — this adapter only operates on the v6 dry-run book.
@@ -135,7 +135,7 @@ class DryRunAdapter:
             notice=notice,
         )
         title = f"[V6 DRY] {asof.isoformat()}  (advisory only)"
-        slack_alert(
+        slack_alert_sync(
             level="INFO" if not rebalance else "TRADE",
             title=title,
             message=text,
@@ -163,4 +163,4 @@ class DryRunAdapter:
         """Operational ERROR message — coordinator failures, etc."""
         title = f"[V6 DRY] ERROR  {asof.isoformat()}"
         message = error if not component_detail else f"{component_detail}\n{error}"
-        slack_alert(level="ERROR", title=title, message=message, component=COMPONENT)
+        slack_alert_sync(level="ERROR", title=title, message=message, component=COMPONENT)

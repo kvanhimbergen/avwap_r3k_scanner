@@ -132,6 +132,54 @@ def slack_alert(
         _debug(f"Slack alert suppressed ({type(exc).__name__}: {exc})")
 
 
+def slack_alert_sync(
+    level: str,
+    title: str,
+    message: str,
+    component: str = "BOT",
+    *,
+    throttle_key: Optional[str] = None,
+    throttle_seconds: int = 0,
+    project: str = "AVWAP",
+) -> None:
+    """Synchronous version of slack_alert.
+
+    Same level/throttle/prefix semantics, but HTTP POST happens inline
+    instead of in a daemon thread. Required for short-lived CLI processes
+    (post-scan pipeline subprocesses) where the daemon thread would be
+    killed mid-flight before the HTTP request completes — silently
+    dropping the post.
+
+    Used by trade-ticket adapters that must guarantee delivery.
+    """
+    try:
+        level = (level or "INFO").strip().upper()
+        if level not in _LEVELS:
+            level = "INFO"
+
+        if not _enabled() or not _min_level_ok(level):
+            return
+
+        if throttle_key and should_throttle(throttle_key, throttle_seconds):
+            return
+
+        prefix = f"[{project}][{component}][{level}]"
+        text = f"{prefix} {title}\n{message}".strip()
+
+        payload: dict = {"text": text}
+
+        chan = os.getenv("SLACK_ALERTS_CHANNEL", "").strip()
+        if chan:
+            payload["channel"] = chan
+        username = os.getenv("SLACK_ALERTS_USERNAME", "").strip()
+        if username:
+            payload["username"] = username
+
+        _post(payload)  # synchronous
+    except Exception as exc:
+        _debug(f"Slack alert (sync) suppressed ({type(exc).__name__}: {exc})")
+
+
 def send_verbose_alert(
     level: str,
     title: str,
