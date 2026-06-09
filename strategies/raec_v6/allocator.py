@@ -152,7 +152,6 @@ def allocate(
     strategy_returns: Mapping[str, list[float]] | None = None,
     turnover_damper_per_day: float = 0.05,
     per_symbol_cap: float = 0.25,
-    single_name_per_symbol_cap: float = 0.10,
     correlation_threshold: float = 0.7,
     correlation_lookback: int = 60,
 ) -> AllocatorResult:
@@ -320,19 +319,11 @@ def allocate(
             book[sym_u] = book.get(sym_u, 0.0) + contrib
             contributions[sid][sym_u] = contrib
 
-    # Per-symbol cap. ETFs and single names use different caps (single
-    # names are higher idiosyncratic vol → tighter cap). Detection: a
-    # symbol is an ETF if it's in the v6 asset taxonomy; otherwise it's
-    # treated as a single name. Excess is dropped (goes to cash residual,
-    # not redistributed — would distort what each strategy declared).
-    from strategies.raec_v6 import asset_classes as _ac
-
+    # Per-symbol cap. Excess is dropped (goes to cash residual, NOT to other
+    # symbols — would distort what each strategy declared it wanted).
     capped_book: dict[str, float] = {}
     for sym, w in book.items():
-        if sym in _ac.SYMBOL_TO_CLASS:
-            capped_book[sym] = min(w, per_symbol_cap)
-        else:
-            capped_book[sym] = min(w, single_name_per_symbol_cap)
+        capped_book[sym] = min(w, per_symbol_cap)
 
     return AllocatorResult(
         book_targets=capped_book,
