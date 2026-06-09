@@ -31,7 +31,13 @@ DEFAULT_DD_BREAKER_SCALE = 0.50  # cut exposure to half when tripped
 DEFAULT_SHOCK_SIGMA = 3.5
 DEFAULT_SHOCK_FREEZE_DAYS = 2
 DEFAULT_FLOOR_EXPOSURE = 0.10  # never go fully to cash on vol overlay alone
-DEFAULT_CEILING_EXPOSURE = 1.0  # don't lever up at allocator level (vol-targeting can request <1)
+DEFAULT_CEILING_EXPOSURE = 2.0  # allow overlay to scale book targets UP when
+# forecast vol is well below target. This does NOT imply margin: the final
+# weights are still capped to sum ≤ 1.0 by `_cap_to_full_deployment`. The
+# scale-up matters because the allocator's risk-parity base often under-deploys
+# (low-vol strategies like BondCarry get a big share but generate low return).
+# Raising the ceiling lets the overlay fully deploy the book via the leveraged
+# ETFs already inside the strategies' universes when conditions warrant it.
 
 
 @dataclass(frozen=True)
@@ -101,18 +107,31 @@ def _ewma_vol(returns: Sequence[float], halflife: int = 10) -> float:
     return math.sqrt(var) * math.sqrt(252)
 
 
-def _max_drawdown(equity_curve: Sequence[float]) -> tuple[float, float]:
-    """Return (current_dd, max_dd) for the curve. dd is negative (e.g. -0.12)."""
+def _max_drawdown(
+    equity_curve: Sequence[float], rolling_window: int = 252
+) -> tuple[float, float]:
+    """Return (current_dd, max_dd) using a ROLLING peak over the trailing
+    `rolling_window` observations.
+
+    Using all-time peak makes the DD breaker effectively one-way: once an
+    old peak is far above the de-leveraged system's reach, the breaker
+    never re-arms even after the original shock has long passed. A rolling
+    window (default ~1 year) lets the system re-arm once the bad period
+    rolls out of the window.
+
+    dd values are negative (e.g. -0.12 = 12% off rolling peak).
+    """
     if not equity_curve:
         return 0.0, 0.0
-    peak = equity_curve[0]
+    window_curve = list(equity_curve[-rolling_window:])
+    peak = window_curve[0]
     max_dd = 0.0
-    for v in equity_curve:
+    for v in window_curve:
         peak = max(peak, v)
         if peak > 0:
             dd = (v / peak) - 1.0
             max_dd = min(max_dd, dd)
-    current_dd = (equity_curve[-1] / peak) - 1.0 if peak > 0 else 0.0
+    current_dd = (window_curve[-1] / peak) - 1.0 if peak > 0 else 0.0
     return current_dd, max_dd
 
 
@@ -152,14 +171,37 @@ def apply_overlay(
     # Forecast components.
     composition_vol = _portfolio_realized_vol(book_targets, per_symbol_daily_returns)
     ewma = _ewma_vol(list(portfolio_daily_returns))
-    vix_daily_equivalent = vix_implied  # VIX is already annualized; use as-is
+    # VIX is annualized implied vol; historically it overshoots realized
+    # by ~20-30% (vol risk premium). Discount to make it a fair forecast
+    # of REALIZED rather than implied. Without this discount the overlay
+    # over-de-leverages whenever VIX > 20 even when the book itself is
+    # diversified and running at much lower realized vol.
+    vix_discounted = vix_implied * 0.7
 
-    forecast_vol = max(composition_vol, ewma, vix_daily_equivalent)
+    if len(portfolio_daily_returns) >= 60:
+        # We have a real portfolio return history — trust it. The leading
+        # indicator (VIX, discounted) acts as a floor so regime shifts
+        # still register before realized vol catches up.
+        forecast_vol = max(ewma, vix_discounted)
+    else:
+        # Cold-start: no real history yet. Fall back to composition vol
+        # (which over-estimates for diversified books — but during the
+        # first 60 days we'd rather under-deploy than over-deploy).
+        forecast_vol = max(composition_vol, ewma, vix_discounted)
     if forecast_vol <= 0:
         forecast_vol = target_vol  # fallback: no info → assume on target
 
     raw_scale = target_vol / forecast_vol
     exposure_scale = max(floor_exposure, min(ceiling_exposure, raw_scale))
+
+    # Cap-to-full-deployment safety: even with ceiling > 1.0, the final book
+    # weights must sum to ≤ 1.0 (we have no margin — leverage comes only via
+    # the leveraged ETFs already inside the book). If the requested scale-up
+    # would push allocated weight above 1.0, reduce the scale just enough to
+    # land at 1.0.
+    raw_total = sum(book_targets.values())
+    if raw_total > 0 and exposure_scale * raw_total > 1.0:
+        exposure_scale = 1.0 / raw_total
 
     # DD breaker.
     current_dd, max_dd = _max_drawdown(equity_curve)
@@ -203,7 +245,8 @@ def apply_overlay(
         diagnostics={
             "composition_vol": composition_vol,
             "ewma_vol": ewma,
-            "vix_implied": vix_daily_equivalent,
+            "vix_implied": vix_implied,
+            "vix_discounted": vix_discounted,
             "current_dd": current_dd,
             "max_dd": max_dd,
             "raw_scale": raw_scale,

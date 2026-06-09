@@ -14,7 +14,7 @@ from strategies.raec_v6.overlay import (
 )
 
 
-def test_empty_history_returns_unit_scale() -> None:
+def test_empty_history_scales_up_when_forecast_under_target() -> None:
     r = apply_overlay(
         book_targets={"SPY": 0.5},
         spy_realized_vol_60d=0.16,
@@ -23,11 +23,29 @@ def test_empty_history_returns_unit_scale() -> None:
         per_symbol_daily_returns={},
         equity_curve=[],
     )
-    # No data → forecast falls back; target=1.5*0.16=0.24; forecast=vix=0.18
-    # so scale = 0.24/0.18 = 1.33 but capped at ceiling 1.0.
-    assert r.exposure_scale == 1.0
+    # No data → forecast uses VIX discounted ×0.7 = 0.126; target = 1.5*0.16 = 0.24
+    # raw_scale = 0.24 / 0.126 ≈ 1.90. SPY at 0.5 × 1.90 = 0.95 < 1.0,
+    # so cap-to-full-deployment doesn't bite.
     assert pytest.approx(r.target_vol) == 0.24
-    assert pytest.approx(r.forecast_vol) == 0.18
+    assert pytest.approx(r.forecast_vol, abs=1e-3) == 0.126
+    assert pytest.approx(r.exposure_scale, abs=0.01) == 0.24 / 0.126
+    assert pytest.approx(r.final_weights["SPY"], abs=0.01) == 0.5 * (0.24 / 0.126)
+
+
+def test_cap_to_full_deployment_prevents_over_100_percent_book() -> None:
+    """If scaling would push Σ weights > 1, cap scale so Σ = 1 exactly."""
+    r = apply_overlay(
+        book_targets={"SPY": 0.7, "QQQ": 0.2},  # already 0.9 of book
+        spy_realized_vol_60d=0.16,
+        vix_implied=0.10,  # forecast low → wants to lever up to 2.4×
+        portfolio_daily_returns=[],
+        per_symbol_daily_returns={},
+        equity_curve=[],
+    )
+    total = sum(r.final_weights.values())
+    assert total <= 1.0 + 1e-6
+    # And should be exactly at the deployment cap, not less.
+    assert total > 0.95
 
 
 def test_high_forecast_vol_scales_down() -> None:
