@@ -472,8 +472,7 @@ class TestPipelineStepOrder:
             "schwab_seed_allocations",
             "s2_letf_orb_aggro",
             "s2_letf_orb_alpaca",
-            "raec_401k_coordinator",
-            "raec_v6_coordinator",
+            "raec_v6_coordinator_live",
         ]
 
     def test_s2_aggro_uses_leveraged_only(self) -> None:
@@ -486,16 +485,17 @@ class TestPipelineStepOrder:
         assert args[idx + 1] == "leveraged_only"
 
     def test_dry_run_appended_to_execution_steps(self) -> None:
-        """Verify dry-run is appended to s2_letf_orb_alpaca, raec_401k_coordinator, raec_401k_v2."""
+        """Verify dry-run is appended to s2_letf_orb_alpaca + raec_v6 swaps mode."""
         from ops.post_scan_pipeline import STEPS
 
-        dry_run_steps = {"s2_letf_orb_alpaca", "raec_401k_coordinator", "raec_401k_v2"}
-        # Simulate the pipeline dry_run logic
+        dry_run_append_steps = {"s2_letf_orb_alpaca"}
         for step in STEPS:
             cmd = step["args"]("2026-02-18")
-            if step["name"] in dry_run_steps:
+            if step["name"] in dry_run_append_steps:
                 cmd.append("--dry-run")
-            if step["name"] in dry_run_steps:
                 assert "--dry-run" in cmd, f"Missing --dry-run for {step['name']}"
+            elif step["name"] == "raec_v6_coordinator_live":
+                # v6 doesn't use --dry-run; pipeline swaps --mode live → dry-run.
+                assert "--mode" in cmd and "live" in cmd
             else:
                 assert "--dry-run" not in cmd, f"Unexpected --dry-run for {step['name']}"

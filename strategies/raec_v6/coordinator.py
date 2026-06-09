@@ -44,7 +44,18 @@ from strategies.raec_v6.dry_run_adapter import (
     V6DryRunSafetyError,
     V6Intent,
 )
+from strategies.raec_v6.live_trade_adapter import (
+    LIVE_BOOK_ID,
+    LiveIntent,
+    LiveTradeAdapter,
+    make_intent_id,
+)
 from strategies.raec_v6.overlay import OverlayResult, apply_overlay
+from strategies.raec_v6.schwab_positions import (
+    LiveBookSnapshot,
+    SchwabPositionsStaleError,
+    read_latest_snapshot,
+)
 from strategies.raec_v6.shadow_book import ShadowBook
 from strategies.raec_v6.signal_state import SignalState
 from strategies.raec_v6.signals.credit_spread import compute_credit_spread_signal
@@ -70,13 +81,26 @@ from strategies.raec_v6.strategy_output import StrategyOutput
 
 
 STRATEGY_ID = "RAEC_V6"
-BOOK_ID = DRY_RUN_BOOK_ID
 STATE_SCHEMA_VERSION = 1
 DEFAULT_STARTING_CASH = 230_000.0
-LEDGER_RECORD_TYPE = "RAEC_V6_RUN"
+LEDGER_RECORD_TYPE_DRY = "RAEC_V6_RUN"
+LEDGER_RECORD_TYPE_LIVE = "RAEC_V6_LIVE_RUN"
 
 # Rebalance triggers (mirror the backtest harness).
 REBALANCE_DRIFT_THRESHOLD_PCT = 5.0  # L1 drift above this → rebalance
+
+# Modes
+MODE_DRY_RUN = "dry-run"
+MODE_LIVE = "live"
+
+# In dry-run mode, the v6 coordinator's "book" is a synthetic shadow book.
+# In live mode, current positions come from Schwab readonly snapshots and
+# the shadow book is only used for equity-curve continuity (DD breaker).
+BOOK_ID_DRY_RUN = DRY_RUN_BOOK_ID  # "RAEC_V6_DRY_RUN"
+BOOK_ID_LIVE = LIVE_BOOK_ID  # "SCHWAB_401K_MANUAL"
+
+# Backwards-compat alias (the dry-run-only code path still imports this).
+BOOK_ID = BOOK_ID_DRY_RUN
 
 
 @dataclass(frozen=True)
@@ -92,12 +116,12 @@ class CoordinatorResult:
 # ── State file I/O ────────────────────────────────────────────────────────
 
 
-def _state_dir(repo_root: Path) -> Path:
-    return repo_root / "state" / "strategies" / BOOK_ID
+def _state_dir(repo_root: Path, book_id: str = BOOK_ID_DRY_RUN) -> Path:
+    return repo_root / "state" / "strategies" / book_id
 
 
-def _state_path(repo_root: Path) -> Path:
-    return _state_dir(repo_root) / "coordinator.json"
+def _state_path(repo_root: Path, book_id: str = BOOK_ID_DRY_RUN) -> Path:
+    return _state_dir(repo_root, book_id) / "coordinator.json"
 
 
 def _empty_state() -> dict:
@@ -136,8 +160,9 @@ def _save_state(path: Path, state: dict) -> None:
 # ── Ledger I/O ────────────────────────────────────────────────────────────
 
 
-def _ledger_path(repo_root: Path, asof_date: date) -> Path:
-    return repo_root / "ledger" / "RAEC_V6" / f"{asof_date.isoformat()}.jsonl"
+def _ledger_path(repo_root: Path, asof_date: date, mode: str = MODE_DRY_RUN) -> Path:
+    subdir = "RAEC_V6" if mode == MODE_DRY_RUN else "RAEC_V6_LIVE"
+    return repo_root / "ledger" / subdir / f"{asof_date.isoformat()}.jsonl"
 
 
 def _append_ledger(path: Path, record: dict) -> None:
@@ -277,6 +302,36 @@ def _generate_intents(
     return intents
 
 
+def _convert_to_live_intents(
+    *,
+    asof: date,
+    v6_intents: list[V6Intent],
+    close_prices: Mapping[str, float],
+) -> list[LiveIntent]:
+    """Convert dry-run V6Intent into LiveIntent (adds intent_id + shares)."""
+    out: list[LiveIntent] = []
+    for ix in v6_intents:
+        px = close_prices.get(ix.symbol)
+        shares = int(round(ix.dollar_delta / px)) if px and px > 0 else None
+        out.append(LiveIntent(
+            intent_id=make_intent_id(
+                asof=asof,
+                symbol=ix.symbol,
+                side=ix.side,
+                target_pct=ix.target_pct,
+                current_pct=ix.current_pct,
+            ),
+            symbol=ix.symbol,
+            side=ix.side,
+            delta_pct=ix.delta_pct,
+            target_pct=ix.target_pct,
+            current_pct=ix.current_pct,
+            dollar_delta=ix.dollar_delta,
+            shares_delta=shares,
+        ))
+    return out
+
+
 # ── Main orchestrator ─────────────────────────────────────────────────────
 
 
@@ -284,32 +339,79 @@ def run_coordinator(
     *,
     asof_date: date,
     repo_root: Path,
+    mode: str = MODE_DRY_RUN,
     price_provider: PriceProvider | None = None,
-    adapter: DryRunAdapter | None = None,
+    adapter: DryRunAdapter | LiveTradeAdapter | None = None,
     post_enabled: bool = True,
+    live_snapshot: LiveBookSnapshot | None = None,
 ) -> CoordinatorResult:
-    """Run one daily cycle of the v6 dry-run coordinator.
+    """Run one daily cycle of the v6 coordinator.
 
-    Returns a CoordinatorResult. Persistent side effects:
+    Args:
+        mode: "dry-run" (default) or "live".
+        live_snapshot: optional pre-loaded Schwab snapshot for live mode.
+                      If None and mode=live, reads from ledger automatically.
+
+    Persistent side effects (dry-run mode):
     - Updates state/strategies/RAEC_V6_DRY_RUN/coordinator.json
     - Appends to ledger/RAEC_V6/<date>.jsonl
-    - Posts to Slack via DryRunAdapter (if post_enabled)
+    - Posts [V6 DRY] advisory via DryRunAdapter
+
+    Persistent side effects (live mode):
+    - Reads positions from latest Schwab readonly snapshot
+    - Updates state/strategies/SCHWAB_401K_MANUAL/v6_coordinator.json
+      (separate from the legacy V3-V5 state files at the same book ID)
+    - Appends to ledger/RAEC_V6_LIVE/<date>.jsonl
+    - Posts executable ticket via LiveTradeAdapter
     """
+    if mode not in (MODE_DRY_RUN, MODE_LIVE):
+        raise ValueError(f"mode must be {MODE_DRY_RUN!r} or {MODE_LIVE!r}, got {mode!r}")
+
     if price_provider is None:
         price_provider = get_default_price_provider(str(repo_root), period="5y")
-    if adapter is None:
-        adapter = DryRunAdapter()
-    if adapter.book_id != DRY_RUN_BOOK_ID:
-        raise V6DryRunSafetyError(
-            f"v6 coordinator must be paired with DryRunAdapter on "
-            f"{DRY_RUN_BOOK_ID}; got {adapter.book_id}"
-        )
 
-    # 1. Load state.
-    state_path = _state_path(repo_root)
+    # Adapter selection + safety check per mode.
+    if mode == MODE_DRY_RUN:
+        if adapter is None:
+            adapter = DryRunAdapter()
+        if not isinstance(adapter, DryRunAdapter):
+            raise V6DryRunSafetyError(
+                f"dry-run mode requires DryRunAdapter; got {type(adapter).__name__}"
+            )
+        if adapter.book_id != DRY_RUN_BOOK_ID:
+            raise V6DryRunSafetyError(
+                f"v6 coordinator must be paired with DryRunAdapter on "
+                f"{DRY_RUN_BOOK_ID}; got {adapter.book_id}"
+            )
+        book_id = BOOK_ID_DRY_RUN
+    else:
+        if adapter is None:
+            adapter = LiveTradeAdapter()
+        if not isinstance(adapter, LiveTradeAdapter):
+            raise V6DryRunSafetyError(
+                f"live mode requires LiveTradeAdapter; got {type(adapter).__name__}"
+            )
+        if adapter.book_id != LIVE_BOOK_ID:
+            raise V6DryRunSafetyError(
+                f"live mode adapter must operate on {LIVE_BOOK_ID}; got {adapter.book_id}"
+            )
+        book_id = BOOK_ID_LIVE
+        # In live mode, fetch the Schwab snapshot if not pre-provided.
+        if live_snapshot is None:
+            live_snapshot = read_latest_snapshot(repo_root=repo_root, asof=asof_date)
+
+    # 1. Load state. In live mode we keep state under a v6-suffixed file
+    # so V3-V5's state at the same book_id is untouched.
+    if mode == MODE_DRY_RUN:
+        state_path = _state_path(repo_root, BOOK_ID_DRY_RUN)
+    else:
+        state_path = _state_dir(repo_root, BOOK_ID_LIVE) / "v6_coordinator.json"
     state = _load_state(state_path)
     if state["shadow_book"] is None:
-        book = ShadowBook(starting_cash=DEFAULT_STARTING_CASH)
+        # In live mode, seed the shadow book at the actual Schwab equity
+        # so the equity curve reflects real value from day 1.
+        starting = live_snapshot.total_equity if mode == MODE_LIVE else DEFAULT_STARTING_CASH
+        book = ShadowBook(starting_cash=starting)
         state["started_at"] = asof_date.isoformat()
     else:
         book = ShadowBook.from_dict(state["shadow_book"])
@@ -371,11 +473,20 @@ def run_coordinator(
     )
 
     # 6. Determine rebalance trigger.
-    current_weights = (
-        {s: v / book.equity for s, v in book.positions.items()}
-        if book.equity > 0
-        else {}
-    )
+    # In live mode, "current_weights" comes from real Schwab positions, not
+    # the shadow book. This ensures intents reflect what the user actually
+    # holds. The shadow book equity is still maintained for DD breaker /
+    # equity-curve continuity but isn't the source of truth for trade diff.
+    if mode == MODE_LIVE:
+        equity_for_intent = live_snapshot.total_equity
+        current_weights: dict[str, float] = dict(live_snapshot.positions_pct)
+    else:
+        equity_for_intent = book.equity if book.equity > 0 else book.starting_cash
+        current_weights = (
+            {s: v / book.equity for s, v in book.positions.items()}
+            if book.equity > 0
+            else {}
+        )
     freeze_remaining = state.get("freeze_days_remaining", 0)
     drift = _l1_drift_pct(current_weights, overlay.final_weights)
 
@@ -404,12 +515,22 @@ def run_coordinator(
     intents = _generate_intents(
         current_weights=current_weights,
         target_weights=target_weights,
-        equity=book.equity if book.equity > 0 else book.starting_cash,
+        equity=equity_for_intent,
         close_prices=close_prices,
     )
 
-    # 9. Step the shadow book (advances equity even on no-rebalance days
-    # because MTM still happens at the new close).
+    # 9. Step the shadow book.
+    # In LIVE mode, we overwrite the shadow book's positions with the
+    # actual Schwab snapshot before stepping. This ensures equity curve
+    # math reflects reality (not a synthetic projection), so the DD
+    # breaker fires based on true performance.
+    if mode == MODE_LIVE:
+        book.positions = dict(live_snapshot.positions_dollars)
+        # Also seed _last_close so MTM math has a reference point.
+        if not hasattr(book, "_last_close"):
+            book._last_close = {}
+        for sym, px in close_prices.items():
+            book._last_close[sym] = px
     step_result = book.step(
         asof=asof_date,
         target_weights=target_weights,
@@ -452,11 +573,12 @@ def run_coordinator(
 
     # 12. Build ledger record.
     record = {
-        "record_type": LEDGER_RECORD_TYPE,
+        "record_type": LEDGER_RECORD_TYPE_LIVE if mode == MODE_LIVE else LEDGER_RECORD_TYPE_DRY,
         "ts_utc": datetime.now(timezone.utc).isoformat(),
         "ny_date": asof_date.isoformat(),
+        "mode": mode,
         "strategy_id": STRATEGY_ID,
-        "book_id": BOOK_ID,
+        "book_id": book_id,
         "shadow_book": {
             "equity": step_result.equity,
             "cash": step_result.cash,
@@ -499,25 +621,60 @@ def run_coordinator(
         "drift_l1_pct": drift,
         "intents": [asdict(i) for i in intents],
     }
-    _append_ledger(_ledger_path(repo_root, asof_date), record)
+    _append_ledger(_ledger_path(repo_root, asof_date, mode=mode), record)
 
     # 13. Post Slack.
     posted = False
     if post_enabled:
         try:
-            adapter.post_advisory(
-                asof=asof_date,
-                equity=step_result.equity,
-                cash=step_result.cash,
-                rebalance=rebalance,
-                intents=intents,
-                regime_label=signal_state.regime_label,
-                target_vol=overlay.target_vol,
-                forecast_vol=overlay.forecast_vol,
-                exposure_scale=overlay.exposure_scale,
-                strategy_shares=alloc.strategy_shares,
-                notice=notice,
-            )
+            if mode == MODE_LIVE:
+                live_intents = _convert_to_live_intents(
+                    asof=asof_date,
+                    v6_intents=intents,
+                    close_prices=close_prices,
+                )
+                # Augment ledger with the intent_ids for traceability.
+                record["live_intents"] = [
+                    {
+                        "intent_id": li.intent_id,
+                        "symbol": li.symbol,
+                        "side": li.side,
+                        "shares_delta": li.shares_delta,
+                    }
+                    for li in live_intents
+                ]
+                # Re-write the ledger line with the augmentation (last line).
+                _append_ledger(_ledger_path(repo_root, asof_date, mode=mode),
+                               {"record_type": "RAEC_V6_LIVE_INTENT_IDS",
+                                "ny_date": asof_date.isoformat(),
+                                "intent_ids": [li.intent_id for li in live_intents]})
+                adapter.post_ticket(
+                    asof=asof_date,
+                    equity=live_snapshot.total_equity,
+                    cash_pct=live_snapshot.cash_pct,
+                    rebalance=rebalance,
+                    regime_label=signal_state.regime_label,
+                    target_vol=overlay.target_vol,
+                    forecast_vol=overlay.forecast_vol,
+                    exposure_scale=overlay.exposure_scale,
+                    strategy_shares=alloc.strategy_shares,
+                    intents=live_intents,
+                    notice=notice,
+                )
+            else:
+                adapter.post_advisory(
+                    asof=asof_date,
+                    equity=step_result.equity,
+                    cash=step_result.cash,
+                    rebalance=rebalance,
+                    intents=intents,
+                    regime_label=signal_state.regime_label,
+                    target_vol=overlay.target_vol,
+                    forecast_vol=overlay.forecast_vol,
+                    exposure_scale=overlay.exposure_scale,
+                    strategy_shares=alloc.strategy_shares,
+                    notice=notice,
+                )
             posted = True
         except Exception:
             posted = False
@@ -537,13 +694,17 @@ def run_coordinator(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="RAEC v6 dry-run coordinator (one day)."
+        description="RAEC v6 coordinator (one day). Default mode is dry-run."
     )
     parser.add_argument("--asof-date", required=True, type=date.fromisoformat,
                         help="NY date to evaluate, e.g. 2026-06-09")
     parser.add_argument("--repo-root", type=Path,
                         default=Path(__file__).resolve().parents[2],
                         help="Repo root (defaults to current repo)")
+    parser.add_argument("--mode", choices=[MODE_DRY_RUN, MODE_LIVE],
+                        default=MODE_DRY_RUN,
+                        help="dry-run (default) or live. Live reads real Schwab "
+                             "positions and posts executable tickets.")
     parser.add_argument("--no-post", action="store_true",
                         help="Skip the Slack post (useful for backfilling state)")
     return parser.parse_args(argv)
@@ -555,6 +716,7 @@ def main() -> int:
         result = run_coordinator(
             asof_date=args.asof_date,
             repo_root=args.repo_root,
+            mode=args.mode,
             post_enabled=not args.no_post,
         )
         print(json.dumps({

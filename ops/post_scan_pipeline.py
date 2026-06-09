@@ -86,24 +86,22 @@ STEPS = [
         ],
     },
     {
-        "name": "raec_401k_coordinator",
-        "args": lambda date: [
-            sys.executable, "-m", "strategies.raec_401k_coordinator",
-            "--asof", date,
-        ],
-    },
-    {
-        # v6 dry-run coordinator. Parallel to live V3/V4/V5; writes to its own
-        # ledger (ledger/RAEC_V6/) and shadow book (state/strategies/
-        # RAEC_V6_DRY_RUN/). Posts to Slack with a [V6 DRY] prefix.
-        # Marked optional=True so a v6 failure can never break the live pipeline.
-        "name": "raec_v6_coordinator",
-        "optional": True,
+        # v6 LIVE coordinator. Posts executable Schwab tickets to Slack
+        # under the component "RAEC_V6" (no [V6 DRY] prefix). Reads the
+        # latest Schwab readonly snapshot for current positions.
+        # If v6 fails for any reason, the legacy V3-V5 coordinator below
+        # is still available as a manual fallback (just re-run it by hand
+        # via `python -m strategies.raec_401k_coordinator --asof <date>`).
+        "name": "raec_v6_coordinator_live",
         "args": lambda date: [
             sys.executable, "-m", "strategies.raec_v6.coordinator",
             "--asof-date", date,
+            "--mode", "live",
         ],
     },
+    # NOTE: the legacy V3-V5 coordinator is intentionally NOT in the daily
+    # pipeline anymore — v6 above is the primary. Kept as a manual-fallback
+    # module so you can still run it on-demand if needed.
 ]
 
 
@@ -139,6 +137,11 @@ def run_pipeline(date: str, *, dry_run: bool = False) -> None:
             "raec_401k_coordinator", "s2_letf_orb_alpaca",
         }:
             cmd.append("--dry-run")
+        if dry_run and step["name"] == "raec_v6_coordinator_live":
+            # v6 uses --mode instead of --dry-run; swap live → dry-run.
+            if "--mode" in cmd:
+                idx = cmd.index("--mode")
+                cmd[idx + 1] = "dry-run"
         label = f"[{i}/{len(STEPS)}] {step['name']}"
         optional = step.get("optional", False)
         print(f"{label}: running ...", flush=True)

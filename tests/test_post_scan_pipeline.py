@@ -146,12 +146,16 @@ def test_pipeline_passes_dry_run_flag_to_relevant_steps(
 
     pipeline.run_pipeline("2026-06-05", dry_run=True)
 
-    # raec_401k_coordinator and s2_letf_orb_alpaca should have --dry-run appended.
-    coord_cmds = [c for c in captured if "strategies.raec_401k_coordinator" in c]
+    # s2_letf_orb_alpaca should have --dry-run appended.
     alpaca_cmds = [c for c in captured if "strategies.s2_letf_orb_alpaca" in c]
-    assert coord_cmds and "--dry-run" in coord_cmds[0]
     assert alpaca_cmds and "--dry-run" in alpaca_cmds[0]
+    # raec_v6_coordinator uses --mode dry-run instead.
+    v6_cmds = [c for c in captured if "strategies.raec_v6.coordinator" in c]
+    assert v6_cmds
+    v6_cmd = v6_cmds[0]
+    mode_idx = v6_cmd.index("--mode")
+    assert v6_cmd[mode_idx + 1] == "dry-run"
     # Other steps must not have --dry-run.
-    other_cmds = [c for c in captured if c not in coord_cmds + alpaca_cmds]
+    other_cmds = [c for c in captured if c not in alpaca_cmds + v6_cmds]
     for cmd in other_cmds:
         assert "--dry-run" not in cmd
