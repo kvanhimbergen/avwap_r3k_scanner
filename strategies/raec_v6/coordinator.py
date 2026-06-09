@@ -67,6 +67,7 @@ from strategies.raec_v6.signals.regime_label import classify_from_spy_closes
 from strategies.raec_v6.signals.vix_implied import compute_vix_implied
 from strategies.raec_v6.signals.vol_percentile import compute_vol_percentile
 from strategies.raec_v6.signals.yield_curve import compute_yield_curve_signal
+from strategies.raec_v6.single_name_universe import UNIVERSE as SINGLE_NAME_UNIVERSE
 from strategies.raec_v6.strategies.bond_carry import BondCarry
 from strategies.raec_v6.strategies.crisis_alpha import CrisisAlpha
 from strategies.raec_v6.strategies.cross_asset_trend import CrossAssetTrend
@@ -76,6 +77,10 @@ from strategies.raec_v6.strategies.equity_leveraged_momentum import (
     _RISK_UNIVERSE as EQUITY_LEV_UNIVERSE,
 )
 from strategies.raec_v6.strategies.sector_relative_strength import SectorRelativeStrength
+from strategies.raec_v6.strategies.single_name_momentum import (
+    MODE_LIVE as SNM_MODE_LIVE,
+    SingleNameMomentum,
+)
 from strategies.raec_v6.strategies.thematic_conviction import ThematicConviction
 from strategies.raec_v6.strategy_output import StrategyOutput
 
@@ -191,6 +196,7 @@ def _universe_symbols() -> tuple[str, ...]:
         | set(ac.get_symbols_in_class("crypto_inverse"))
         | set(ac.get_symbols_in_class("inverse_equity"))
         | set(ac.get_symbols_in_class("metal"))
+        | set(SINGLE_NAME_UNIVERSE)
         | {"SPY", "BIL", "^VIX"}
     ))
 
@@ -207,6 +213,7 @@ def _strategies() -> list:
         BondCarry(),
         CryptoTrend(),
         CrisisAlpha(),
+        SingleNameMomentum(top_k=5, mode=SNM_MODE_LIVE),
     ]
 
 
