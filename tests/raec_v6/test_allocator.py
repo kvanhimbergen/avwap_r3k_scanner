@@ -92,14 +92,30 @@ def test_lower_conviction_lower_share() -> None:
 
 
 def test_turnover_damper_limits_share_jump() -> None:
-    """If yesterday's share was 0 and today wants 0.5, damped at 0.05."""
+    """Once we have live history, day-over-day jump is capped.
+    (Cold start — no history — skips the damper; see test below.)"""
     out = _out(sid="A", weights={"SPY": 1.0}, max_share_cap=1.0)
     res = allocate(
         outputs={"A": out},
         prior_shares={"A": 0.0},
+        has_live_history={"A": True},
         turnover_damper_per_day=0.05,
     )
     assert res.strategy_shares["A"] <= 0.05 + 1e-9
+
+
+def test_turnover_damper_skipped_at_cold_start() -> None:
+    """No strategy has ≥20d history → no recent winner to chase → no damper.
+    Cold-start day 1 should deploy to natural targets without delay."""
+    out = _out(sid="A", weights={"SPY": 1.0}, max_share_cap=1.0)
+    res = allocate(
+        outputs={"A": out},
+        prior_shares={"A": 0.0},
+        has_live_history={"A": False},
+        turnover_damper_per_day=0.05,
+    )
+    # Without damper, single strategy at full conviction + vol gets the full share.
+    assert res.strategy_shares["A"] > 0.5
 
 
 def test_all_failed_returns_empty_book() -> None:

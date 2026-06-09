@@ -282,7 +282,14 @@ def allocate(
             capped = {sid: s / cap_total for sid, s in capped.items()}
 
     # Turnover damper: cap day-over-day change in each strategy's share.
-    if prior_shares:
+    # Purpose is chase-prevention — when a strategy's rolling Sharpe spikes
+    # we don't want the allocator to dump 30% of book into it overnight.
+    # That purpose only applies once we have ANY live Sharpe data; in cold
+    # start (all strategies < 20d history) there's no "recent winner" to
+    # chase, so the damper would just delay deployment without protecting
+    # against anything. Skip it.
+    cold_start = not any(has_live_history.values())
+    if prior_shares and not cold_start:
         damped: dict[str, float] = {}
         for sid, share in capped.items():
             prior = prior_shares.get(sid, share)
