@@ -79,15 +79,15 @@ def test_post_ticket_returns_formatted_text() -> None:
         strategy_shares={"V6_CROSS_ASSET_TREND": 0.35, "V6_BOND_CARRY": 0.10},
         intents=_intents(),
     )
-    assert "RAEC v6 Rebalance Ticket" in text
-    assert "Book: SCHWAB_401K_MANUAL" in text
-    assert "INTENT" in text
-    assert "BUY SPY" in text
-    assert "SELL BIL" in text
-    # Sells first ordering
-    sell_pos = text.index("SELL BIL")
-    buy_pos = text.index("BUY SPY")
-    assert sell_pos < buy_pos
+    # Tight format: date + regime in line 1; equity/vol context in line 2.
+    assert "RAEC v6" in text
+    assert "2026-06-09" in text
+    assert "RISK_ON" in text
+    assert "SELLS:" in text
+    assert "BUYS:" in text
+    assert "SPY" in text and "BIL" in text
+    # Sells first
+    assert text.index("SELLS:") < text.index("BUYS:")
     # Reply protocol present
     assert "EXECUTED" in text and "intent_id" in text
 
@@ -107,8 +107,30 @@ def test_post_ticket_no_intents_shows_at_target_message() -> None:
         intents=[],
         notice="within tolerance (L1 drift 2.0% < 5.0%)",
     )
-    assert "Order intents: none" in text
+    assert "No trades" in text
     assert "within tolerance" in text
+
+
+def test_post_ticket_compact_for_phone_reading() -> None:
+    """Tight format goal per feedback: ≤25 lines on day-1, ≤12 typical."""
+    a = LiveTradeAdapter()
+    intents = _intents() * 6  # 12 intents total
+    text = a.post_ticket(
+        asof=date(2026, 6, 9),
+        equity=253_862,
+        cash_pct=0.05,
+        rebalance=True,
+        regime_label="NEUTRAL",
+        target_vol=0.24,
+        forecast_vol=0.13,
+        exposure_scale=1.2,
+        strategy_shares={"V6_CROSS_ASSET_TREND": 0.35},
+        intents=intents,
+    )
+    # Header(2) + blank + SELLS header + 6 sells + blank + BUYS header + 6 buys +
+    # blank + reply = 19 lines for 12 intents.
+    line_count = text.count("\n") + 1
+    assert line_count <= 22, f"ticket too tall: {line_count} lines"
 
 
 def test_post_error_does_not_raise() -> None:

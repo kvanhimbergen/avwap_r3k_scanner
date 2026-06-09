@@ -74,6 +74,15 @@ def make_intent_id(
     return hashlib.sha256(raw).hexdigest()
 
 
+def _format_intent_row(ix: LiveIntent) -> str:
+    """One compact line per intent: id_prefix · SYM ±%pct $±amount (±Nsh)."""
+    sh = f"  ({ix.shares_delta:+d} sh)" if ix.shares_delta is not None else ""
+    return (
+        f"  {ix.intent_id[:8]}  {ix.symbol:<5s}  "
+        f"{ix.delta_pct * 100:+5.1f}%  ${ix.dollar_delta:+,.0f}{sh}"
+    )
+
+
 def _format_ticket(
     *,
     asof: date,
@@ -88,44 +97,47 @@ def _format_ticket(
     intents: list[LiveIntent],
     notice: str | None,
 ) -> str:
+    """Compact ticket format.
+
+    See feedback memory `feedback-slack-tickets-tight`: targets ≤12 lines
+    typical, ≤25 day-1. Drops the per-strategy block (lives in the ledger
+    + dashboard) and the multi-line checklist (reply protocol line is
+    enough).
+    """
     lines: list[str] = [
-        TICKET_TITLE,
-        f"Strategy: V6_COORDINATOR",
-        f"Book: {LIVE_BOOK_ID}",
-        f"As-of (NY): {asof.isoformat()}",
-        f"Equity: ${equity:,.0f}  Cash: {cash_pct:.1%}",
-        f"Regime: {regime_label}  Target vol: {target_vol:.1%}  "
-        f"Forecast vol: {forecast_vol:.1%}  Exposure: {exposure_scale:.2f}×",
-        "",
-        "Active strategies (share):",
+        f"RAEC v6  •  {asof.isoformat()}  •  {regime_label}",
+        f"${equity:,.0f}  •  Cash {cash_pct:.1%}  •  "
+        f"Vol target {target_vol:.1%} (forecast {forecast_vol:.1%}, scale {exposure_scale:.2f}×)",
     ]
-    active = [(sid, s) for sid, s in strategy_shares.items() if s > 0.001]
-    active.sort(key=lambda kv: -kv[1])
-    for sid, s in active:
-        lines.append(f"  {sid:30s} {s:6.1%}")
     if notice:
-        lines.append("")
         lines.append(f"NOTICE: {notice}")
+    if not intents:
+        lines.append("")
+        lines.append("No trades — allocations at target.")
+        lines.append("")
+        lines.append("Reply: EXECUTED / PARTIAL / SKIPPED / ERROR + intent_id")
+        return "\n".join(lines)
+
+    sells = sorted(
+        (i for i in intents if i.side == "SELL"),
+        key=lambda i: -abs(i.delta_pct),
+    )
+    buys = sorted(
+        (i for i in intents if i.side == "BUY"),
+        key=lambda i: -abs(i.delta_pct),
+    )
+    if sells:
+        lines.append("")
+        lines.append("SELLS:")
+        for ix in sells:
+            lines.append(_format_intent_row(ix))
+    if buys:
+        lines.append("")
+        lines.append("BUYS:")
+        for ix in buys:
+            lines.append(_format_intent_row(ix))
     lines.append("")
-    if intents:
-        sorted_intents = sorted(intents, key=lambda i: (0 if i.side == "SELL" else 1, -abs(i.delta_pct)))
-        lines.append("Order intents (sells first):")
-        for ix in sorted_intents:
-            sh = f"  ({ix.shares_delta:+d} sh)" if ix.shares_delta is not None else ""
-            lines.append(
-                f"INTENT {ix.intent_id[:16]}... | {ix.side} {ix.symbol} | "
-                f"delta {ix.delta_pct * 100:+.1f}% | target {ix.target_pct * 100:.1f}% | "
-                f"current {ix.current_pct * 100:.1f}% | ${ix.dollar_delta:+,.0f}{sh}"
-            )
-    else:
-        lines.append("Order intents: none (allocations at target).")
-    lines.append("")
-    lines.append("Checklist:")
-    lines.append("- [ ] Confirm regime + active strategy mix.")
-    lines.append("- [ ] Execute trades manually in Schwab 401(k).")
-    lines.append("- [ ] Reply with execution status + intent_id.")
-    lines.append("")
-    lines.append("Reply protocol: EXECUTED / PARTIAL / SKIPPED / ERROR with intent_id.")
+    lines.append("Reply: EXECUTED / PARTIAL / SKIPPED / ERROR + intent_id")
     return "\n".join(lines)
 
 
