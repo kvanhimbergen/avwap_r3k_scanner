@@ -37,7 +37,9 @@ REPRESENTATIVES: Mapping[str, str] = {
     "credit": "HYG",
     "commodity_broad": "PDBC",
     "metal": "GLD",
-    "energy": "USO",
+    # "energy" class removed — USO (the natural representative) is a K-1
+    # partnership blocked by user's PCRA. Energy equity exposure flows
+    # through the `sector` strategies (XLE) instead.
     "crypto": "IBIT",
     "vol_long": "VIXY",
     "currency_dollar": "UUP",

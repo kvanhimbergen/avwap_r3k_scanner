@@ -38,7 +38,7 @@ def test_cross_asset_trend_returns_scores_for_classes_with_data() -> None:
     scores = compute_cross_asset_trend(provider, asof)
     # Should produce scores for asset classes whose representative ETFs we provided.
     expected = {"equity_us_broad", "equity_intl", "sector", "bond_short", "bond_mid",
-                "bond_long", "credit", "commodity_broad", "metal", "energy",
+                "bond_long", "credit", "commodity_broad", "metal",
                 "crypto", "vol_long", "currency_dollar"}
     assert set(scores.keys()) == expected
 

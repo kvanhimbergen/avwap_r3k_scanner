@@ -117,26 +117,26 @@ credit:
   - TIP
 
 commodity_broad:
+  # K-1 partnership ETFs (DBC, DBA) excluded — user's PCRA blocks them.
+  # PDBC is explicitly designed to issue 1099 not K-1.
   - PDBC
-  - DBC
-  - DBA
 
 metal:
   - GLD
   - SLV
   - IAU
 
-energy:
-  - USO
-  - UNG
-  - USL
+# Energy class removed — all liquid energy commodity ETFs (USO, UNG, USL)
+# are K-1 partnerships blocked by user's PCRA. Energy exposure comes
+# via XLE in the `sector` class instead.
 
 crypto:
+  # BITX (2× bitcoin futures) and ETHU (2× ether futures) excluded — K-1
+  # partnerships blocked by user's PCRA. Spot ETFs (IBIT/FBTC/ETHA) and
+  # BITO (1099-structured futures) are allowed.
   - IBIT
   - FBTC
   - ETHA
-  - BITX
-  - ETHU
   - BITO
 
 crypto_inverse:
