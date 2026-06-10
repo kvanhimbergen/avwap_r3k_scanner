@@ -408,9 +408,13 @@ def run_coordinator(
         state_path = _state_dir(repo_root, BOOK_ID_LIVE) / "v6_coordinator.json"
     state = _load_state(state_path)
     if state["shadow_book"] is None:
-        # In live mode, seed the shadow book at the actual Schwab equity
-        # so the equity curve reflects real value from day 1.
-        starting = live_snapshot.total_equity if mode == MODE_LIVE else DEFAULT_STARTING_CASH
+        # In live mode the shadow book equity = cash + sum(positions). Set
+        # starting_cash = the Schwab cash component ONLY; positions get
+        # seeded separately below (step 9). If we seeded starting_cash to
+        # total_equity here AND positions, the book would double-count
+        # on the first step (real cash + positions = total + positions =
+        # 2× real equity).
+        starting = live_snapshot.cash if mode == MODE_LIVE else DEFAULT_STARTING_CASH
         book = ShadowBook(starting_cash=starting)
         state["started_at"] = asof_date.isoformat()
     else:
