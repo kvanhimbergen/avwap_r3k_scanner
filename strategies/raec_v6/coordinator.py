@@ -524,13 +524,23 @@ def run_coordinator(
     )
 
     # 9. Step the shadow book.
-    # In LIVE mode, we overwrite the shadow book's positions with the
-    # actual Schwab snapshot before stepping. This ensures equity curve
-    # math reflects reality (not a synthetic projection), so the DD
-    # breaker fires based on true performance.
+    # In LIVE mode, the shadow book is a tracker — Schwab is the source
+    # of truth. Reset BOTH cash and positions from the live snapshot
+    # before stepping. Resetting positions alone (the old behavior) left
+    # stale cash from yesterday's shadow accounting, so shadow equity
+    # diverged from real equity over time, falsely tripping the DD
+    # breaker.
     if mode == MODE_LIVE:
         book.positions = dict(live_snapshot.positions_dollars)
-        # Also seed _last_close so MTM math has a reference point.
+        # Sync cash to the live snapshot. Overwrite the last cash_curve
+        # entry if present; otherwise set starting_cash so book.cash
+        # returns the synced value.
+        if book.cash_curve:
+            book.cash_curve[-1] = live_snapshot.cash
+        else:
+            book.starting_cash = live_snapshot.cash
+        # Seed _last_close so the step's MTM math doesn't double-mark
+        # (today's close == today's close → no change).
         if not hasattr(book, "_last_close"):
             book._last_close = {}
         for sym, px in close_prices.items():
