@@ -118,3 +118,21 @@ def pytest_pycollect_makemodule(module_path, parent):  # type: ignore[override]
     LAST_COLLECTED_MODULE = str(module_path)
     if DEBUG_IMPORTS:
         print(f"[avwap-debug] collecting={LAST_COLLECTED_MODULE}", file=sys.stderr)
+
+
+def pytest_configure(config):  # type: ignore[override]
+    """Hard-disable Slack delivery for the entire test session.
+
+    Without this, any test that exercises a code path which calls
+    `slack_alert` (or worse, `slack_alert_sync`) will post to the real
+    Slack webhook configured in .env. That happened 2026-06-11 around
+    1:25pm ET — a portfolio-arbitration test simulated a ValueError to
+    verify error handling, and the production error path posted a fake
+    error message to the user's live channel.
+
+    Setting both SLACK_ENABLED=0 AND SLACK_WEBHOOK_URL='' makes both
+    branches of `_enabled()` short-circuit, so no test can ever post.
+    """
+    os.environ["SLACK_ENABLED"] = "0"
+    os.environ["SLACK_ALERTS_ENABLED"] = "0"
+    os.environ["SLACK_WEBHOOK_URL"] = ""
