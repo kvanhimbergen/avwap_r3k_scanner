@@ -88,6 +88,12 @@ LEDGER_RECORD_TYPE_LIVE = "RAEC_V6_LIVE_RUN"
 
 # Rebalance triggers (mirror the backtest harness).
 REBALANCE_DRIFT_THRESHOLD_PCT = 5.0  # L1 drift above this → rebalance
+# Minimum per-symbol intent size as % of book. Intents smaller than this
+# are filtered as noise — avoids many small trim trades each day. Raised
+# from 0.5% → 1.5% on 2026-06-12 after the user flagged whipsaw (ARKG
+# bought day 2, sold day 3) eating real bid-ask cost without alpha.
+# On a ~$250K book, 1.5% ≈ $3.7K minimum per intent.
+MIN_TRADE_PCT = 1.5
 
 # Modes
 MODE_DRY_RUN = "dry-run"
@@ -279,7 +285,7 @@ def _generate_intents(
     target_weights: Mapping[str, float],
     equity: float,
     close_prices: Mapping[str, float],
-    min_trade_pct: float = 0.5,
+    min_trade_pct: float = MIN_TRADE_PCT,
 ) -> list[V6Intent]:
     intents: list[V6Intent] = []
     syms = set(current_weights) | set(target_weights)
